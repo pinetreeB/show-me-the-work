@@ -1,1 +1,0 @@
-Removed temporary directory: C:\Users\rotat\fable-lite\tmp\qa-taskcard-cli
