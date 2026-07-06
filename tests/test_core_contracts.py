@@ -262,3 +262,15 @@ def test_high_risk_contract_blocks_shell_commands_without_valid_contract(tmp_pat
     )
 
     assert result["decision"] == "block"
+
+
+def test_classify_enumeration_is_multi_story_but_progressive_is_not() -> None:
+    # 회귀 고정: "하고" 제거(발견B) 후에도 쉼표 열거형은 다중 스토리로 잡혀야 한다 (v2 러너 P-N2 프로브)
+    enumeration = classify_prompt(
+        {"prompt": "사용자 프로필 페이지를 만들고, API 연동도 하고, 데이터베이스 스키마도 업데이트해줘."}
+    )
+    assert enumeration["needs_goals"] is True
+
+    # 진행형("~하고 있어")은 단일 수정 요청 — 다중 스토리 오분류 금지 (발견B)
+    progressive = classify_prompt({"prompt": "add 함수가 뺄셈을 하고 있어 고쳐줘"})
+    assert progressive["needs_goals"] is False

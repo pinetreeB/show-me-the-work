@@ -102,7 +102,7 @@ def main() -> int:
 
     # E2E-5: fail-open — 깨진 JSON에도 세션 생존 (AC9)
     for script in ("user_prompt_submit.py", "pre_tool_use.py", "post_tool_use.py", "stop.py"):
-        proc = subprocess.run([sys.executable, str(ADAPT / script)], input="{ broken", capture_output=True, text=True)
+        proc = subprocess.run([sys.executable, str(ADAPT / script)], input="{ broken", capture_output=True, text=True, encoding="utf-8")
         ok = proc.returncode == 0 and "fail-open" in proc.stdout
         check(f"AC9 fail-open [{script}]", ok, f"(rc={proc.returncode})")
 

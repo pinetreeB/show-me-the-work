@@ -23,6 +23,23 @@ python goals/goals.py verify --root . --story "관리자 페이지 렌더" --evi
 python goals/goals.py status --root .
 ```
 
+## 평가 프로브 러너
+
+결정론적 프로브는 훅 스크립트를 fixture payload로 실행해 자동 판정하고, 모델 실행이나 루브릭 채점이 필요한 프로브는 `manual`로 남깁니다.
+
+```powershell
+python eval/run_probes.py
+python eval/run_probes.py --output eval/results/probes-latest.json
+```
+
+기본 결과 파일은 `eval/results/probes-latest.json`입니다. 콘솔 요약은 Windows CP949에서도 깨지지 않도록 ASCII만 출력합니다.
+
+```text
+probes pass=13 fail=2 manual=3 total=18 result=FAIL
+```
+
+러너는 실패 프로브가 있어도 JSON 리포트를 끝까지 쓰고 종료코드 0으로 끝납니다. 평가 실패 여부는 `summary.fail`과 `result` 필드로 확인합니다.
+
 ## 출처
 
 검증 접지, 분해/증거 게이트, 조사 루프, 조기종료 방지의 절차 구조는 MIT 라이선스의 `fivetaku/fablize`에서 검증된 아이디어를 참고했습니다. 문장과 코드는 새로 작성했습니다.
