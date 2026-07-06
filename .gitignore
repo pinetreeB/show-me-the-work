@@ -4,3 +4,4 @@ __pycache__/
 tmp/
 .fable-lite/
 *.bak
+.omo/
