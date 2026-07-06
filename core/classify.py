@@ -31,7 +31,6 @@ ARTIFACT_PATTERNS = (
 )
 MULTI_STORY_PATTERNS = (
     "그리고",
-    "하고",
     "고치고",
     "그리고 또",
     "및",
