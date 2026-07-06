@@ -10,7 +10,7 @@ TEST_TERMS = ("pytest", "python -m pytest", "npm test", "go test", "cargo test",
 
 
 def _fail_open(message: str) -> int:
-    data = json.dumps({"systemMessage": f"fable-lite fail-open: {message}"}, ensure_ascii=False)
+    data = json.dumps({"systemMessage": f"fable-lite fail-open(게이트 오류, 통과 처리): {message}"}, ensure_ascii=False)
     _ = sys.stdout.buffer.write(data.encode("utf-8"))
     _ = sys.stdout.buffer.write(b"\n")
     return 0
@@ -72,7 +72,7 @@ def main() -> int:
                         },
                     }
                 )
-            return emit({"systemMessage": f"fable-lite ledger: recorded {len(paths)} change(s)."})
+            return emit({"systemMessage": f"fable-lite 원장: 변경 {len(paths)}건 기록 / recorded {len(paths)} change(s)."})
         if tool in SHELL_TOOLS:
             command = tool_command(payload)
             if any(term in command.lower() for term in TEST_TERMS):
@@ -85,7 +85,7 @@ def main() -> int:
                         "evidence": tool_output(payload),
                     }
                 )
-                return emit({"systemMessage": "fable-lite ledger: recorded verification."})
+                return emit({"systemMessage": "fable-lite 원장: 검증 기록 / recorded verification."})
         return emit({})
     except Exception as exc:  # noqa: BLE001
         return _fail_open(str(exc))

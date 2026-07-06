@@ -55,7 +55,7 @@ def test_adapters_handle_realistic_claude_code_nested_payloads(tmp_path: Path) -
     ledger = json.loads((tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8"))
 
     assert "hookSpecificOutput" in prompt_result
-    assert post_result["systemMessage"] == "fable-lite ledger: recorded 1 change(s)."
+    assert "recorded 1 change(s)." in str(post_result["systemMessage"])
     assert ledger["changed_files_seen"] == ["app.py"]
 
 
@@ -96,7 +96,7 @@ def test_posttool_records_nested_shell_verification(tmp_path: Path) -> None:
     )
     ledger = json.loads((tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8"))
 
-    assert result["systemMessage"] == "fable-lite ledger: recorded verification."
+    assert "recorded verification." in str(result["systemMessage"])
     assert ledger["verification_results"][0]["success"] is True
     assert ledger["verification_results"][0]["evidence"] == "10 passed"
 
