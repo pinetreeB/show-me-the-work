@@ -1,0 +1,18 @@
+{
+  "name": "fable-lite",
+  "version": "0.1.0",
+  "description": "Korean-first Claude Code harness that externalizes Fable-style verification, investigation, scope, and high-risk contract discipline with stdlib Python hooks.",
+  "author": {
+    "name": "fable-lite team"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "fable",
+    "verification",
+    "harness",
+    "korean"
+  ],
+  "hooks": "./adapters/claude_code/hooks.json"
+}
+
