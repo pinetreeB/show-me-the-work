@@ -48,6 +48,8 @@ Remaining: [items not handled] — [reason: out of scope / blocked / insufficien
 
 Even if nothing remains, state "Remaining: none" explicitly — don't omit this line. Omitting it creates a state where no one can tell whether everything was done or not, and that ambiguity is itself a violation.
 
+When filling in this format, don't lead with meta-commentary like "Organizing this into the done/remaining format" — start directly with "Done:".
+
 ---
 
 ### Gate contract (S4 Stop hook)

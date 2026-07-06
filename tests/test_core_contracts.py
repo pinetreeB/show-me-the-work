@@ -216,6 +216,36 @@ def test_scope_guard_allows_casefolded_absolute_path_under_requested_relative_pa
     assert result["decision"] == "allow"
 
 
+def test_scope_guard_skips_when_prompt_has_no_extractable_file_pattern() -> None:
+    # p5b·E1에서 반복 확인된 허위 경고: "이 add가 왜 이상해?"처럼 파일명 없이
+    # 대명사·심볼명으로만 지칭하면 요청 범위 자체가 특정되지 않은 것이라 경고가 무근거하다.
+    result = evaluate_scope(
+        {
+            "prompt": "이 add가 왜 이상해? 고쳐줘",
+            "requested_paths": [],
+            "changed_files": ["C:/proj/calc.py"],
+        }
+    )
+
+    assert result["decision"] == "allow"
+    assert result["out_of_scope"] == []
+
+
+def test_scope_guard_still_warns_when_prompt_names_a_different_file_explicitly() -> None:
+    # 위 skip이 과잉 적용되지 않는지 확인: requested_paths가 비어 있어도
+    # 프롬프트가 실제로 다른 파일명을 명시하면 기존 폴백(_prompt_mentions) 경고는 유지돼야 한다.
+    result = evaluate_scope(
+        {
+            "prompt": "calc.py 고쳐줘",
+            "requested_paths": [],
+            "changed_files": ["/proj/settings.py"],
+        }
+    )
+
+    assert result["decision"] == "warn"
+    assert result["out_of_scope"] == ["/proj/settings.py"]
+
+
 def test_high_risk_contract_blocks_edit_until_valid_contract_exists(tmp_path: Path) -> None:
     blocked = evaluate_pretool_contract(
         {

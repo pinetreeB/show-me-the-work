@@ -47,6 +47,17 @@ probes pass=13 fail=2 manual=3 total=18 result=FAIL
 
 러너는 실패 프로브가 있어도 JSON 리포트를 끝까지 쓰고 종료코드 0으로 끝납니다. 평가 실패 여부는 `summary.fail`과 `result` 필드로 확인합니다.
 
+## 오케스트레이터 CLI
+
+wmux 좌상 오케스트레이터는 위임 전 `brief`로 작업 규율 블록을 만들고, 워커 완료 후 `check`로 원장과 git diff를 대조합니다.
+
+```powershell
+python -m fable_lite brief --paths "core/**,tests/**" --verify-cmd "python -m pytest tests/" --sentinel tmp/.done-x --target codex
+python -m fable_lite check --root . --agent codex --since-file tmp/.delegation-start
+```
+
+`check`는 변경 파일, 미검증 변경, scope 이탈, R1 계약 필요, sentinel 약속 미이행을 한국어로 요약합니다. exit code `0`만 green이며, sentinel 존재만으로 완료로 보지 않습니다.
+
 ## 출처
 
 검증 접지, 분해/증거 게이트, 조사 루프, 조기종료 방지의 절차 구조는 MIT 라이선스의 `fivetaku/fablize`에서 검증된 아이디어를 참고했습니다. 문장과 코드는 새로 작성했습니다.

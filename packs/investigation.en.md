@@ -65,6 +65,7 @@ When following this protocol, your output **must** include these markers:
 
 These markers are automatically parsed by the pack compliance gate (N1) to determine protocol adherence.
 The parser recognizes both English markers (`Hypothesis N:` / `Evidence:` / `Rejected:`) and Korean markers (`가설 N:` / `증거:` / `기각:`) — bilingual.
+When filling in the markers, don't lead with meta-commentary like "Here is my response organized with the required markers" or "Reorganizing to include the investigation pack markers" — that framing is itself unnecessary filler. Start directly with the hypotheses.
 Output that contains only conclusions without markers is judged as non-compliant.
 
 </systematic_investigation_protocol>
