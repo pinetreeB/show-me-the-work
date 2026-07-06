@@ -1,9 +1,11 @@
 {
   "name": "fable-lite",
-  "owner": { "name": "fable-lite team" },
+  "owner": {
+    "name": "fable-lite team"
+  },
   "metadata": {
     "description": "Korean-first Claude Code harness that externalizes Fable-style verification, investigation, scope, and high-risk contract discipline with stdlib Python hooks.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
