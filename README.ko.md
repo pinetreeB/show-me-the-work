@@ -1,6 +1,11 @@
 # fable-lite
 
+[![ci](https://github.com/pinetreeB/fable-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/pinetreeB/fable-lite/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 `fable-lite`는 Fable 5의 모델 가중치를 복제하지 않고, 조사·검증·완료 규율을 Claude Code 훅으로 강제하는 한국어 우선 하네스입니다.
+
+> 왜 프롬프트가 아니라 훅인가: 도구 무제한 자연 세션 3회 실측에서 팩 지시만으로는 준수 **0/3**, 하드 게이트는 **3/3을 "1차단→1회복(실증거 동반)"으로 수렴**시켰습니다 — [실험 보고서](docs/reviews/p5b-n1-natural.md).
 
 ## v1 범위
 
