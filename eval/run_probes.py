@@ -338,6 +338,11 @@ def write_report(output: Path) -> JsonObject:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run deterministic fable-lite probes.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 1 when result is FAIL (CI gating); default always exits 0 after writing the report",
+    )
     args = parser.parse_args()
     report = write_report(args.output)
     summary = _object(report.get("summary"))
@@ -346,6 +351,8 @@ def main() -> int:
         f"manual={summary.get('manual')} total={summary.get('total')} result={report.get('result')}"
     )
     sys.stdout.buffer.write(line.encode("ascii") + b"\n")
+    if args.strict and report.get("result") == "FAIL":
+        return 1
     return 0
 
 

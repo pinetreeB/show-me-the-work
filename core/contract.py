@@ -69,6 +69,22 @@ def _high_risk(payload: Mapping[str, object]) -> bool:
     return is_high_risk(haystack)
 
 
+def evaluate_r1_contract(payload: Mapping[str, object]) -> Decision:
+    root = _project_root(payload)
+    if not _high_risk(payload):
+        return {"decision": "allow", "message": "not high-risk"}
+    if _valid_contract(root):
+        return {"decision": "allow", "message": "valid high-risk contract found"}
+    return {
+        "decision": "block",
+        "reason": (
+            "fable-lite R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. "
+            "restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. "
+            "/ High-risk edits require a valid task contract first."
+        ),
+    }
+
+
 def _valid_contract(root: str) -> bool:
     try:
         raw: object = json.loads(contract_path(root).read_text(encoding="utf-8"))
@@ -133,16 +149,4 @@ def evaluate_pretool_contract(payload: Mapping[str, object]) -> Decision:
 
     if paths and all(_is_contract_authoring(path) for path in paths):
         return {"decision": "allow", "message": "contract authoring allowed"}
-    if not _high_risk(payload):
-        return {"decision": "allow", "message": "not high-risk"}
-
-    if _valid_contract(root):
-        return {"decision": "allow", "message": "valid high-risk contract found"}
-    return {
-        "decision": "block",
-        "reason": (
-            "fable-lite R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. "
-            "restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. "
-            "/ High-risk edits require a valid task contract first."
-        ),
-    }
+    return evaluate_r1_contract(payload)

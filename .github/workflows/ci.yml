@@ -24,6 +24,6 @@ jobs:
       - name: Unit tests
         run: python -m pytest tests/ -q
       - name: Deterministic probes
-        run: python eval/run_probes.py
+        run: python eval/run_probes.py --strict
       - name: E2E smoke (hook chain)
         run: python eval/e2e_smoke.py

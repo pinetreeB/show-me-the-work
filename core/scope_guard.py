@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path, PurePath
+import re
 from typing import TypeAlias
 
 JsonValue: TypeAlias = str | bool | list[str]
 Decision: TypeAlias = dict[str, JsonValue]
+
+_PATH_PATTERN = re.compile(r"[\w./\\-]+\.[A-Za-z0-9]+")
 
 
 def _string_list(value: object) -> list[str]:
@@ -42,12 +45,21 @@ def _prompt_mentions(prompt: str, path: str) -> bool:
     return any(part.lower() in lowered for part in parts if part)
 
 
+def _prompt_has_no_path_pattern(prompt: str) -> bool:
+    return not _PATH_PATTERN.search(prompt)
+
+
 def evaluate_scope(payload: Mapping[str, object]) -> Decision:
     prompt_value = payload.get("prompt")
     prompt = prompt_value if isinstance(prompt_value, str) else ""
     project_root = _project_root(payload)
     changed_files = _string_list(payload.get("changed_files"))
     requested_paths = _string_list(payload.get("requested_paths"))
+
+    if not requested_paths and _prompt_has_no_path_pattern(prompt):
+        # 요청 범위가 애초에 특정되지 않은 프롬프트(대명사·심볼명 지칭 등)에서는
+        # "범위 밖" 판정 자체가 무근거하다 — p5b·E1에서 반복 확인된 허위 경고.
+        return {"decision": "allow", "out_of_scope": [], "message": "scope ok (요청 범위 미특정)"}
 
     out_of_scope: list[str] = []
     for changed in changed_files:
