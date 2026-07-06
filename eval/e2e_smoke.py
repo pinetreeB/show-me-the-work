@@ -106,6 +106,16 @@ def main() -> int:
         ok = proc.returncode == 0 and "fail-open" in proc.stdout
         check(f"AC9 fail-open [{script}]", ok, f"(rc={proc.returncode})")
 
+    # 발견A 회귀: Stop allow 경로는 additionalContext를 채우지 않는다 (반복 재호출 유발 방지)
+    tp_ok2 = make_transcript(proj, "가설 1: A\n가설 2: B\n가설 3: C\n증거: x.py:1 관측\n기각: 가설 2 — 반증됨")
+    r = run_hook("stop.py", {"hook_event_name": "Stop", "cwd": proj, "transcript_path": tp_ok2, "stop_hook_active": True})
+    hso = r.get("hookSpecificOutput", {})
+    check("발견A Stop allow는 additionalContext 없음", r.get("decision") != "block" and not (isinstance(hso, dict) and hso.get("additionalContext")), f"(hso={hso})")
+
+    # 발견B 회귀: 단일 버그 수정("~하고 있어")은 다중 스토리로 오분류되지 않는다
+    r = run_hook("user_prompt_submit.py", {"hook_event_name": "UserPromptSubmit", "cwd": proj, "prompt": "add 함수가 뺄셈을 하고 있어 고쳐줘"})
+    check("발견B '하고' 단일수정 오분류 없음", "goals 체크포인트" not in json.dumps(r, ensure_ascii=False), "(needs_goals 미발동)")
+
     # E2E-6: .fable-lite/ 단일 상태 디렉토리 (아키텍처 계약)
     strays = [p for p in ("ledger.json", "goals.json", "contract.json") if os.path.exists(os.path.join(proj, p))]
     check("상태파일 .fable-lite/ 격리", not strays, f"(루트 잔존: {strays})")

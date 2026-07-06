@@ -30,16 +30,11 @@ def main() -> int:
         )
         if result["decision"] == "block":
             return emit({"decision": "block", "reason": str(result["reason"])})
+        # allow 경로: systemMessage(사용자 정보용)만 반환한다. hookSpecificOutput.additionalContext를
+        # 채우면 Claude Code가 이를 "계속 진행" 신호로 받아 stop_hook_active 사이클에서 모델을 반복
+        # 재호출한다(라이브 E2E 발견 A). 통과 시엔 모델에 줄 추가 컨텍스트가 없다.
         message = str(result.get("message", "fable-lite Stop gate allow."))
-        return emit(
-            {
-                "systemMessage": message,
-                "hookSpecificOutput": {
-                    "hookEventName": "Stop",
-                    "additionalContext": message,
-                },
-            }
-        )
+        return emit({"systemMessage": message})
     except Exception as exc:  # noqa: BLE001
         return _fail_open(str(exc))
 
