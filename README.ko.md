@@ -7,7 +7,9 @@
 
 > 왜 프롬프트가 아니라 훅인가: 도구 무제한 자연 세션 3회 실측에서 팩 지시만으로는 준수 **0/3**, 하드 게이트는 **3/3을 "1차단→1회복(실증거 동반)"으로 수렴**시켰습니다 — [실험 보고서](docs/reviews/p5b-n1-natural.md).
 >
-> 효과는? ON vs OFF 통제 A/B(5과제, 블라인드 채점)에서 **ON 5/5 전승(총점 137 vs 109)**. 정확성은 무차이 — 값이 갈리는 지점은 "검증이 귀찮은 순간"입니다: 렌더 과제에서 OFF는 "열어보세요"로 끝(+검증접지 1점), ON은 헤드리스 브라우저로 실제 클릭·스크린샷 검증(만점). 멀티스토리에서 미검증 완료주장 **3건 vs 0건** — [A/B 보고서](docs/reviews/e1-ab-report.md).
+> 효과는? ON vs OFF 통제 A/B(5과제, 다른 모델이 블라인드 채점)에서 **ON 5/5 전승(총점 137 vs 109)**. 정확성은 무차이 — 값이 갈리는 지점은 "검증이 귀찮은 순간"입니다: 렌더 과제에서 OFF는 "열어보세요"로 끝, ON은 브라우저로 실제 관측·검증. 멀티스토리에서 OFF는 검증 시도 0회 — [A/B 보고서](docs/reviews/e1-ab-report.md).
+>
+> 이 정성적 차이는 **반복 3회에서 견고하게 재현**됐습니다(OFF 검증 0/3, ON 3/3). 단 "몇 배 비싸다"는 배율은 표본마다 크게 흔들려 단일 숫자로 볼 수 없습니다([반복 측정](docs/reviews/e1b-repeat.md)) — 이 반복 실험은 fable-lite 자체의 검증 인정 버그도 찾아내 수정으로 이어졌습니다. **재현되는 것만 보고하고, 안 되는 것은 안 된다고 적습니다.**
 
 ## v1 범위
 
@@ -54,6 +56,7 @@ wmux 좌상 오케스트레이터는 위임 전 `brief`로 작업 규율 블록�
 ```powershell
 python -m fable_lite brief --paths "core/**,tests/**" --verify-cmd "python -m pytest tests/" --sentinel tmp/.done-x --target codex
 python -m fable_lite check --root . --agent codex --since-file tmp/.delegation-start
+python -m fable_lite brief --card C:\Users\example\.claude\tmp\cards\work.json && python -m fable_lite check --card C:\Users\example\.claude\tmp\cards\work.json
 ```
 
 `check`는 변경 파일, 미검증 변경, scope 이탈, R1 계약 필요, sentinel 약속 미이행을 한국어로 요약합니다. exit code `0`만 green이며, sentinel 존재만으로 완료로 보지 않습니다.

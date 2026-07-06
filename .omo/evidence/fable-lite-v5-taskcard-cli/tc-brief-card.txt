@@ -1,0 +1,28 @@
+COMMAND: python -m fable_lite brief --card tmp/qa-taskcard-cli/brief-card.json
+EXIT_CODE: 0
+OUTPUT:
+[fable-lite ���� ����]
+- ���: agy
+- ����: �� ����. �� ���� CLI ���⹰�� �����ϸ� �Ϸ� �� ���ɽ�Ʈ������ check�� ����Ʈ�Դϴ�.
+- �۾�ī��: C:\Users\example\fable-lite\tmp\qa-taskcard-cli\brief-card.json
+- owner: antigravity
+
+allowed_paths:
+- fable_lite/**
+- tests/**
+
+forbidden_paths:
+- core/**
+- packs/**
+
+���� �䱸:
+- �ݵ�� �����ϰ� ����� �����ϼ���: `python -m pytest tests/test_fable_lite_cli.py -q`
+- �����ϸ� ���� �� ���� ������ �ٽ� �����ϰ� ���� evidence�� ���⼼��.
+
+sentinel ��Ģ:
+- �Ϸ� �� �� ���� `tmp/.qa-brief-done`�� �����ϼ���.
+- sentinel�� �Ϸ� ���� ��ȣ�� ���̸�, ���� ���Ÿ� ��ü���� �ʽ��ϴ�.
+
+���� check ����:
+- �Ϸ� �� ���ɽ�Ʈ�����Ͱ� `python -m fable_lite check --root <project> --agent <agent> --since-file <marker>`�� �����մϴ�.
+- check�� RED�̸� �Ϸ�� �������� �ʽ��ϴ�.
