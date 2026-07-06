@@ -1,6 +1,51 @@
 # fable-lite
 
-Fable 5의 동작 특성(운영 규율 · 검증 습관 · 보고 품질)을 Opus 등 하위 모델에서 재현하기 위한 프로젝트.
+[![ci](https://github.com/pinetreeB/fable-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/pinetreeB/fable-lite/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-- 시작: 2026-07-06
-- 팀: Claude(오케스트레이터) + Codex(구현) + Antigravity(리뷰·분석) + Claude ultracode(구현보조)
+> 🇰🇷 **한국어가 1차 문서입니다**: [`README.ko.md`](README.ko.md)
+
+A Korean-first Claude Code harness that makes lower Claude models (Opus, Sonnet) follow **Fable 5's working discipline** — investigation, verification grounding, evidence-gated completion, scope control, and high-risk contracts — enforced as **deterministic hooks**, not suggestions.
+
+**A procedure transplant, not a capability transplant.** Weight-level abilities (out-of-spec defect discovery, self-driven implication depth) are explicitly out of scope; the harness escalates honestly instead of pretending.
+
+## Why hooks, not prompts
+
+In a live 3-run experiment with unrestricted tools ([report](docs/reviews/p5b-n1-natural.md)), pack instructions alone produced **0/3** natural compliance; the deterministic Stop gate converged all three runs to *one block → one full recovery* with real evidence (file:line citations, re-run outputs). Discipline packs tell the model *what* to do; hooks make skipping it impossible to finish.
+
+## What's inside
+
+| Gate | Mechanism |
+|------|-----------|
+| Investigation protocol (3+ hypotheses, evidence, rejections) | pack + **N1 compliance parser** on Stop (bilingual markers) |
+| Verification grounding (RUN→OBSERVE→FIX→RE-RUN) | pack + evidence ledger |
+| Evidence-gated completion | Stop hook blocks changed-but-unverified turns (max 2, fail-open) |
+| Scope drift detection | PostToolUse warning |
+| High-risk contract (auth/migration/payment/mass-delete) | PreToolUse **hard block** until `.fable-lite/contract.json` exists |
+| Korean-first routing | "버그 고쳐줘", "왜 안 돼" → investigation pack |
+| Goals checkpoints | `goals/goals.py` CLI, verify-with-evidence required |
+
+Pure-stdlib Python core (zero Claude Code imports — platform-neutral, adapters are thin wrappers), single state dir `.fable-lite/`, every hook fail-open, Windows-native.
+
+## Install
+
+```
+/plugin marketplace add pinetreeB/fable-lite
+/plugin install fable-lite@fable-lite
+```
+
+Or from a local clone: `claude plugin marketplace add <path>` → `claude plugin install fable-lite@fable-lite`.
+
+## Verify
+
+```
+python -m pytest tests/ -q      # unit tests
+python eval/run_probes.py       # deterministic probe suite
+python eval/e2e_smoke.py        # full hook-chain smoke (real CC payload schema)
+```
+
+## Credits
+
+Procedural design (verification grounding, decomposition/evidence gates, investigation loop, early-stop prevention) adapted from [fivetaku/fablize](https://github.com/fivetaku/fablize) (MIT) — all prose and code rewritten. Evaluation-loop ideas informed by [rennf93/opus-fable-playbook](https://github.com/rennf93/opus-fable-playbook) and [elon-choo/fablever](https://github.com/elon-choo/fablever).
+
+MIT © pinetreeB
