@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2] - 2026-07-08
+
+### Changed — report style guidance (user feedback)
+
+- Investigation packs (ko/en) gained a "Report style: body for humans, markers for the gate" section: the final report must lead with a plain-language body (no code identifiers/paths/line numbers; readers may be non-developers), with the marker block compressed to one line each at the bottom. Rationale: the N1 gate only parses marker existence, but models were letting the marker format drag the whole report into a technical document — forcing non-developer users to ask follow-up questions.
+- N1 block message now carries the same hint ("markers are one compact line each at the bottom; keep the body in plain language"), so a blocked model rewrites toward a readable report instead of a more technical one.
+- Gate logic unchanged: pytest 97, probes 15/15.
+
 ## [1.1.1] - 2026-07-08
 
 ### Fixed — briefing false positives (real-world defect)
