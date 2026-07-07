@@ -20,6 +20,14 @@ When you ask an AI (Claude, Codex…) to write code, it's capable but sometimes 
 
 **One honest caveat**: fable-lite doesn't make the AI *smarter* — it just makes cutting corners *impossible to finish*. (In a real on/off comparison, correctness was identical; what differed was how rigorously the work got verified.)
 
+## 📖 Why the name "fable-lite"
+
+This project began with a question: **could Fable 5 — Anthropic's top-tier model — be recreated on lower models?** After surveying prior attempts and controlled experiments, the answer was clear: the model's raw capability (spotting problems nobody asked about, the depth to crack hard problems) obviously cannot be transplanted.
+
+But what people who use Fable actually feel isn't just capability. It's **the force of pushing through to the end** — never calling something "done" before verifying it, running what it builds with its own hands, not stopping halfway. That part turned out to be **procedure, not capability** — which means hooks can enforce it.
+
+So we dropped Fable's weight (model capability) and carried over only its way of working — hence **fable-lite**.
+
 ---
 
 ## Technical summary
@@ -74,6 +82,6 @@ python eval/e2e_smoke.py        # full hook-chain smoke (real CC payload schema)
 
 ## Credits
 
-Procedural design (verification grounding, decomposition/evidence gates, investigation loop, early-stop prevention) adapted from [fivetaku/fablize](https://github.com/fivetaku/fablize) (MIT) — all prose and code rewritten. Evaluation-loop ideas informed by [rennf93/opus-fable-playbook](https://github.com/rennf93/opus-fable-playbook) and [elon-choo/fablever](https://github.com/elon-choo/fablever).
+Procedural design (verification grounding, decomposition/evidence gates, investigation loop, early-stop prevention) adapted from [fivetaku/fablize](https://github.com/fivetaku/fablize) (MIT) — all prose and code rewritten. The intent-gate interview methodology (ambiguity scoring → threshold gating → one-question-at-a-time confirmation) is adapted from [Yeachan-Heo/gajae-code](https://github.com/Yeachan-Heo/gajae-code) (MIT). Evaluation-loop ideas informed by [rennf93/opus-fable-playbook](https://github.com/rennf93/opus-fable-playbook) and [elon-choo/fablever](https://github.com/elon-choo/fablever).
 
 MIT © pinetreeB
