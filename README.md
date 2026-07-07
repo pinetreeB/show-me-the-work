@@ -5,6 +5,25 @@
 
 > 🇰🇷 **한국어가 1차 문서입니다**: [`README.ko.md`](README.ko.md)
 
+## 🎯 What is this? (for non-developers / vibe coders)
+
+When you ask an AI (Claude, Codex…) to write code, it's capable but sometimes **careless**:
+
+- It changes code and says "done" **without actually running it**
+- It builds a page and ends with "just open it in a browser" (never looked itself)
+- It picks **one guess** for a bug and fixes that (maybe the wrong spot)
+- It says "I'll do X next" and just **stops**
+
+`fable-lite` is an **automatic quality inspector** that sits next to the AI. When the AI tries to call something "done" without checking, it **blocks and demands evidence**. You do nothing — install once, and it works on every task.
+
+> Think of it as a flexible QA supervisor assigned to a skilled-but-careless worker. Silent most of the time; it only steps in the moment someone says "done" without proof.
+
+**One honest caveat**: fable-lite doesn't make the AI *smarter* — it just makes cutting corners *impossible to finish*. (In a real on/off comparison, correctness was identical; what differed was how rigorously the work got verified.)
+
+---
+
+## Technical summary
+
 A Korean-first Claude Code harness that makes lower Claude models (Opus, Sonnet) follow **Fable 5's working discipline** — investigation, verification grounding, evidence-gated completion, scope control, and high-risk contracts — enforced as **deterministic hooks**, not suggestions.
 
 **A procedure transplant, not a capability transplant.** Weight-level abilities (out-of-spec defect discovery, self-driven implication depth) are explicitly out of scope; the harness escalates honestly instead of pretending.
