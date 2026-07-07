@@ -32,8 +32,9 @@ NON_VERIFY_TERMS = (
 # 무관하게 실패로 판정한다(보수적 — 애매하면 실패 쪽으로 기운다).
 FAIL_SIGNALS = ("failed", "error", "traceback", "assertionerror", "exception", "fatal", "not ok")
 
-# 실패 신호가 없을 때만 확인하는 성공 신호.
-OK_SIGNALS = ("passed", "verify_ok", "success", " ok\n", " ok ", "all tests", "✓")
+# 실패 신호가 없을 때만 확인하는 성공 신호. 값 덤프만 있는 출력은 성공 토큰 없이 판정하지 않는다.
+OK_SIGNALS = ("passed", "verify_ok", "success", "all tests", "✓")
+OK_WORD_RE = re.compile(r"\bok\b", re.IGNORECASE)
 
 
 def is_verification_command(command: str) -> bool:
@@ -55,4 +56,4 @@ def text_indicates_success(text: str) -> bool:
         return False
     if any(signal in lowered for signal in FAIL_SIGNALS):
         return False
-    return any(signal in lowered for signal in OK_SIGNALS)
+    return any(signal in lowered for signal in OK_SIGNALS) or bool(OK_WORD_RE.search(text))

@@ -36,8 +36,11 @@ def default_ledger() -> JsonObject:
         "verification_results": [],
         "stop_blocks": 0,
         "goals_blocks": 0,
+        "intent_blocks": 0,
         "requires_investigation_compliance": False,
         "needs_goals": False,
+        "intent_required": False,
+        "ambiguity_score": 0,
         "scope_warnings": [],
         "agent": "",
     }
@@ -149,6 +152,12 @@ def _bool_value(value: object) -> bool:
     return value is True or (isinstance(value, str) and value.lower() == "true")
 
 
+def _bounded_score(value: object) -> int:
+    if not isinstance(value, int):
+        return 0
+    return max(0, min(4, value))
+
+
 def _json_safe(value: object) -> bool:
     if isinstance(value, str | int | bool) or value is None:
         return True
@@ -219,6 +228,8 @@ def _apply_event(ledger: JsonObject, payload: Mapping[str, object]) -> JsonObjec
         prompt = payload.get("prompt")
         packs = payload.get("packs")
         needs_goals = payload.get("needs_goals") is True
+        intent_required = payload.get("intent_required") is True
+        ambiguity_score = _bounded_score(payload.get("ambiguity_score"))
         requires_compliance = payload.get("requires_investigation_compliance") is True
         ledger["task_mode"] = mode if isinstance(mode, str) else "quick"
         ledger["prompt"] = prompt if isinstance(prompt, str) else ""
@@ -228,9 +239,12 @@ def _apply_event(ledger: JsonObject, payload: Mapping[str, object]) -> JsonObjec
             else []
         )
         ledger["needs_goals"] = needs_goals
+        ledger["intent_required"] = intent_required
+        ledger["ambiguity_score"] = ambiguity_score
         ledger["requires_investigation_compliance"] = requires_compliance
         ledger["stop_blocks"] = 0
         ledger["goals_blocks"] = 0
+        ledger["intent_blocks"] = 0
     elif event == "change":
         path = payload.get("path")
         if isinstance(path, str) and path:

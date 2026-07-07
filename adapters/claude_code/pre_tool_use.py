@@ -17,7 +17,8 @@ def main() -> int:
         root = Path(__file__).resolve().parents[2]
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
-        from adapters.claude_code.common import emit, fail_open, project_root, read_payload, tool_command, tool_file_paths, tool_input
+        from adapters.claude_code.common import emit, project_root, read_payload, tool_command, tool_file_paths, tool_input
+        from adapters.intent_command import intent_set_command
         payload = read_payload()
         from core.contract import evaluate_pretool_contract
 
@@ -29,6 +30,7 @@ def main() -> int:
                 "file_paths": tool_file_paths(payload),
                 "command": tool_command(payload),
                 "prompt": input_text,
+                "intent_set_command": intent_set_command(__file__),
             }
         )
         if result["decision"] == "block":

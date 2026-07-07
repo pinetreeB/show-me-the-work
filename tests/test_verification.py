@@ -49,3 +49,16 @@ def test_text_indicates_success_conservative_fallback() -> None:
     assert text_indicates_success("Traceback (most recent call last):") is False
     assert text_indicates_success("") is False
     assert text_indicates_success("no signal either way") is False
+
+
+def test_text_indicates_success_accepts_ok_word_boundary_cases_from_p8() -> None:
+    assert text_indicates_success("ok add=5 multiply=6") is True
+    assert text_indicates_success("OK: 모든 검증 통과") is True
+    assert text_indicates_success("broken") is False
+    assert text_indicates_success("not ok") is False
+
+
+def test_text_indicates_success_keeps_value_dump_without_ok_conservative_from_p8() -> None:
+    text = "add(2,3) = 5\r\nadd(-1,1) = 0\r\nmultiply(2,3) = 6"
+
+    assert text_indicates_success(text) is False

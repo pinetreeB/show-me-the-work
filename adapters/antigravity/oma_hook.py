@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 import sys
 import json
 import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import TypeGuard, cast
 
 # Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -14,49 +18,72 @@ if str(PROJECT_ROOT) not in sys.path:
 # — claude_code/codex_cli의 8개 훅 파일과 동일하게, import 실패도
 # main()의 try/except가 잡아 fail_open으로 처리되도록 한다.
 
-def read_payload():
+def read_payload() -> dict[str, object]:
     text = sys.stdin.buffer.read().decode("utf-8", errors="replace")
     if not text.strip():
         return {}
     try:
-        return json.loads(text)
+        raw = cast(object, json.loads(text))
     except json.JSONDecodeError as exc:
         raise ValueError("malformed JSON payload") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("payload must be a JSON object")
+    return dict(cast(Mapping[str, object], raw))
 
-def emit(payload):
+def emit(payload: Mapping[str, object]) -> int:
     data = json.dumps(payload, ensure_ascii=False)
-    sys.stdout.buffer.write(data.encode("utf-8"))
-    sys.stdout.buffer.write(b"\n")
+    _ = sys.stdout.buffer.write(data.encode("utf-8"))
+    _ = sys.stdout.buffer.write(b"\n")
     return 0
 
-def fail_open(msg):
+def fail_open(msg: str) -> int:
     return emit({"decision": "allow", "systemMessage": f"fable-lite fail-open: {msg}"})
 
-def extract_tool_info(payload):
+def _mapping(value: object) -> Mapping[str, object]:
+    return cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
+
+
+def _mapping_sequence(value: object) -> list[Mapping[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes):
+        return []
+    return [cast(Mapping[str, object], item) for item in value if isinstance(item, Mapping)]
+
+
+def _string_sequence(value: object) -> TypeGuard[Sequence[str]]:
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, str | bytes)
+        and all(isinstance(item, str) for item in value)
+    )
+
+
+def extract_tool_info(payload: Mapping[str, object]) -> tuple[str, dict[str, object]]:
     tool_name = ""
-    tool_input = {}
+    tool_input: dict[str, object] = {}
     
-    metadata = payload.get("metadata", {})
-    if isinstance(metadata, dict) and "tool_name" in metadata:
-        tool_name = metadata.get("tool_name", "")
-        tool_input = metadata.get("tool_input", {})
+    metadata = _mapping(payload.get("metadata"))
+    metadata_name = metadata.get("tool_name")
+    if isinstance(metadata_name, str):
+        tool_name = metadata_name
+    metadata_input = metadata.get("tool_input")
+    if isinstance(metadata_input, Mapping):
+        tool_input = dict(cast(Mapping[str, object], metadata_input))
     
-    req = payload.get("llm_request", {})
-    if isinstance(req, dict):
-        tool_calls = req.get("tool_calls", [])
-        if isinstance(tool_calls, list) and len(tool_calls) > 0:
-            tc = tool_calls[0]
-            if isinstance(tc, dict):
-                tool_name = tc.get("name", tool_name)
-                args = tc.get("args") or tc.get("input") or {}
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except:
-                        pass
-    
-                if isinstance(args, dict):
-                    tool_input = args
+    req = _mapping(payload.get("llm_request"))
+    tool_calls = _mapping_sequence(req.get("tool_calls"))
+    if tool_calls:
+        tc = tool_calls[0]
+        name_value = tc.get("name")
+        if isinstance(name_value, str):
+            tool_name = name_value
+        args: object = tc.get("args") or tc.get("input") or {}
+        if isinstance(args, str):
+            try:
+                args = cast(object, json.loads(args))
+            except json.JSONDecodeError:
+                args = {}
+        if isinstance(args, Mapping):
+            tool_input = dict(cast(Mapping[str, object], args))
     
     # Map OmA tools to CC tools
     tool_name_map = {
@@ -70,26 +97,51 @@ def extract_tool_info(payload):
     mapped_name = tool_name_map.get(str(tool_name), str(tool_name))
     return mapped_name, tool_input
 
-def extract_paths_from_input(tool_input):
-    paths = []
-    if "file_paths" in tool_input and isinstance(tool_input["file_paths"], list):
-        paths.extend([str(p) for p in tool_input["file_paths"]])
+def extract_paths_from_input(tool_input: Mapping[str, object]) -> list[str]:
+    paths: list[str] = []
+    file_paths = tool_input.get("file_paths")
+    if isinstance(file_paths, Sequence) and not isinstance(file_paths, str | bytes):
+        paths.extend(str(path) for path in file_paths)
     for key in ["file_path", "path", "notebook_path", "TargetPath", "AbsolutePath", "TargetFile"]:
-        if key in tool_input and isinstance(tool_input[key], str):
-            paths.append(tool_input[key])
+        value = tool_input.get(key)
+        if isinstance(value, str):
+            paths.append(value)
     return paths
 
-def extract_command(tool_input):
+def extract_command(tool_input: Mapping[str, object]) -> str:
     for key in ["command", "CommandLine"]:
-        if key in tool_input and isinstance(tool_input[key], str):
-            return tool_input[key]
+        value = tool_input.get(key)
+        if isinstance(value, str):
+            return value
     return ""
 
-def _get_project_root(payload):
+def _get_project_root(payload: Mapping[str, object]) -> str:
     cwd = payload.get("cwd") or os.getcwd()
     return str(cwd)
 
-def handle_before_tool(payload):
+def _string_list(value: object) -> list[str]:
+    if not _string_sequence(value):
+        return []
+    return [item for item in value if item]
+
+def _packs_with_intent(packs_value: object, intent_required: bool) -> list[str]:
+    packs = _string_list(packs_value)
+    if intent_required and "intent-interview" not in packs:
+        packs.append("intent-interview")
+    return packs
+
+def _append_intent_context(lines: list[str], intent_required: bool, intent_command: str) -> None:
+    if not intent_required:
+        return
+    lines.extend([
+        "의도 확인 필요: 수정 전 `확인질문 N:` 형식으로 목표/범위/비목표를 최대 3개만 물어보세요.",
+        f"확인되면 정확히 이 명령을 그대로 실행하세요: `{intent_command}`",
+        "저장소 루트에서 직접 실행 중이면 `python -m fable_lite intent set ...`도 가능하지만, 플러그인 사용 중에는 위 절대경로 명령을 우선하세요.",
+        "사용자가 묻지 말라고 한 경우에만 합리적 가정을 기록하고 명령 끝에 `--assumed`를 붙이세요.",
+    ])
+
+def handle_before_tool(payload: Mapping[str, object]) -> int:
+    from adapters.intent_command import intent_set_command
     from core.contract import evaluate_pretool_contract
 
     tool_name, tool_input = extract_tool_info(payload)
@@ -101,14 +153,15 @@ def handle_before_tool(payload):
         "tool_name": tool_name,
         "file_paths": paths,
         "command": cmd,
-        "prompt": json.dumps(tool_input, ensure_ascii=False)
+        "prompt": json.dumps(tool_input, ensure_ascii=False),
+        "intent_set_command": intent_set_command(__file__)
     })
     
     if result.get("decision") == "block":
         return emit({"decision": "block", "reason": str(result.get("reason", ""))})
     return emit({"decision": "allow"})
 
-def handle_after_tool(payload):
+def handle_after_tool(payload: Mapping[str, object]) -> int:
     root = _get_project_root(payload)
     tool_name, tool_input = extract_tool_info(payload)
 
@@ -121,7 +174,7 @@ def handle_after_tool(payload):
     if tool_name in EDIT_TOOLS:
         paths = extract_paths_from_input(tool_input)
         for path in paths:
-            record_event({
+            _ = record_event({
                 "project_root": root,
                 "event": "change",
                 "path": path,
@@ -139,7 +192,7 @@ def handle_after_tool(payload):
             "changed_files": paths
         })
         if scope.get("decision") == "warn":
-            record_event({"project_root": root, "event": "scope_warning", "message": scope.get("message")})
+            _ = record_event({"project_root": root, "event": "scope_warning", "message": scope.get("message")})
             return emit({
                 "decision": "allow",
                 "systemMessage": str(scope.get("message")),
@@ -150,7 +203,7 @@ def handle_after_tool(payload):
     if tool_name in SHELL_TOOLS:
         cmd = extract_command(tool_input)
         if is_verification_command(cmd):
-            record_event({
+            _ = record_event({
                 "project_root": root,
                 "event": "verification",
                 "command": cmd,
@@ -161,19 +214,17 @@ def handle_after_tool(payload):
             
     return emit({"decision": "allow"})
 
-def handle_after_agent(payload):
+def handle_after_agent(payload: Mapping[str, object]) -> int:
     from core.verify_state import evaluate_stop
 
     root = _get_project_root(payload)
-    term_reason = payload.get("termination_reason", "")
 
     assistant_text = ""
-    req = payload.get("llm_request", {})
-    if isinstance(req, dict) and "messages" in req and isinstance(req["messages"], list):
-        for msg in reversed(req["messages"]):
-            if msg.get("role") in ["assistant", "model"]:
-                assistant_text = str(msg.get("content", ""))
-                break
+    req = _mapping(payload.get("llm_request"))
+    for msg in reversed(_mapping_sequence(req.get("messages"))):
+        if msg.get("role") in ["assistant", "model"]:
+            assistant_text = str(msg.get("content", ""))
+            break
                 
     # OmA doesn't have stop_hook_active natively, so assume False for normal evaluation
     result = evaluate_stop({
@@ -187,48 +238,61 @@ def handle_after_agent(payload):
         
     return emit({"decision": "allow", "systemMessage": str(result.get("message", "fable-lite Stop gate allow."))})
 
-def handle_before_model(payload):
+def handle_before_model(payload: Mapping[str, object]) -> int:
+    from adapters.intent_command import intent_set_command
+    from core.ambiguity import evaluate_ambiguity
     from core.classify import classify_prompt
+    from core.intent import clear_intent
     from core.ledger import record_event
 
     prompt_value = payload.get("prompt", "")
     if not isinstance(prompt_value, str): prompt_value = ""
     
     if not prompt_value:
-        req = payload.get("llm_request", {})
-        if isinstance(req, dict) and "messages" in req and isinstance(req["messages"], list):
-            for msg in reversed(req["messages"]):
-                if msg.get("role") == "user":
-                    prompt_value = str(msg.get("content", ""))
-                    break
+        req = _mapping(payload.get("llm_request"))
+        for msg in reversed(_mapping_sequence(req.get("messages"))):
+            if msg.get("role") == "user":
+                prompt_value = str(msg.get("content", ""))
+                break
 
+    root = _get_project_root(payload)
+    _ = clear_intent(root)
     result = classify_prompt({"prompt": prompt_value})
-    packs = result.get("packs", [])
+    ambiguity = evaluate_ambiguity({
+        "project_root": root,
+        "prompt": prompt_value,
+        "requested_paths": _string_list(result.get("requested_paths")),
+    })
+    intent_required = ambiguity.get("ambiguous") is True
+    command_template = intent_set_command(__file__)
+    packs = _packs_with_intent(result.get("packs", []), intent_required)
     
-    record_event({
-        "project_root": _get_project_root(payload),
+    _ = record_event({
+        "project_root": root,
         "event": "prompt",
         "task_mode": result.get("mode", "quick"),
         "prompt": prompt_value,
         "packs": packs,
         "needs_goals": result.get("needs_goals", False),
-        "requires_investigation_compliance": isinstance(packs, list) and "investigation" in packs
+        "intent_required": intent_required,
+        "ambiguity_score": ambiguity.get("ambiguity_score") if isinstance(ambiguity.get("ambiguity_score"), int) else 0,
+        "requires_investigation_compliance": "investigation" in packs
     })
     
     lines = [
         "fable-lite 활성화: 작업 규율을 절차로 적용하세요.",
         f"mode={result.get('mode', 'quick')}"
     ]
-    if isinstance(packs, list):
-        if "investigation" in packs:
-            lines.extend([
-                "조사 팩 준수 필수: 출력에 `가설 1:`, `가설 2:`, `가설 3:`, `기각:`, `증거:`를 포함하세요.",
-                "수정 전 재현과 경쟁 가설을 먼저 기록하세요."
-            ])
-        if "verification-grounding" in packs:
-            lines.append("렌더/실행 산출물은 RUN→OBSERVE→FIX→RE-RUN 증거 없이는 완료하지 마세요.")
+    if "investigation" in packs:
+        lines.extend([
+            "조사 팩 준수 필수: 출력에 `가설 1:`, `가설 2:`, `가설 3:`, `기각:`, `증거:`를 포함하세요.",
+            "수정 전 재현과 경쟁 가설을 먼저 기록하세요."
+        ])
+    if "verification-grounding" in packs:
+        lines.append("렌더/실행 산출물은 RUN→OBSERVE→FIX→RE-RUN 증거 없이는 완료하지 마세요.")
     if result.get("needs_goals"):
         lines.append("2+ 스토리 작업입니다. goals 체크포인트를 만들거나 사용자에게 명시 확인을 받으세요.")
+    _append_intent_context(lines, intent_required, command_template)
         
     return emit({
         "decision": "allow",
@@ -237,7 +301,7 @@ def handle_before_model(payload):
         }
     })
 
-def main():
+def main() -> int:
     try:
         if len(sys.argv) < 2:
             return fail_open("No event specified")

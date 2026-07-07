@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import shlex
-from typing import Final, TypeAlias
+from typing import Final, TypeAlias, TypeGuard, cast
 
+from .intent import has_intent
 from .ledger import JsonObject, load_ledger, save_ledger, state_dir
 from .risk_terms import risk_flags
 
@@ -18,6 +19,7 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 GUARDED_TOOLS = EDIT_TOOLS | SHELL_TOOLS
 FAKE_EVIDENCE = ("assumed", "would pass", "should pass", "not run", "미실행")
 MAX_GOALS_BLOCKS = 2
+MAX_INTENT_BLOCKS = 2
 COMMAND_SEPARATORS: Final[frozenset[str]] = frozenset({"&&", "||", ";", "|"})
 RM_COMMANDS: Final[frozenset[str]] = frozenset({"rm", "remove-item"})
 PATH_OPTIONS: Final[frozenset[str]] = frozenset({"path", "literalpath"})
@@ -45,9 +47,17 @@ def _project_root(payload: Mapping[str, object]) -> str:
 
 
 def _string_list(value: object) -> list[str]:
-    if not isinstance(value, list):
+    if not _string_sequence(value):
         return []
-    return [item for item in value if isinstance(item, str)]
+    return [item for item in value if item]
+
+
+def _string_sequence(value: object) -> TypeGuard[Sequence[str]]:
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, str | bytes)
+        and all(isinstance(item, str) for item in value)
+    )
 
 
 def _tool_name(payload: Mapping[str, object]) -> str:
@@ -171,7 +181,7 @@ def _rm_target_high_risk(target: str, root: str, recursive: bool) -> bool:
         return True
     target_path = Path(root) / normalized
     try:
-        target_path.resolve().relative_to(Path(root).resolve())
+        _ = target_path.resolve().relative_to(Path(root).resolve())
     except ValueError:
         return True
     if recursive and _looks_like_directory_target(normalized, target_path):
@@ -260,21 +270,22 @@ def evaluate_r1_contract(payload: Mapping[str, object]) -> Decision:
 
 def _valid_contract(root: str) -> bool:
     try:
-        raw: object = json.loads(contract_path(root).read_text(encoding="utf-8"))
+        raw = cast(object, json.loads(contract_path(root).read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError):
         return False
     if not isinstance(raw, dict):
         return False
 
-    restated = raw.get("restated_goal")
-    acceptance = raw.get("acceptance")
-    evidence = raw.get("evidence", [])
+    contract = cast(Mapping[str, object], raw)
+    restated = contract.get("restated_goal")
+    acceptance = contract.get("acceptance")
+    evidence = contract.get("evidence", [])
     if not isinstance(restated, str) or not restated.strip():
         return False
-    if not isinstance(acceptance, list) or not any(isinstance(item, str) and item.strip() for item in acceptance):
+    if not _string_sequence(acceptance) or not any(item.strip() for item in acceptance):
         return False
-    if isinstance(evidence, list):
-        text = "\n".join(item for item in evidence if isinstance(item, str)).lower()
+    if _string_sequence(evidence):
+        text = "\n".join(item for item in evidence if item).lower()
         return not any(marker in text for marker in FAKE_EVIDENCE)
     return True
 
@@ -284,9 +295,28 @@ def _needs_goals_block(root: str) -> bool:
     return ledger.get("needs_goals") is True and not goals_path(root).exists()
 
 
+def _needs_intent_block(root: str, tool: str) -> bool:
+    if tool not in EDIT_TOOLS:
+        return False
+    ledger = load_ledger({"project_root": root})
+    return ledger.get("intent_required") is True and not has_intent(root)
+
+
 def _goals_blocks(ledger: Mapping[str, object]) -> int:
     value = ledger.get("goals_blocks")
     return value if isinstance(value, int) else 0
+
+
+def _intent_blocks(ledger: Mapping[str, object]) -> int:
+    value = ledger.get("intent_blocks")
+    return value if isinstance(value, int) else 0
+
+
+def _intent_set_command(payload: Mapping[str, object]) -> str:
+    value = payload.get("intent_set_command")
+    if isinstance(value, str) and value:
+        return value
+    return 'python -m fable_lite intent set --root . --goal "..." --scope "..." [--non-goal "..."]'
 
 
 def _block_goals_once(root: str) -> Decision:
@@ -309,6 +339,27 @@ def _block_goals_once(root: str) -> Decision:
     }
 
 
+def _block_intent_once(root: str, intent_command: str) -> Decision:
+    ledger: JsonObject = load_ledger({"project_root": root})
+    blocks = _intent_blocks(ledger)
+    if blocks >= MAX_INTENT_BLOCKS:
+        return {
+            "decision": "allow",
+            "message": "intent gate max 2 blocks reached; fail-open allow",
+        }
+    ledger["intent_blocks"] = blocks + 1
+    save_ledger({"project_root": root}, ledger)
+    return {
+        "decision": "block",
+        "reason": (
+            "fable-lite intent gate: 요청 의도가 모호해 수정 전 `.fable-lite/intent.json` 확정이 필요합니다. "
+            "`확인질문 N:` 형식으로 목표/범위/비목표를 확인한 뒤 "
+            f"`{intent_command}` 명령을 그대로 실행해 기록하세요. "
+            "/ Ambiguous edit intent requires intent.json first."
+        ),
+    }
+
+
 def evaluate_pretool_contract(payload: Mapping[str, object]) -> Decision:
     tool = _tool_name(payload)
     if tool not in GUARDED_TOOLS:
@@ -317,6 +368,11 @@ def evaluate_pretool_contract(payload: Mapping[str, object]) -> Decision:
     paths = _string_list(payload.get("file_paths"))
     command = _command(payload)
     root = _project_root(payload)
+    if _needs_intent_block(root, tool):
+        intent_result = _block_intent_once(root, _intent_set_command(payload))
+        if intent_result["decision"] == "block":
+            return intent_result
+
     if _needs_goals_block(root) and not _is_goals_authoring(paths, command):
         return _block_goals_once(root)
 

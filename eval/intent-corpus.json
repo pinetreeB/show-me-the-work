@@ -1,0 +1,209 @@
+[
+  {
+    "prompt": "이거 좀 고쳐줘",
+    "expected": "ambiguous",
+    "why": "대명사 지시(이거) + 수정 동사(고쳐) + 초단문 충족"
+  },
+  {
+    "prompt": "알아서 이쁘게 해줘",
+    "expected": "ambiguous",
+    "why": "위임 표현(알아서) + 수정 동사(해줘) + 초단문 충족"
+  },
+  {
+    "prompt": "저번에 말한 거 해줘",
+    "expected": "ambiguous",
+    "why": "대명사 지시(거) + 수정 동사(해줘) + 초단문 충족"
+  },
+  {
+    "prompt": "뭔가 이상해 수정해줘",
+    "expected": "ambiguous",
+    "why": "초단문 + 수정 동사(수정해) + 구체 대상 부재"
+  },
+  {
+    "prompt": "이 부분 적당히 고쳐",
+    "expected": "ambiguous",
+    "why": "위임 표현(적당히) + 수정 동사(고쳐) + 대명사 지시"
+  },
+  {
+    "prompt": "버튼 디자인 어떻게 좀 바꿔봐",
+    "expected": "ambiguous",
+    "why": "위임 표현(어떻게 좀) + 수정 동사(바꿔)"
+  },
+  {
+    "prompt": "그거 느낌대로 추가해",
+    "expected": "ambiguous",
+    "why": "위임 표현(느낌대로) + 대명사(그거) + 수정 동사(추가해)"
+  },
+  {
+    "prompt": "여기 에러나는거 니가 판단해서 고쳐줘",
+    "expected": "ambiguous",
+    "why": "대명사(여기) + 위임 표현(니가 판단해서) + 수정 동사(고쳐)"
+  },
+  {
+    "prompt": "기존 코드랑 어울리게 적당히 해줘",
+    "expected": "ambiguous",
+    "why": "위임 표현(적당히) + 수정 동사(해줘)"
+  },
+  {
+    "prompt": "이거 다 바꿔",
+    "expected": "ambiguous",
+    "why": "대명사(이거) + 수정 동사(바꿔) + 초단문"
+  },
+  {
+    "prompt": "메인화면 텍스트 알아서 수정해",
+    "expected": "ambiguous",
+    "why": "위임 표현(알아서) + 수정 동사(수정해)"
+  },
+  {
+    "prompt": "저거 작동 안하는데 고쳐",
+    "expected": "ambiguous",
+    "why": "대명사(저거) + 수정 동사(고쳐) + 구체 명사 부재"
+  },
+  {
+    "prompt": "이전에 에러났던거 알아서 처리해줘",
+    "expected": "ambiguous",
+    "why": "위임 표현(알아서) + 수정 동사(처리해)"
+  },
+  {
+    "prompt": "좀 더 깔끔하게 바꿔줘",
+    "expected": "ambiguous",
+    "why": "수정 동사(바꿔) + 구체 대상 부재 + 초단문"
+  },
+  {
+    "prompt": "이거 느낌대로 추가해봐",
+    "expected": "ambiguous",
+    "why": "대명사(이거) + 위임 표현(느낌대로) + 수정 동사(추가해)"
+  },
+  {
+    "prompt": "app.py의 15번째 줄 IndexError 고쳐줘",
+    "expected": "clear",
+    "why": "구체적 파일명(app.py) 포함, 절대 flag 금지 조건"
+  },
+  {
+    "prompt": "users 테이블에 email 컬럼 추가하는 마이그레이션 파일 만들어줘",
+    "expected": "clear",
+    "why": "구체적 명사 목적어(users 테이블, email 컬럼, 마이그레이션 파일) + 구체 대상 존재"
+  },
+  {
+    "prompt": "index.html 버튼 색상을 #FF0000으로 바꿔",
+    "expected": "clear",
+    "why": "구체적 파일명(index.html) 포함"
+  },
+  {
+    "prompt": "로그인 기능 구현해줘",
+    "expected": "clear",
+    "why": "초단문 아님(10자지만 구체적 명사 '로그인 기능' 포함 - 모호 2조건 미달)"
+  },
+  {
+    "prompt": "왜 이 함수에서 TypeError가 발생해?",
+    "expected": "clear",
+    "why": "수정 동사 부재 및 질문형(quick 조회)"
+  },
+  {
+    "prompt": "이 코드 어떻게 고쳐야 돼?",
+    "expected": "clear",
+    "why": "고쳐 동사가 있으나 의문문(?)으로 종료되므로 질문형(절대 flag 금지)"
+  },
+  {
+    "prompt": "main.js 파일 분석해서 콘솔 출력해줘",
+    "expected": "clear",
+    "why": "구체적 파일명(main.js) 포함"
+  },
+  {
+    "prompt": "알아서 이쁘게 고쳐줘 그냥 해",
+    "expected": "clear",
+    "why": "모호 조건 충족하나 '그냥 해' 포함 (명시적 스킵 조건, 절대 flag 금지)"
+  },
+  {
+    "prompt": "이거 에러나는데 묻지 말고 고쳐",
+    "expected": "clear",
+    "why": "모호 조건 충족하나 '묻지 말고' 포함 (명시적 스킵 조건, 절대 flag 금지)"
+  },
+  {
+    "prompt": "auth/login.py 파일 좀 고쳐줘",
+    "expected": "clear",
+    "why": "구체적 파일명(auth/login.py) 포함"
+  },
+  {
+    "prompt": "현재 떠있는 에러 메시지 분석해줘",
+    "expected": "clear",
+    "why": "수정 동사 부재 (분석해줘는 조회가 목적)"
+  },
+  {
+    "prompt": "테스트 코드 coverage 100% 되게 만들어줘",
+    "expected": "clear",
+    "why": "구체적 명사(테스트 코드, coverage) 존재 + 위임이나 대명사 단독 아님"
+  },
+  {
+    "prompt": "db.py 파일에서 쿼리 성능 개선해",
+    "expected": "clear",
+    "why": "구체적 파일명(db.py) 포함"
+  },
+  {
+    "prompt": "서버 포트 번호 8080으로 바꿔줘",
+    "expected": "clear",
+    "why": "구체적 대상(서버 포트 번호) 명시 + 대명사/위임 없음"
+  },
+  {
+    "prompt": "로그인 페이지 라우팅 로직 추가해",
+    "expected": "clear",
+    "why": "구체적 명사 목적어(라우팅 로직) 포함"
+  },
+  {
+    "prompt": "이거 어떻게 좀 고칠 수 없을까?",
+    "expected": "clear",
+    "why": "위임, 대명사, 수정 동사 있으나 질문형(?)이므로 절대 flag 금지"
+  },
+  {
+    "prompt": "알아서 이쁘게 해줄 수 있어?",
+    "expected": "clear",
+    "why": "위임, 수정 동사 있으나 질문형(?)이므로 절대 flag 금지"
+  },
+  {
+    "prompt": "그거 고쳐줘",
+    "context": {"has_intent": true},
+    "expected": "clear",
+    "why": "모호하나 이미 intent.json이 존재하므로 절대 flag 금지"
+  },
+  {
+    "prompt": "알아서 고쳐줘",
+    "context": {"has_goals": true},
+    "expected": "clear",
+    "why": "모호하나 이미 goals.json이 존재하므로 절대 flag 금지"
+  },
+  {
+    "prompt": "src/main.py 이거 좀 고쳐줘",
+    "expected": "clear",
+    "why": "대명사가 있지만 경로(src/main.py)가 명시되었으므로 절대 flag 금지"
+  },
+  {
+    "prompt": "적당히 묻지 말고 해줘",
+    "expected": "clear",
+    "why": "모호하나 '묻지 말고' 포함이므로 절대 flag 금지"
+  },
+  {
+    "prompt": "이 파일 뭔가 이상해",
+    "expected": "clear",
+    "why": "수정 동사(고쳐/바꿔 등)가 없어 대상 부재만으로는 flag 되지 않음"
+  },
+  {
+    "prompt": "이거 고치고 저거도 적당히 해",
+    "expected": "ambiguous",
+    "why": "대명사(이거, 저거) + 수정 동사 + 위임 표현(적당히)으로 강력한 모호 조건 충족"
+  },
+  {
+    "prompt": "화면 스타일 느낌대로 고쳐줘",
+    "expected": "ambiguous",
+    "why": "위임 표현(느낌대로) + 수정 동사(고쳐) 복수 충족"
+  },
+  {
+    "prompt": "데이터베이스 어떻게 좀 해줘",
+    "expected": "ambiguous",
+    "why": "위임 표현(어떻게 좀) + 수정 동사(해줘) 복수 충족"
+  },
+  {
+    "prompt": "이거 고쳐",
+    "expected": "ambiguous",
+    "why": "초단문 + 대명사 + 수정 동사 복수 충족"
+  }
+]
