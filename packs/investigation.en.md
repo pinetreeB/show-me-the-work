@@ -56,7 +56,17 @@ Omitting rejection reports forces others (or your future self) to re-investigate
 
 ---
 
-### Marker contract (parsed by compliance.py)
+### Report style: body for humans, markers for the gate
+
+Split the final report into **two layers**. Your reader may not be a developer.
+
+1. **Body (first, in plain language)** — explain what was wrong, what changed, and what it means for the reader.
+   Keep code identifiers, file paths, line numbers, and regexes out of the body. If a technical term is unavoidable, attach a one-line gloss.
+   (e.g. "The gate saw two file names and mistook the request for a big multi-part task, so it kept blocking the first steps" — no class name needed in that sentence.)
+2. **Investigation record (bottom, compact)** — the marker block exists to satisfy the gate. Compress each hypothesis/evidence/rejection to **one line each**.
+   The gate only checks that the markers exist. Do not turn the whole report into a technical document just to fill markers — that is the most common failure.
+
+However technical the investigation was, if the reader has to ask "so what actually happened?", the report has failed.
 
 When following this protocol, your output **must** include these markers:
 - `Hypothesis 1:`, `Hypothesis 2:`, `Hypothesis 3:` — numbered hypotheses (**required: minimum 3**)

@@ -81,7 +81,10 @@ def evaluate_stop(payload: Mapping[str, object]) -> Decision:
                 (
                     "fable-lite N1: 조사 팩 마커가 부족합니다. "
                     "`가설 1:`/`Hypothesis 1:`, `증거:`/`Evidence:`, `기각:`/`Rejected:`를 포함하세요. "
-                    "/ Investigation pack markers are required."
+                    "단 마커는 하단에 각 1줄 기록이면 충분합니다 — 본문은 비개발자도 읽는 쉬운 설명을 먼저 쓰고, "
+                    "보고 전체를 기술 문서로 만들지 마세요. "
+                    "/ Investigation pack markers are required — one compact line each at the bottom; "
+                    "keep the report body in plain language first."
                 ),
             )
 
