@@ -4,6 +4,7 @@ import argparse
 
 from .brief import run_brief
 from .check import run_check
+from .intent import add_intent_parser
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
     brief.add_argument("--card")
     brief.add_argument("--target", choices=("codex", "claude", "agy"))
     brief.set_defaults(func=run_brief)
+
+    add_intent_parser(subparsers)
     return parser
 
 
