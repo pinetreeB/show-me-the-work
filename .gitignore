@@ -4,4 +4,9 @@ __pycache__/
 tmp/
 .fable-lite/
 *.bak
+*.egg-info/
 .omo/
+eval/ab*/**/hookdebug.log
+eval/ab*/**/response*
+eval/ab*/**/ledger.json
+eval/ab*/**/*.png

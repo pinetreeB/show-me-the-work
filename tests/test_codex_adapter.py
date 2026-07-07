@@ -146,6 +146,33 @@ def test_codex_stop_uses_last_assistant_message_for_n1_gate(tmp_path: Path) -> N
     assert "조사 팩" in str(result["reason"])
 
 
+def test_codex_posttool_records_bash_script_and_make_test_as_verification(tmp_path: Path) -> None:
+    # v1 릴리스 심사 H1/H3 회귀: codex_cli는 구버전 TEST_TERMS를 쓰고 있어
+    # bash 스크립트 재실행·make test 둘 다 미인식이었다. core.verification 공유 후 인식돼야 한다.
+    bash_payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "bash test.sh"},
+        "tool_response": "Exit code: 0\nWall time: 1 seconds\nOutput:\nok\n",
+        "session_id": "codex-session-1",
+    }
+    make_payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "make test"},
+        "tool_response": "Exit code: 0\nWall time: 1 seconds\nOutput:\nok\n",
+        "session_id": "codex-session-1",
+    }
+
+    bash_result = run_hook("post_tool_use.py", bash_payload)
+    make_result = run_hook("post_tool_use.py", make_payload)
+
+    assert "recorded verification." in str(bash_result["systemMessage"])
+    assert "recorded verification." in str(make_result["systemMessage"])
+
+
 def test_codex_hooks_fail_open_on_malformed_payload() -> None:
     result = run_hook("pre_tool_use.py", "{not-json")
 

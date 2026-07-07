@@ -7,7 +7,6 @@ import sys
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
-TEST_TERMS = ("pytest", "python -m pytest", "npm test", "go test", "cargo test", "node --test")
 
 
 def _fail_open(message: str) -> int:
@@ -27,6 +26,7 @@ def main() -> int:
         from core.classify import classify_prompt
         from core.ledger import classify_change_kind, load_ledger, record_event
         from core.scope_guard import evaluate_scope
+        from core.verification import is_verification_command
 
         root = common["project_root"](payload)
         tool = payload.get("tool_name")
@@ -67,7 +67,7 @@ def main() -> int:
             return common["emit"]({"systemMessage": f"fable-lite 원장: 변경 {len(paths)}건 기록 / recorded {len(paths)} change(s)."})
         if tool in SHELL_TOOLS:
             command = common["tool_command"](payload)
-            if any(term in command.lower() for term in TEST_TERMS):
+            if is_verification_command(command):
                 record_event(
                     {
                         "project_root": root,

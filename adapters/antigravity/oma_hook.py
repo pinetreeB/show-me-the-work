@@ -8,11 +8,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.classify import classify_prompt
-from core.ledger import classify_change_kind, load_ledger, record_event
-from core.scope_guard import evaluate_scope
-from core.contract import evaluate_pretool_contract
-from core.verify_state import evaluate_stop
+# 주의: core.* import는 여기(모듈 최상단)에 두지 않는다 — main()의 try 블록
+# 밖에서 실행되면 core에 문제가 생겼을 때 fail-open 없이 훅 전체가 죽는다
+# (v1 릴리스 심사 B1). 각 handle_* 함수 안에서 필요한 것만 지역 import한다
+# — claude_code/codex_cli의 8개 훅 파일과 동일하게, import 실패도
+# main()의 try/except가 잡아 fail_open으로 처리되도록 한다.
 
 def read_payload():
     text = sys.stdin.buffer.read().decode("utf-8", errors="replace")
@@ -90,10 +90,12 @@ def _get_project_root(payload):
     return str(cwd)
 
 def handle_before_tool(payload):
+    from core.contract import evaluate_pretool_contract
+
     tool_name, tool_input = extract_tool_info(payload)
     paths = extract_paths_from_input(tool_input)
     cmd = extract_command(tool_input)
-    
+
     result = evaluate_pretool_contract({
         "project_root": _get_project_root(payload),
         "tool_name": tool_name,
@@ -109,10 +111,13 @@ def handle_before_tool(payload):
 def handle_after_tool(payload):
     root = _get_project_root(payload)
     tool_name, tool_input = extract_tool_info(payload)
-    
+
+    from core.classify import classify_prompt
     from core.contract import EDIT_TOOLS, SHELL_TOOLS
-    TEST_TERMS = ("pytest", "npm test", "go test", "cargo test", "node --test")
-    
+    from core.ledger import classify_change_kind, load_ledger, record_event
+    from core.scope_guard import evaluate_scope
+    from core.verification import is_verification_command
+
     if tool_name in EDIT_TOOLS:
         paths = extract_paths_from_input(tool_input)
         for path in paths:
@@ -144,7 +149,7 @@ def handle_after_tool(payload):
         
     if tool_name in SHELL_TOOLS:
         cmd = extract_command(tool_input)
-        if any(term in cmd.lower() for term in TEST_TERMS):
+        if is_verification_command(cmd):
             record_event({
                 "project_root": root,
                 "event": "verification",
@@ -157,9 +162,11 @@ def handle_after_tool(payload):
     return emit({"decision": "allow"})
 
 def handle_after_agent(payload):
+    from core.verify_state import evaluate_stop
+
     root = _get_project_root(payload)
     term_reason = payload.get("termination_reason", "")
-    
+
     assistant_text = ""
     req = payload.get("llm_request", {})
     if isinstance(req, dict) and "messages" in req and isinstance(req["messages"], list):
@@ -181,6 +188,9 @@ def handle_after_agent(payload):
     return emit({"decision": "allow", "systemMessage": str(result.get("message", "fable-lite Stop gate allow."))})
 
 def handle_before_model(payload):
+    from core.classify import classify_prompt
+    from core.ledger import record_event
+
     prompt_value = payload.get("prompt", "")
     if not isinstance(prompt_value, str): prompt_value = ""
     

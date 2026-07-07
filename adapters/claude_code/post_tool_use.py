@@ -2,35 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import re
 import sys
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
-# 검증 명령으로 인정하는 신호. python -c "assert ..." 한 줄 검증(E1b F4에서 관측)·unittest·JS 러너 포함.
-TEST_TERMS = (
-    "pytest", "python -m pytest", "python -c", "python3 -c", "unittest",
-    "npm test", "npm run test", "yarn test", "pnpm test", "jest", "vitest",
-    "go test", "cargo test", "node --test", "node:test", "deno test", "rspec", "phpunit",
-)
-# 스크립트 재실행 패턴(E1c F1에서 관측: `python demo.py`로 수정 전후 검증했는데 미인식). 인터프리터+스크립트파일.
-TEST_SCRIPT_RE = re.compile(
-    r"\b(?:python3?|node|ruby|deno|bun|go run|php)\s+[^\s|;&]*\.\w+", re.IGNORECASE
-)
-# 스크립트 재실행처럼 보여도 검증이 아닌 명령 — 이게 있으면 검증으로 인정하지 않는다.
-NON_VERIFY_TERMS = (
-    "migrate", "makemigrations", "install", "setup.py", "collectstatic",
-    "build", "deploy", "runserver", "serve", "start", "manage.py",
-)
-
-
-def _is_verification_command(command: str) -> bool:
-    lowered = command.lower()
-    if any(term in lowered for term in TEST_TERMS):
-        return True
-    if any(term in lowered for term in NON_VERIFY_TERMS):
-        return False
-    return bool(TEST_SCRIPT_RE.search(command))
 
 
 def _fail_open(message: str) -> int:
@@ -59,6 +34,7 @@ def main() -> int:
         from core.classify import classify_prompt
         from core.ledger import classify_change_kind, load_ledger, record_event
         from core.scope_guard import evaluate_scope
+        from core.verification import is_verification_command
 
         root = project_root(payload)
         tool = payload.get("tool_name")
@@ -99,7 +75,7 @@ def main() -> int:
             return emit({"systemMessage": f"fable-lite 원장: 변경 {len(paths)}건 기록 / recorded {len(paths)} change(s)."})
         if tool in SHELL_TOOLS:
             command = tool_command(payload)
-            if _is_verification_command(command):
+            if is_verification_command(command):
                 record_event(
                     {
                         "project_root": root,

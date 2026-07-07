@@ -4,22 +4,22 @@
 
 ## 주의: 메인 설정 훼손 방지
 
-OmA의 메인 설정 파일인 `~/.gemini/config/plugins/oh-my-antigravity/hooks.json`을 직접 수정하는 것은 권장되지 않습니다. 대신 프로젝트 단위 로컬 상태(`.omg/state/hooks.json`)나 별도의 프로파일을 구성하여 주입하는 것을 권장합니다.
+OmA의 글로벌 설정 파일인 `~/.gemini/config/plugins/oh-my-antigravity/hooks.json`을 직접 수정하는 것은 권장하지 않습니다. 대신 대상 프로젝트의 로컬 디렉토리 내에 `.gemini/hooks.json` 파일을 구성하여 안전하게 훅을 주입하는 방식을 사용하십시오.
 
 ## 설치 방법
 
-1. **절대 경로 치환**
-   현재 디렉토리의 `hooks.json` 파일을 열고, `{FABLE_LITE_ROOT}` 부분을 실제 fable-lite 설치 절대 경로(예: `C:/Users/rotat/fable-lite`)로 모두 치환합니다.
+1. **절대 경로 치환 (수동)**
+   fable-lite 저장소의 `adapters/antigravity/hooks.json` 파일을 열고, 템플릿의 `{FABLE_LITE_ROOT}` 부분을 사용자가 실제 클론한 fable-lite의 절대 경로(예: `C:/Users/rotat/fable-lite`)로 직접 치환해야 합니다. 이 작업은 현재 수동으로 진행해야 합니다.
    
 2. **로컬 프로젝트에 적용**
-   fable-lite를 적용하려는 프로젝트 경로로 이동하여, 훅 설정 파일을 병합합니다.
+   fable-lite 하네스를 적용하려는 대상 프로젝트의 경로로 이동하여, 아래와 같이 로컬 훅 설정 파일을 복사합니다.
 
    ```bash
    mkdir -p .gemini
    cp /path/to/fable-lite/adapters/antigravity/hooks.json .gemini/hooks.json
    ```
 
-   > ⚠️ **경로 주의(p7 라이브 검증으로 확정)**: 로컬 훅은 `.gemini/hooks.json`에서 로드됩니다. `.omg/state/hooks.json`은 OmA가 로컬 오버라이드로 자동 로드하지 **않습니다**(이 경로로 두면 훅이 조용히 무시됨). 만약 이미 다른 로컬 훅이 있다면 JSON 병합 도구(jq 등)로 병합하세요.
+   > ⚠️ **로컬 훅 등록 주의**: OmA는 프로젝트 로컬의 훅을 로드할 때 `.gemini/hooks.json` 파일을 사용합니다. 다른 경로(예: `.omg/...`)를 사용하면 훅이 조용히 무시되므로 주의하십시오. 만약 대상 프로젝트에 이미 사용 중인 `.gemini/hooks.json` 파일이 존재한다면 덮어쓰지 말고 JSON 내용을 수동으로 병합(Merge)하십시오.
 
 3. **작동 확인**
-   로컬 디렉토리에서 Antigravity CLI를 구동하면 `oma_hook.py`가 자동으로 호출되어 페이로드를 Python 코어 판정 로직으로 전달합니다.
+   해당 프로젝트 디렉토리에서 Antigravity CLI를 구동하면 `oma_hook.py`가 자동으로 호출되어 페이로드를 Python 코어 판정 로직으로 전달합니다.

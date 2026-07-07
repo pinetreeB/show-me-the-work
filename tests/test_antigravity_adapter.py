@@ -133,6 +133,25 @@ def test_oma_after_agent_blocks_if_n1_missing(tmp_path: Path) -> None:
     assert "조사 팩" in str(result.get("reason", ""))
 
 
+def test_oma_after_tool_records_bash_script_and_make_test_as_verification(tmp_path: Path) -> None:
+    # v1 릴리스 심사 H3 회귀: antigravity도 이전엔 좁은 로컬 TEST_TERMS를 썼다.
+    # core.verification 공유 후 bash 스크립트 재실행·make test가 인식돼야 한다.
+    bash_payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "metadata": {"tool_name": "run_command", "tool_input": {"CommandLine": "bash test.sh"}},
+    }
+    make_payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "metadata": {"tool_name": "run_command", "tool_input": {"CommandLine": "make test"}},
+    }
+
+    bash_result = run_oma_hook("AfterTool", bash_payload)
+    make_result = run_oma_hook("AfterTool", make_payload)
+
+    assert "fable-lite 원장: 검증 기록." in str(bash_result.get("systemMessage", ""))
+    assert "fable-lite 원장: 검증 기록." in str(make_result.get("systemMessage", ""))
+
+
 def test_oma_hooks_fail_open_on_malformed_payload() -> None:
     result = run_oma_hook("BeforeTool", "{not-json")
 
