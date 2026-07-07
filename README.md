@@ -33,6 +33,8 @@ Pure-stdlib Python core (zero Claude Code imports — platform-neutral, adapters
 
 ## Install
 
+**Requires Python 3.12+ on PATH in the target environment** — the hooks are stdlib-Python scripts, so a host without a resolvable `python` (e.g. a fresh worker box) must install it first. No third-party packages.
+
 ```
 /plugin marketplace add pinetreeB/fable-lite
 /plugin install fable-lite@fable-lite
