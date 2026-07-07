@@ -101,6 +101,8 @@ def tool_output(payload: Mapping[str, JsonValue]) -> str:
 
 
 def tool_success(payload: Mapping[str, JsonValue]) -> bool:
+    from core.verification import text_indicates_success
+
     response = tool_response(payload)
     if response.get("success") is True or payload.get("success") is True:
         return True
@@ -113,16 +115,9 @@ def tool_success(payload: Mapping[str, JsonValue]) -> bool:
     if payload.get("exit_code") is not None:
         return payload.get("exit_code") == 0
     # exit_code/success 필드 미제공(nested headless claude 세션 등, E1b F4에서 관측) —
-    # 성공/실패를 알 수 없을 때 stdout 텍스트로 보수적 폴백: 실패 신호가 하나라도 있으면 실패,
-    # 없고 성공 신호가 있어야 성공. 둘 다 없으면(판정 불가) 실패로 둔다.
-    text = tool_output(payload).lower()
-    if not text:
-        return False
-    fail_signals = ("failed", "error", "traceback", "assertionerror", "exception", "fatal", "not ok")
-    if any(s in text for s in fail_signals):
-        return False
-    ok_signals = ("passed", "verify_ok", "success", " ok\n", " ok ", "all tests", "✓")
-    return any(s in text for s in ok_signals)
+    # 성공/실패를 알 수 없을 때 stdout 텍스트로 보수적 폴백 판정(core.verification 공유 로직,
+    # claude_code·codex_cli·antigravity 3어댑터가 동일 기준을 쓴다 — v1 릴리스 심사 H2).
+    return text_indicates_success(tool_output(payload))
 
 
 def transcript_last_assistant_text(payload: Mapping[str, JsonValue]) -> str:

@@ -1,6 +1,6 @@
 # fable-lite
 
-[![ci](https://github.com/pinetreeB/fable-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/pinetreeB/fable-lite/actions/workflows/ci.yml)
+[![version](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > 🇰🇷 **한국어가 1차 문서입니다**: [`README.ko.md`](README.ko.md)
@@ -35,12 +35,15 @@ Pure-stdlib Python core (zero Claude Code imports — platform-neutral, adapters
 
 **Requires Python 3.12+ on PATH in the target environment** — the hooks are stdlib-Python scripts, so a host without a resolvable `python` (e.g. a fresh worker box) must install it first. No third-party packages.
 
+Recommended local-clone install:
+
 ```
-/plugin marketplace add pinetreeB/fable-lite
+git clone https://github.com/pinetreeB/fable-lite
+claude plugin marketplace add <path-to-fable-lite>
 /plugin install fable-lite@fable-lite
 ```
 
-Or from a local clone: `claude plugin marketplace add <path>` → `claude plugin install fable-lite@fable-lite`.
+After the plugin is registered in a marketplace, `/plugin marketplace add pinetreeB/fable-lite` can replace the local path step.
 
 ## Verify
 

@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+from core.verification import is_verification_command, text_indicates_success
+
+
+def test_is_verification_command_recognizes_python_pytest_and_inline_assert() -> None:
+    assert is_verification_command("pytest tests/") is True
+    assert is_verification_command("python -m pytest") is True
+    assert is_verification_command('python -c "assert 1 == 1"') is True
+
+
+def test_is_verification_command_recognizes_plain_script_reexecution() -> None:
+    # E1c F1에서 관측: `python demo.py`로 수정 전후 검증했는데 미인식이었던 케이스.
+    assert is_verification_command("python demo.py") is True
+    assert is_verification_command("node app.test.js") is True
+
+
+def test_is_verification_command_recognizes_shell_script_execution() -> None:
+    # v1 릴리스 심사 H3: bash/sh가 인터프리터 목록에 없어 이 프로젝트가 직접 감시하는
+    # SHELL_TOOLS(Bash)의 스크립트 재실행 자체를 못 잡던 구멍.
+    assert is_verification_command("bash test.sh") is True
+    assert is_verification_command("sh run_tests.sh") is True
+    assert is_verification_command("./test.sh") is False  # 인터프리터 접두사 없는 직접실행은 범위 밖(문서화된 한계)
+
+
+def test_is_verification_command_recognizes_compiled_language_runners() -> None:
+    assert is_verification_command("make test") is True
+    assert is_verification_command("make check") is True
+    assert is_verification_command("ctest") is True
+    assert is_verification_command("mvn test") is True
+    assert is_verification_command("gradle test") is True
+    assert is_verification_command("./gradlew test") is True
+    assert is_verification_command("dotnet test") is True
+    assert is_verification_command("tox") is True
+    assert is_verification_command("rake test") is True
+    assert is_verification_command("Invoke-Pester") is True
+
+
+def test_is_verification_command_excludes_non_verify_commands() -> None:
+    assert is_verification_command("python manage.py migrate") is False
+    assert is_verification_command("npm run build") is False
+    assert is_verification_command("npm run deploy") is False
+
+
+def test_text_indicates_success_conservative_fallback() -> None:
+    assert text_indicates_success("3 passed in 0.02s") is True
+    assert text_indicates_success("VERIFY_OK") is True
+    assert text_indicates_success("FAILED test_foo") is False
+    assert text_indicates_success("Traceback (most recent call last):") is False
+    assert text_indicates_success("") is False
+    assert text_indicates_success("no signal either way") is False

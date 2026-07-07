@@ -1,6 +1,6 @@
 # fable-lite
 
-[![ci](https://github.com/pinetreeB/fable-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/pinetreeB/fable-lite/actions/workflows/ci.yml)
+[![version](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 `fable-lite`는 Fable 5의 모델 가중치를 복제하지 않고, 조사·검증·완료 규율을 Claude Code 훅으로 강제하는 한국어 우선 하네스입니다.
@@ -25,6 +25,16 @@
 Claude Code 플러그인 manifest는 `.claude-plugin/plugin.json`에 있으며, 훅 정의는 `adapters/claude_code/hooks.json`에 있습니다. 훅은 모두 Windows native Python 명령만 사용합니다.
 
 > **전제: 대상 환경에 Python 3.12+가 PATH에 있어야 합니다.** 훅이 stdlib Python 스크립트이므로, `python`이 없는 호스트(예: 새 워커 노트북)는 먼저 Python을 설치해야 합니다. 외부 패키지 의존은 없습니다.
+
+권장 설치는 로컬 클론을 먼저 Claude Code marketplace에 등록하는 방식입니다.
+
+```powershell
+git clone https://github.com/pinetreeB/fable-lite
+claude plugin marketplace add <fable-lite 경로>
+/plugin install fable-lite@fable-lite
+```
+
+원격 marketplace 등록이 완료된 뒤에는 `/plugin marketplace add pinetreeB/fable-lite`로 로컬 경로 등록 단계를 대체할 수 있습니다.
 
 ## 목표 체크포인트 CLI
 

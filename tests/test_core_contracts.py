@@ -177,6 +177,40 @@ def test_stop_gate_blocks_changed_unverified_work_at_most_twice(tmp_path: Path) 
     assert "최대 2회" in message
 
 
+def test_stop_gate_still_blocks_twice_when_stop_hook_active_is_true(tmp_path: Path) -> None:
+    # v1 릴리스 심사 B2 회귀 테스트: 실제 Claude Code는 훅이 한 번 block을 반환하면
+    # 그 강제 연속 응답에서의 다음 Stop 시도에 stop_hook_active=true를 실어 보낸다.
+    # 이전 버그는 이 신호만 보고 재검사 없이 무조건 allow해서 MAX_STOP_BLOCKS=2가
+    # 사실상 도달 불가능했다(p5b·e1·e1b·e1c 전체에서 stop_blocks가 항상 1이었던 원인).
+    # stop_hook_active=True인 채로도 실제 미검증 상태가 계속되면 2회까지는 반드시 차단돼야 한다.
+    record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "prompt",
+            "task_mode": "deep",
+            "prompt": "버그 고쳐줘",
+        }
+    )
+    record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "change",
+            "path": "app.py",
+            "kind": "code",
+        }
+    )
+
+    first = evaluate_stop({"project_root": str(tmp_path), "stop_hook_active": False})
+    second = evaluate_stop({"project_root": str(tmp_path), "stop_hook_active": True})
+    third = evaluate_stop({"project_root": str(tmp_path), "stop_hook_active": True})
+
+    assert first["decision"] == "block"
+    assert second["decision"] == "block"
+    assert third["decision"] == "allow"
+    ledger = load_ledger({"project_root": str(tmp_path)})
+    assert ledger["stop_blocks"] == 2
+
+
 def test_stop_block_counter_resets_on_new_prompt(tmp_path: Path) -> None:
     record_event({"project_root": str(tmp_path), "event": "prompt", "task_mode": "deep", "prompt": "첫 작업"})
     record_event({"project_root": str(tmp_path), "event": "change", "path": "app.py", "kind": "code"})

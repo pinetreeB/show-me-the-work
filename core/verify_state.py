@@ -60,9 +60,12 @@ def _block_with_stop_counter(payload: Mapping[str, object], ledger: JsonObject, 
 
 
 def evaluate_stop(payload: Mapping[str, object]) -> Decision:
-    if payload.get("stop_hook_active") is True:
-        return {"decision": "allow", "message": "Stop hook loop guard: allow."}
-
+    # 주의: stop_hook_active를 이유로 여기서 조건 없이 allow하지 않는다 — 그러면
+    # _block_with_stop_counter의 stop_blocks 카운터가 두 번째 검사에서 실행되지 못해
+    # MAX_STOP_BLOCKS(2)가 사실상 도달 불가능한 코드가 된다(v1 릴리스 심사 B2 발견,
+    # p5b/e1/e1b/e1c 전 실측에서 stop_blocks가 항상 정확히 1이었던 원인).
+    # 무한루프 방지는 아래 _block_with_stop_counter의 stop_blocks>=MAX_STOP_BLOCKS
+    # 캡 하나로 충분하다 — stop_hook_active 여부와 무관하게 최대 2회 차단 후 반드시 통과한다.
     ledger = load_ledger(payload)
     mode_value = payload.get("task_mode") or ledger.get("task_mode")
     mode = mode_value if isinstance(mode_value, str) else "quick"

@@ -200,10 +200,38 @@ def test_tool_success_falls_back_to_stdout_when_exit_code_missing() -> None:
     assert tool_success(explicit_false) is False  # 명시 실패 필드 신뢰
 
 
+def test_posttool_records_bash_script_and_make_test_as_verification(tmp_path: Path) -> None:
+    # v1 릴리스 심사 H3 회귀: bash 스크립트 재실행·make test가 claude_code에서도 인식돼야 한다.
+    bash_result = run_hook(
+        "post_tool_use.py",
+        {
+            "cwd": str(tmp_path),
+            "tool_name": "Bash",
+            "tool_input": {"command": "bash test.sh"},
+            "tool_response": {"exit_code": 0, "stdout": "ok"},
+            "session_id": "s1",
+        },
+    )
+    make_result = run_hook(
+        "post_tool_use.py",
+        {
+            "cwd": str(tmp_path),
+            "tool_name": "Bash",
+            "tool_input": {"command": "make test"},
+            "tool_response": {"exit_code": 0, "stdout": "ok"},
+            "session_id": "s1",
+        },
+    )
+
+    assert "recorded verification." in str(bash_result["systemMessage"])
+    assert "recorded verification." in str(make_result["systemMessage"])
+
+
 def test_verification_command_recognizes_script_reruns_but_not_ops() -> None:
     # E1c F1 회귀: "python demo.py"(스크립트 재실행)는 가장 흔한 검증 패턴인데 v5까지 미인식이었다.
     # migrate/install/build 같은 운영 명령은 검증으로 오인하면 안 된다.
-    from adapters.claude_code.post_tool_use import _is_verification_command as v
+    # v1 릴리스 심사 H1/H2/H3: 판정 로직 자체는 core.verification으로 이전됐다(3어댑터 공유).
+    from core.verification import is_verification_command as v
 
     assert v("python demo.py") is True
     assert v("python3 test_calc.py") is True

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fable-lite"
+version = "1.0.0"
+description = "Korean-first hook harness for Fable-style verification and release discipline."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "fable-lite team" }]
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["adapters*", "core*", "fable_lite*", "goals*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

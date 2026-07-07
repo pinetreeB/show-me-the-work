@@ -115,17 +115,28 @@ def tool_output(payload: Mapping[str, JsonValue]) -> str:
 
 
 def tool_success(payload: Mapping[str, JsonValue]) -> bool:
+    from core.verification import text_indicates_success
+
     response_text = tool_response_text(payload)
     if response_text:
-        return bool(re.search(r"^Exit code:\s*0\s*$", response_text, re.MULTILINE))
+        if re.search(r"^Exit code:\s*0\s*$", response_text, re.MULTILINE):
+            return True
+        if re.search(r"^Exit code:\s*[1-9]\d*\s*$", response_text, re.MULTILINE):
+            return False
     response = tool_response(payload)
     if response.get("success") is True or payload.get("success") is True:
         return True
+    if response.get("success") is False or payload.get("success") is False:
+        return False
     for key in ("exit_code", "exitCode"):
         code = response.get(key)
         if code is not None:
             return code == 0
-    return payload.get("exit_code") == 0
+    if payload.get("exit_code") is not None:
+        return payload.get("exit_code") == 0
+    # exit_code/success 신호가 전혀 없을 때(v1 릴리스 심사 H2 — claude_code에만 있던
+    # 텍스트 폴백이 codex_cli엔 없어 pytest 통과도 미검증으로 남던 문제) 공유 폴백 적용.
+    return text_indicates_success(response_text or tool_output(payload))
 
 
 def tool_response_text(payload: Mapping[str, JsonValue]) -> str:
