@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.1] - 2026-07-08
+
+### Fixed — briefing false positives (real-world defect)
+
+- Worker boot/role-injection prompts ("[부팅] ... read MEMORY.md and X.md ... then stand by") were classified as multi-story work: the two memory file paths alone tripped `needs_goals`, so the PreToolUse gate blocked the worker's first Bash/Edit calls twice and wasted 1-2 minutes per boot (observed live on a Sonnet worker pane).
+- New briefing detection: a boot marker ("[부팅]", "세션 부팅", ...) or a stand-by closing ("대기하라", "standby", ...) suppresses `needs_goals`/multi-story/artifact signals — but only when no imperative action follows. Imperative-suffix matching keeps rule phrases ("...만 수정", "sentinel 파일 생성.") from counting as actions, while "[부팅] ... auth.py 고쳐줘" still gates (adversarial-review bypass guard).
+- `is_debug` and `risk_flags` are intentionally NOT suppressed inside briefings: a boot prompt carrying a dangerous command still hits the R1 contract gate.
+- Path mention counting no longer counts version strings (`v1.1.0`) or bare domains (`google.com`) as file paths.
+- Word-boundary matching for multi-story terms: `and` no longer matches inside `commands`/`sandbox`; `여러분`, `12개월`, `multiply` no longer false-positive.
+
+### Evidence
+
+- Reproduced both reported boot prompts before the fix (`needs_goals=True`, spurious verification pack), confirmed suppression after (`needs_goals=False`, no packs), and confirmed the enumeration regression probe (PRB03) still blocks real multi-story prompts.
+- pytest 92 (10 new classification tests), deterministic probes 15/15, live-payload hook E2E: boot prompt → Bash allowed; multi-story prompt → Edit blocked.
+
 ## [1.1.0] - 2026-07-07
 
 ### Added — Intent Gate ("알" gate)
