@@ -1,0 +1,21 @@
+{
+  "agent": "",
+  "change_kinds": [
+    "code"
+  ],
+  "changed_files_seen": [
+    "C:\\Users\\rotat\\AppData\\Local\\Temp\\claude\\C--Users-rotat-fable-lite\\5fff7d7a-828c-4238-b873-07d687e062b3\\scratchpad\\ab-f1-work\\f1-on-4\\calc.py"
+  ],
+  "goals_blocks": 0,
+  "needs_goals": false,
+  "packs": [
+    "investigation"
+  ],
+  "prompt": "이 add가 왜 이상해? 고쳐줘",
+  "requires_investigation_compliance": true,
+  "scope_warnings": [],
+  "stop_blocks": 1,
+  "task_mode": "deep",
+  "verification_commands": [],
+  "verification_results": []
+}

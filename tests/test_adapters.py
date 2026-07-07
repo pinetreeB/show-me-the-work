@@ -198,3 +198,17 @@ def test_tool_success_falls_back_to_stdout_when_exit_code_missing() -> None:
     assert tool_success(failed) is False       # 실패 신호 우선
     assert tool_success(empty) is False        # 판정 불가 → 보수적 실패
     assert tool_success(explicit_false) is False  # 명시 실패 필드 신뢰
+
+
+def test_verification_command_recognizes_script_reruns_but_not_ops() -> None:
+    # E1c F1 회귀: "python demo.py"(스크립트 재실행)는 가장 흔한 검증 패턴인데 v5까지 미인식이었다.
+    # migrate/install/build 같은 운영 명령은 검증으로 오인하면 안 된다.
+    from adapters.claude_code.post_tool_use import _is_verification_command as v
+
+    assert v("python demo.py") is True
+    assert v("python3 test_calc.py") is True
+    assert v("python -m pytest tests/") is True
+    assert v("python manage.py migrate") is False
+    assert v("python setup.py install") is False
+    assert v("npm run build") is False
+    assert v("ls -la") is False

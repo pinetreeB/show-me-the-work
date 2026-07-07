@@ -247,51 +247,53 @@ def test_scope_guard_still_warns_when_prompt_names_a_different_file_explicitly()
 
 
 def test_high_risk_contract_blocks_edit_until_valid_contract_exists(tmp_path: Path) -> None:
-    blocked = evaluate_pretool_contract(
-        {
-            "project_root": str(tmp_path),
-            "tool_name": "Edit",
-            "file_paths": ["migrations/001_init.sql"],
-            "prompt": "DB 마이그 수정",
-        }
-    )
-
+    payload = {"project_root": str(tmp_path), "tool_name": "Edit", "file_paths": ["migrations/001_init.sql"], "prompt": "DB 마이그 수정"}
+    blocked = evaluate_pretool_contract(payload)
     state_dir = tmp_path / ".fable-lite"
     state_dir.mkdir()
     (state_dir / "contract.json").write_text(
-        json.dumps(
-            {
-                "restated_goal": "DB 마이그레이션 수정",
-                "acceptance": ["python -m pytest tests/test_migration.py"],
-                "evidence": ["test will be run before done"],
-            },
-            ensure_ascii=False,
-        ),
+        json.dumps({"restated_goal": "DB 마이그레이션 수정", "acceptance": ["python -m pytest tests/test_migration.py"], "evidence": ["test will be run before done"]}, ensure_ascii=False),
         encoding="utf-8",
     )
-    allowed = evaluate_pretool_contract(
-        {
-            "project_root": str(tmp_path),
-            "tool_name": "Edit",
-            "file_paths": ["migrations/001_init.sql"],
-            "prompt": "DB 마이그 수정",
-        }
-    )
+    allowed = evaluate_pretool_contract(payload)
 
     assert blocked["decision"] == "block"
     assert allowed["decision"] == "allow"
 
 
 def test_high_risk_contract_blocks_shell_commands_without_valid_contract(tmp_path: Path) -> None:
-    result = evaluate_pretool_contract(
-        {
-            "project_root": str(tmp_path),
-            "tool_name": "Bash",
-            "command": "python manage.py migrate && psql -c 'DROP TABLE users'",
-        }
-    )
+    result = evaluate_pretool_contract({"project_root": str(tmp_path), "tool_name": "Bash", "command": "python manage.py migrate && psql -c 'DROP TABLE users'"})
 
     assert result["decision"] == "block"
+
+
+def test_r1_rm_refines_file_delete_risk(tmp_path: Path) -> None:
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "test.py").write_text("print('ok')\n", encoding="utf-8")
+    nested = tmp_path / "tmp" / "x.txt"
+    nested.parent.mkdir()
+    nested.write_text("ok\n", encoding="utf-8")
+    cases = {
+        "rm -rf /": "block", "rm -rf *": "block", "rm -rf node_modules": "block",
+        "rm -rf ~user/file.txt": "block",
+        "rm -rf C:foo.txt": "block",
+        "rm -rf $HOME/file.txt": "block", "rm -rf ${HOME}/file.txt": "block",
+        "rm -rf ./tmp/[ab].txt": "block", "rm -rf ./tmp/{a,b}.txt": "block",
+        "rm test.py": "allow", "rm -rf ./tmp/x.txt": "allow",
+        "Remove-Item -Recurse -Force node_modules": "block", "Remove-Item -Re -Force node_modules": "block",
+        "Remove-Item -Path node_modules -Re -Force": "block",
+        "Remove-Item -Recurse -Force $env:USERPROFILE": "block",
+        "Remove-Item -Path ./tmp/x.txt,C:/Users/rotat -Force": "block", "Remove-Item -Path:./tmp/x.txt,/ -Force": "block",
+        "Remove-Item -Path:C:/Users/rotat -Recurse -Force": "block",
+        "Remove-Item -Path:C:foo.txt -Force": "block",
+        'Remove-Item -Path:"C:/Users/rotat/file.txt" -Force': "block",
+        "Remove-Item -LiteralPath:'C:/Users/rotat/file.txt' -Force": "block",
+        "Remove-Item '": "block", "Remove-Item -Recurse -Force ./tmp/x.txt": "allow",
+    }
+    for command, expected in cases.items():
+        result = evaluate_pretool_contract({"project_root": str(tmp_path), "tool_name": "Bash", "command": command})
+
+        assert result["decision"] == expected, command
 
 
 def test_classify_enumeration_is_multi_story_but_progressive_is_not() -> None:

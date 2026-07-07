@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import TypeAlias
+import shlex
+from typing import Final, TypeAlias
 
 from .ledger import JsonObject, load_ledger, save_ledger, state_dir
-from .risk_terms import is_high_risk
+from .risk_terms import risk_flags
 
 JsonValue: TypeAlias = str | int | bool | list[str]
 Decision: TypeAlias = dict[str, JsonValue]
@@ -16,6 +18,17 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 GUARDED_TOOLS = EDIT_TOOLS | SHELL_TOOLS
 FAKE_EVIDENCE = ("assumed", "would pass", "should pass", "not run", "미실행")
 MAX_GOALS_BLOCKS = 2
+COMMAND_SEPARATORS: Final[frozenset[str]] = frozenset({"&&", "||", ";", "|"})
+RM_COMMANDS: Final[frozenset[str]] = frozenset({"rm", "remove-item"})
+PATH_OPTIONS: Final[frozenset[str]] = frozenset({"path", "literalpath"})
+DIRECTORY_NAMES: Final[frozenset[str]] = frozenset({"node_modules", ".git", ".venv", "venv", "__pycache__"})
+
+
+@dataclass(frozen=True, slots=True)
+class RmInvocation:
+    command: str
+    recursive: bool
+    targets: tuple[str, ...]
 
 
 def contract_path(project_root: str) -> Path:
@@ -61,12 +74,172 @@ def _is_goals_authoring(paths: list[str], command: str) -> bool:
 
 
 def _high_risk(payload: Mapping[str, object]) -> bool:
+    root = _project_root(payload)
     prompt_value = payload.get("prompt")
     prompt = prompt_value if isinstance(prompt_value, str) else ""
     paths = _string_list(payload.get("file_paths"))
     command = _command(payload)
     haystack = " ".join([prompt, *paths, command])
-    return is_high_risk(haystack)
+    flags = risk_flags(haystack)
+    if command and _rm_family_high_risk(command, root):
+        return True
+    if any(not _is_rm_risk_flag(flag) for flag in flags):
+        return True
+    if any(_is_rm_risk_flag(flag) for flag in flags):
+        return _rm_family_high_risk(command or haystack, root, fail_closed=True)
+    return False
+
+
+def _is_rm_risk_flag(flag: str) -> bool:
+    lowered = flag.casefold()
+    return "rm -rf" in lowered or "remove-item" in lowered
+
+
+def _rm_family_high_risk(text: str, root: str, *, fail_closed: bool = False) -> bool:
+    invocations = _rm_invocations(text)
+    if not invocations:
+        return fail_closed
+    return any(_rm_invocation_high_risk(invocation, root) for invocation in invocations)
+
+
+def _rm_invocations(text: str) -> list[RmInvocation]:
+    try:
+        tokens = [_clean_token(token) for token in shlex.split(text, posix=False)]
+    except ValueError:
+        lowered = text.casefold()
+        if "rm" in lowered or "remove-item" in lowered:
+            return [RmInvocation(command="rm", recursive=True, targets=())]
+        return []
+    invocations: list[RmInvocation] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if _is_rm_command(token):
+            invocation, index = _parse_rm_invocation(tokens, index)
+            invocations.append(invocation)
+        else:
+            index += 1
+    return invocations
+
+
+def _parse_rm_invocation(tokens: list[str], start: int) -> tuple[RmInvocation, int]:
+    command = _command_name(tokens[start])
+    recursive = False
+    targets: list[str] = []
+    index = start + 1
+    while index < len(tokens) and tokens[index] not in COMMAND_SEPARATORS:
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            while index < len(tokens) and tokens[index] not in COMMAND_SEPARATORS:
+                targets.append(tokens[index])
+                index += 1
+            return RmInvocation(command=command, recursive=recursive, targets=tuple(targets)), index
+        if token.startswith("-"):
+            recursive = recursive or _option_is_recursive(command, token)
+            option = _option_name(token)
+            inline_target = _inline_path_target(token)
+            if inline_target:
+                targets.append(inline_target)
+                index += 1
+                continue
+            if option in PATH_OPTIONS and index + 1 < len(tokens):
+                targets.append(tokens[index + 1])
+                index += 2
+                continue
+        else:
+            targets.append(token)
+        index += 1
+    return RmInvocation(command=command, recursive=recursive, targets=tuple(targets)), index
+
+
+def _rm_invocation_high_risk(invocation: RmInvocation, root: str) -> bool:
+    if not invocation.targets:
+        return True
+    return any(_rm_target_high_risk(target, root, invocation.recursive) for target in _split_targets(invocation.targets))
+
+
+def _split_targets(targets: tuple[str, ...]) -> list[str]:
+    return [part.strip() for target in targets for part in target.split(",")]
+
+
+def _rm_target_high_risk(target: str, root: str, recursive: bool) -> bool:
+    normalized = _clean_token(target).replace("\\", "/").strip()
+    if not normalized or _has_glob(normalized) or _is_root_or_home(normalized) or _has_environment_reference(normalized):
+        return True
+    if Path(normalized).is_absolute() or _is_drive_qualified(normalized) or _contains_parent_traversal(normalized):
+        return True
+    target_path = Path(root) / normalized
+    try:
+        target_path.resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        return True
+    if recursive and _looks_like_directory_target(normalized, target_path):
+        return True
+    return False
+
+
+def _looks_like_directory_target(target: str, path: Path) -> bool:
+    if path.exists():
+        return path.is_dir()
+    clean = target.rstrip("/")
+    if target.endswith("/"):
+        return True
+    name = Path(clean).name.casefold()
+    return name in DIRECTORY_NAMES or not Path(clean).suffix
+
+
+def _option_is_recursive(command: str, token: str) -> bool:
+    option = _option_name(token)
+    if command == "remove-item":
+        return option in {"r", "recurse"} or (len(option) >= 2 and "recurse".startswith(option))
+    return option == "recursive" or ("r" in option and not token.startswith("--"))
+
+
+def _option_name(token: str) -> str:
+    return token.lstrip("-").split(":", 1)[0].casefold()
+
+
+def _inline_path_target(token: str) -> str:
+    option, separator, value = token.lstrip("-").partition(":")
+    if separator and option.casefold() in PATH_OPTIONS:
+        return value
+    return ""
+
+
+def _has_glob(target: str) -> bool:
+    return any(marker in target for marker in ("*", "?", "[", "]", "{", "}"))
+
+
+def _is_root_or_home(target: str) -> bool:
+    clean = target.strip()
+    return clean in {"/", "\\", "~", ".", "./"} or clean.startswith("~")
+
+
+def _has_environment_reference(target: str) -> bool:
+    lowered = target.casefold()
+    return "$" in target or "%" in target or "$env:" in lowered
+
+
+def _contains_parent_traversal(target: str) -> bool:
+    return ".." in Path(target.replace("\\", "/")).parts
+
+
+def _is_drive_qualified(target: str) -> bool:
+    return len(target) >= 2 and target[0].isalpha() and target[1] == ":"
+
+
+def _is_rm_command(token: str) -> bool:
+    return _command_name(token) in RM_COMMANDS
+
+
+def _command_name(token: str) -> str:
+    name = token.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    return name.removesuffix(".exe")
+
+
+def _clean_token(token: str) -> str:
+    return token.strip("\"'")
 
 
 def evaluate_r1_contract(payload: Mapping[str, object]) -> Decision:
