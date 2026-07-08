@@ -61,9 +61,17 @@ def main() -> int:
     check("AC3 N1 배선(ledger 플래그)", os.path.exists(led) and json.loads(pathlib.Path(led).read_text(encoding="utf-8")).get("requires_investigation_compliance") is True)
 
     # E2E-2: N1 미준수 → Stop 차단, 준수 → 통과 (AC3)
+    # v1.1.3: N1 마커는 파일 변경이 있는 턴에만 요구 — 변경 이벤트를 먼저 기록한다.
+    _ = run_hook("post_tool_use.py", {"hook_event_name": "PostToolUse", "tool_name": "Edit", "cwd": proj,
+                                      "tool_input": {"file_path": "app.py"},
+                                      "tool_response": {"filePath": "app.py", "success": True}})
     tp_bad = make_transcript(proj, "그냥 이거 고치면 됩니다.")
     r = run_hook("stop.py", {"hook_event_name": "Stop", "cwd": proj, "transcript_path": tp_bad})
     check("AC3 N1 미준수 Stop 차단", r.get("decision") == "block", f"({r.get('decision')})")
+    # 준수 케이스는 정상 완료 흐름(수정→검증 성공→마커 보고)이어야 Stop 검증 게이트도 함께 통과한다.
+    _ = run_hook("post_tool_use.py", {"hook_event_name": "PostToolUse", "tool_name": "Bash", "cwd": proj,
+                                      "tool_input": {"command": "python -m pytest tests/"},
+                                      "tool_response": {"stdout": "3 passed", "exit_code": 0}})
     tp_ok = make_transcript(proj, "가설 1: A\n가설 2: B\n가설 3: C\n증거: x.py:1 관측\n기각: 가설 2 — 반증됨")
     r2 = run_hook("stop.py", {"hook_event_name": "Stop", "cwd": proj, "transcript_path": tp_ok, "stop_hook_active": True})
     check("AC3 N1 준수 시 통과", r2.get("decision") != "block")
