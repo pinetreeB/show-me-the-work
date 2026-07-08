@@ -32,6 +32,36 @@ So we dropped Fable's weight (model capability) and carried over only its way of
 
 [LazyCodex/OmO](https://github.com/code-yeongyu/oh-my-openagent)'s `ulw` drives tasks to completion; fable-lite inspects evidence at every completion attempt — the roles don't overlap. Run both on Codex CLI (`adapters/codex_cli/INSTALL.ko.md`) and you get runs that **push all the way through, but can't finish with an unverified "done"**. This repository itself was built with that combo (implemented under ulw, inspected by fable-lite).
 
+## 💬 Common objections (FAQ)
+
+### "Hooks don't actually force anything — the AI can just ignore them."
+
+**Asking in words and blocking in code are different things.** That objection is true for the first half only.
+
+- Writing "always verify before finishing" in a prompt is a **request**. The AI can ignore it — in our measurement, instruction-only compliance was **0/3**.
+- fable-lite is not a request; it is a **lock**. Until the condition (evidence of an actually-executed verification) is met, the "done" declaration and tool calls are **rejected at the program level**. There is no layer where the model gets to "decide not to comply" — the same measurement showed hard gates converging to **3/3** blocked-then-recovered-with-real-evidence ([experiment report](docs/reviews/p5b-n1-natural.md)).
+
+One fun piece of evidence: while building this repository, **even a frontier model (Fable 5) got blocked by this gate and had to rewrite its report.** Hooks don't rely on the model's goodwill.
+
+### "Verification is the human's job. Why build this at all?"
+
+Agreed — **final responsibility stays with the human, and fable-lite doesn't replace that.** What it blocks is the step before: **the AI claiming "I verified it" while having executed nothing.**
+
+- People who can't read code (a core audience of this tool) have **no way to tell** that claim is fake.
+- People who can read code still can't personally verify the thousands of lines an AI produces per day.
+
+fable-lite is a **first-pass filter**: no executed evidence, no "done". It doesn't remove human verification — it raises the trustworthiness of what reaches the human.
+
+### "Can't the AI just fill in the format and slip through?"
+
+**In theory, yes. We can't fully prevent it and don't claim to.** However:
+
+1. The gate **doesn't trust the AI's words — it reads tool results**: not the sentence "tests passed", but whether a test command actually ran and succeeded.
+2. The behavior change is **measured, blind-judged**: ON won 5/5 tasks, and every gap appeared exactly where verification gets tedious ([A/B report](docs/reviews/e1-ab-report.md)).
+3. It doesn't block forever — after 2 blocks it lets the run proceed (no deadlocks). That's a safety valve, and an honest limitation we document.
+
+In short: **fable-lite is not a tool that makes you trust the AI — it's a tool that lets you trust it less.**
+
 ---
 
 ## Technical summary
