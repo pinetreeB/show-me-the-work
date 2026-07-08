@@ -257,8 +257,10 @@ def _prb14() -> ProbeCheck:
 
 
 def _prb15() -> ProbeCheck:
+    # v1.1.3: N1 마커는 파일 변경이 있는 턴에만 요구 — 변경 이벤트를 기록한 뒤 마커 누락이 차단되는지 본다.
     with _project() as root:
         _run_hook("user_prompt_submit.py", {"cwd": str(root), "prompt": "버그 고쳐줘 안되는데요"})
+        _run_hook("post_tool_use.py", {"cwd": str(root), "tool_name": "Edit", "tool_input": {"file_path": "app.py"}, "tool_response": {"filePath": "app.py", "success": True}})
         stop = _run_hook("stop.py", {"cwd": str(root), "transcript_path": str(_transcript(root, "원인은 설정입니다."))})
         return _decision(stop) == "block" and "조사 팩" in _message(stop), {"stop": _object(stop.get("json")), "ledger": _ledger(root)}
 

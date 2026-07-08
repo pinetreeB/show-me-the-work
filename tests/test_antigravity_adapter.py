@@ -117,6 +117,17 @@ def test_oma_after_tool_records_shell_verification(tmp_path: Path) -> None:
 
 def test_oma_after_agent_blocks_if_n1_missing(tmp_path: Path) -> None:
     run_oma_hook("BeforeModel", oma_prompt_payload(tmp_path, "버그 고쳐줘 안되는데요"))
+    # v1.1.3: N1 마커는 파일 변경이 있는 턴에만 요구되므로 변경 이벤트를 먼저 기록한다.
+    run_oma_hook(
+        "AfterTool",
+        {
+            "cwd": str(tmp_path),
+            "metadata": {
+                "tool_name": "replace_file_content",
+                "tool_input": {"TargetFile": "app.py"},
+            },
+        },
+    )
     payload: HookPayload = {
         "cwd": str(tmp_path),
         "termination_reason": "completed",
@@ -131,6 +142,24 @@ def test_oma_after_agent_blocks_if_n1_missing(tmp_path: Path) -> None:
 
     assert result["decision"] == "block"
     assert "조사 팩" in str(result.get("reason", ""))
+
+
+def test_oma_after_agent_allows_answer_only_investigation_turn(tmp_path: Path) -> None:
+    # v1.1.3: 변경 없는 답변 전용 턴은 N1 마커 면제.
+    run_oma_hook("BeforeModel", oma_prompt_payload(tmp_path, "버그 고쳐줘 안되는데요"))
+    payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "termination_reason": "completed",
+        "llm_request": {
+            "messages": [
+                {"role": "assistant", "content": "원인은 설정입니다."}
+            ]
+        }
+    }
+
+    result = run_oma_hook("AfterAgent", payload)
+
+    assert result.get("decision") != "block"
 
 
 def test_oma_after_tool_records_bash_script_and_make_test_as_verification(tmp_path: Path) -> None:

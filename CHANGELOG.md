@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.3] - 2026-07-08
+
+### Changed — N1 markers only on turns that change files (user feedback)
+
+- The N1 investigation-marker gate now applies only to turns that actually modified files. Answer-only turns ("why doesn't this work?") reply in plain prose — no `가설/증거/기각` block demanded. Rationale: the pack's purpose is "investigate before you modify"; forcing markers on a turn that modifies nothing is friction, not discipline.
+- Ledger change/verification records are now reset per prompt (turn-scoped). Without this, one early edit kept `changed=True` for every later question turn in the session — an adversarial review (Critical-1) caught that the relaxation would have been ineffective before it shipped.
+- Packs (ko/en) document the exemption, and still recommend recording markers for investigation-only turns so a later fix turn doesn't retro-invent its investigation.
+- Known accepted limitation (documented, backlog): file edits made via raw shell commands are not counted as changes, so such turns bypass N1 — fable-lite's threat model is carelessness, not an adversarial model deliberately dodging its own gates.
+- pytest 101 (4 new: exemption x2, per-turn reset, changed-turn still blocks), probes 15/15.
+
 ## [1.1.2] - 2026-07-08
 
 ### Changed — report style guidance (user feedback)

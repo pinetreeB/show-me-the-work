@@ -245,6 +245,14 @@ def _apply_event(ledger: JsonObject, payload: Mapping[str, object]) -> JsonObjec
         ledger["stop_blocks"] = 0
         ledger["goals_blocks"] = 0
         ledger["intent_blocks"] = 0
+        # 변경·검증 기록은 턴 단위 계약이다 — 새 프롬프트에서 리셋하지 않으면
+        # 세션 초반에 한 번 수정한 이력이 이후 모든 질문 턴에 changed=True로 남아
+        # Stop/N1 게이트가 답변 전용 턴까지 계속 걸린다 (v1.1.3, agy Critical-1).
+        ledger["changed_files_seen"] = []
+        ledger["change_kinds"] = []
+        ledger["verification_commands"] = []
+        ledger["verification_results"] = []
+        ledger["scope_warnings"] = []
     elif event == "change":
         path = payload.get("path")
         if isinstance(path, str) and path:
