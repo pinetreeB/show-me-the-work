@@ -72,7 +72,10 @@ def evaluate_stop(payload: Mapping[str, object]) -> Decision:
     changed = bool(_as_str_list(ledger.get("changed_files_seen")))
     verified = _has_successful_verification(ledger)
 
-    if _requires_investigation_compliance(ledger):
+    # N1 마커는 파일 변경이 있는 턴에만 요구한다 — 조사 팩의 목적은 "수정 전에
+    # 제대로 조사했는가"이므로, 아무것도 고치지 않은 답변 전용 턴(질문·상담)에
+    # 마커를 강제하면 규율이 아니라 마찰이다 (v1.1.3, 사용자 피드백).
+    if changed and _requires_investigation_compliance(ledger):
         compliance = check_investigation_compliance({"text": _assistant_text(payload)})
         if compliance["compliant"] is not True:
             return _block_with_stop_counter(

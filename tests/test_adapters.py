@@ -128,7 +128,23 @@ def test_goals_nudge_and_n2_pretool_gate_use_persisted_prompt_state(tmp_path: Pa
     assert "goals" in str(pre_result["reason"]).lower()
 
 
-def test_stop_blocks_missing_n1_markers_from_transcript_when_investigation_pack_was_injected(tmp_path: Path) -> None:
+def _write_transcript(tmp_path: Path, text: str) -> Path:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return transcript
+
+
+def test_stop_blocks_missing_n1_markers_when_investigation_turn_changed_files(tmp_path: Path) -> None:
     run_hook(
         "user_prompt_submit.py",
         {
@@ -137,18 +153,17 @@ def test_stop_blocks_missing_n1_markers_from_transcript_when_investigation_pack_
             "session_id": "s1",
         },
     )
-    transcript = tmp_path / "transcript.jsonl"
-    transcript.write_text(
-        json.dumps(
-            {
-                "type": "assistant",
-                "message": {"role": "assistant", "content": [{"type": "text", "text": "원인은 설정입니다."}]},
-            },
-            ensure_ascii=False,
-        )
-        + "\n",
-        encoding="utf-8",
+    run_hook(
+        "post_tool_use.py",
+        {
+            "cwd": str(tmp_path),
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "app.py"},
+            "tool_response": {"filePath": "app.py"},
+            "session_id": "s1",
+        },
     )
+    transcript = _write_transcript(tmp_path, "원인은 설정입니다. 고쳤습니다.")
     stop_result = run_hook(
         "stop.py",
         {"cwd": str(tmp_path), "transcript_path": str(transcript), "stop_hook_active": False, "session_id": "s1"},
@@ -156,6 +171,56 @@ def test_stop_blocks_missing_n1_markers_from_transcript_when_investigation_pack_
 
     assert stop_result["decision"] == "block"
     assert "조사 팩" in str(stop_result["reason"])
+
+
+def test_stop_allows_answer_only_investigation_turn_without_markers(tmp_path: Path) -> None:
+    # v1.1.3: 파일 변경이 없는 답변 전용 턴은 N1 마커 면제 — "이거 왜 안 돼?" 같은
+    # 가벼운 질문에 가설 마커를 강제하지 않는다 (사용자 피드백).
+    run_hook(
+        "user_prompt_submit.py",
+        {
+            "cwd": str(tmp_path),
+            "prompt": "버그 고쳐줘 안되는데요",
+            "session_id": "s1",
+        },
+    )
+    transcript = _write_transcript(tmp_path, "원인은 설정입니다.")
+    stop_result = run_hook(
+        "stop.py",
+        {"cwd": str(tmp_path), "transcript_path": str(transcript), "stop_hook_active": False, "session_id": "s1"},
+    )
+
+    assert stop_result.get("decision") != "block"
+
+
+def test_new_prompt_resets_turn_change_history_so_later_questions_are_exempt(tmp_path: Path) -> None:
+    # v1.1.3 agy Critical-1 고정: 이전 턴에 코드를 고쳤어도, 새 프롬프트(질문 턴)에서는
+    # changed가 리셋되어 N1/검증 게이트가 걸리지 않아야 한다.
+    run_hook(
+        "user_prompt_submit.py",
+        {"cwd": str(tmp_path), "prompt": "버그 고쳐줘 안되는데요", "session_id": "s1"},
+    )
+    run_hook(
+        "post_tool_use.py",
+        {
+            "cwd": str(tmp_path),
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "app.py"},
+            "tool_response": {"filePath": "app.py"},
+            "session_id": "s1",
+        },
+    )
+    run_hook(
+        "user_prompt_submit.py",
+        {"cwd": str(tmp_path), "prompt": "근데 이 에러는 왜 나는 거야?", "session_id": "s1"},
+    )
+    transcript = _write_transcript(tmp_path, "이유는 이렇습니다.")
+    stop_result = run_hook(
+        "stop.py",
+        {"cwd": str(tmp_path), "transcript_path": str(transcript), "stop_hook_active": False, "session_id": "s1"},
+    )
+
+    assert stop_result.get("decision") != "block"
 
 
 def test_hooks_fail_open_on_malformed_payload() -> None:

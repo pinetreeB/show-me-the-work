@@ -132,6 +132,19 @@ def test_codex_posttool_records_string_shell_verification_response(tmp_path: Pat
 
 def test_codex_stop_uses_last_assistant_message_for_n1_gate(tmp_path: Path) -> None:
     run_hook("user_prompt_submit.py", codex_prompt_payload(tmp_path, "버그 고쳐줘 안되는데요"))
+    # v1.1.3: N1 마커는 파일 변경이 있는 턴에만 요구되므로 변경 이벤트를 먼저 기록한다.
+    patch = "*** Begin Patch\n*** Update File: app.py\n+FIX=True\n*** End Patch\n"
+    run_hook(
+        "post_tool_use.py",
+        {
+            "cwd": str(tmp_path),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "apply_patch",
+            "tool_input": {"command": patch},
+            "tool_response": "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\nM app.py\n",
+            "session_id": "codex-session-1",
+        },
+    )
     payload: HookPayload = {
         "cwd": str(tmp_path),
         "hook_event_name": "Stop",
@@ -144,6 +157,22 @@ def test_codex_stop_uses_last_assistant_message_for_n1_gate(tmp_path: Path) -> N
 
     assert result["decision"] == "block"
     assert "조사 팩" in str(result["reason"])
+
+
+def test_codex_stop_allows_answer_only_investigation_turn(tmp_path: Path) -> None:
+    # v1.1.3: 변경 없는 답변 전용 턴은 N1 마커 면제.
+    run_hook("user_prompt_submit.py", codex_prompt_payload(tmp_path, "버그 고쳐줘 안되는데요"))
+    payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "hook_event_name": "Stop",
+        "last_assistant_message": "원인은 설정입니다.",
+        "stop_hook_active": False,
+        "session_id": "codex-session-1",
+    }
+
+    result = run_hook("stop.py", payload)
+
+    assert result.get("decision") != "block"
 
 
 def test_codex_posttool_records_bash_script_and_make_test_as_verification(tmp_path: Path) -> None:

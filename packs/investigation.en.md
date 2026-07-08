@@ -74,6 +74,8 @@ When following this protocol, your output **must** include these markers:
 - Lines starting with `Rejected:` — rejection reports (**required: at least 1** · recommended: one per non-adopted hypothesis)
 
 These markers are automatically parsed by the pack compliance gate (N1) to determine protocol adherence.
+**Exemption**: an answer-only turn that changes no files (you only answered a question) may reply in plain prose without markers — the gate won't demand them either. Markers are mandatory for turns that **investigated and then actually modified something**.
+That said, if you did real investigation (reproduction, code tracing) without changing files, recording the markers is still **recommended** — it becomes the starting point when a later turn makes the fix, and it prevents the bad habit of retroactively inventing the investigation in the fix turn.
 The parser recognizes both English markers (`Hypothesis N:` / `Evidence:` / `Rejected:`) and Korean markers (`가설 N:` / `증거:` / `기각:`) — bilingual.
 When filling in the markers, don't lead with meta-commentary like "Here is my response organized with the required markers" or "Reorganizing to include the investigation pack markers" — that framing is itself unnecessary filler. Start directly with the hypotheses.
 Output that contains only conclusions without markers is judged as non-compliant.
