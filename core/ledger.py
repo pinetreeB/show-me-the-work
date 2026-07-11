@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
-import re
 import tempfile
 from typing import TypeAlias
+
+from .agent_log import (
+    agent_log_path as agent_log_path,
+    append_agent_event,
+    ledger_transaction,
+    load_agent_events,
+)
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
@@ -34,6 +39,8 @@ def default_ledger() -> JsonObject:
         "change_kinds": [],
         "verification_commands": [],
         "verification_results": [],
+        "event_seq": 0,
+        "last_change_seq": 0,
         "stop_blocks": 0,
         "goals_blocks": 0,
         "intent_blocks": 0,
@@ -54,14 +61,6 @@ def _project_root(payload: Mapping[str, object]) -> str:
 def _agent(payload: Mapping[str, object]) -> str:
     value = payload.get("agent")
     return value if isinstance(value, str) and value else ""
-
-
-def _safe_agent_name(agent: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", agent).strip(".-") or "agent"
-
-
-def agent_log_path(project_root: str, agent: str) -> Path:
-    return state_dir(project_root) / "agents" / f"{_safe_agent_name(agent)}.jsonl"
 
 
 def load_ledger(payload: Mapping[str, object]) -> JsonObject:
@@ -158,67 +157,19 @@ def _bounded_score(value: object) -> int:
     return max(0, min(4, value))
 
 
-def _json_safe(value: object) -> bool:
-    if isinstance(value, str | int | bool) or value is None:
-        return True
-    if isinstance(value, list):
-        return all(_json_safe(item) for item in value)
-    if isinstance(value, dict):
-        return all(isinstance(key, str) and _json_safe(item) for key, item in value.items())
-    return False
-
-
-def _json_value(value: object) -> JsonValue | None:
-    if isinstance(value, str | int | bool) or value is None:
+def _sequence_value(value: object) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
-    if isinstance(value, list):
-        list_values: list[JsonValue] = []
-        for item in value:
-            if not _json_safe(item):
-                return None
-            list_values.append(_json_value(item))
-        return list_values
-    if isinstance(value, dict):
-        dict_values: dict[str, JsonValue] = {}
-        for key, item in value.items():
-            if not isinstance(key, str) or not _json_safe(item):
-                return None
-            dict_values[key] = _json_value(item)
-        return dict_values
-    return None
-
-
-def _event_payload(payload: Mapping[str, object]) -> JsonObject:
-    event: JsonObject = {}
-    for key, value in payload.items():
-        if not _json_safe(value):
-            continue
-        event[str(key)] = _json_value(value)
-    agent = _agent(payload)
-    if agent:
-        event["agent"] = agent
-    return event
-
-
-def _append_agent_event(payload: Mapping[str, object]) -> None:
-    agent = _agent(payload)
-    if not agent:
-        return
-    root = _project_root(payload)
-    path = agent_log_path(root, agent)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    event = _event_payload(payload)
-    event["timestamp"] = datetime.now(UTC).isoformat()
-    try:
-        with path.open("a", encoding="utf-8", newline="\n") as handle:
-            _ = handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True))
-            _ = handle.write("\n")
-    except OSError:
-        return
+    return 0
 
 
 def _apply_event(ledger: JsonObject, payload: Mapping[str, object]) -> JsonObject:
     event = payload.get("event")
+    event_seq = _sequence_value(payload.get("seq"))
+    ledger["event_seq"] = max(
+        _sequence_value(ledger.get("event_seq")),
+        event_seq,
+    )
     agent = _agent(payload)
     if agent:
         ledger["agent"] = agent
@@ -252,6 +203,7 @@ def _apply_event(ledger: JsonObject, payload: Mapping[str, object]) -> JsonObjec
         ledger["change_kinds"] = []
         ledger["verification_commands"] = []
         ledger["verification_results"] = []
+        ledger["last_change_seq"] = 0
         ledger["scope_warnings"] = []
     elif event == "change":
         path = payload.get("path")
@@ -262,6 +214,8 @@ def _apply_event(ledger: JsonObject, payload: Mapping[str, object]) -> JsonObjec
             kind = kind_value if isinstance(kind_value, str) else classify_change_kind(path)
             ledger["changed_files_seen"] = _append_unique(changed, path)
             ledger["change_kinds"] = _append_unique(kinds, kind)
+            if kind != "docs":
+                ledger["last_change_seq"] = event_seq
     elif event == "verification":
         command_value = payload.get("command")
         evidence_value = payload.get("evidence")
@@ -270,13 +224,14 @@ def _apply_event(ledger: JsonObject, payload: Mapping[str, object]) -> JsonObjec
         commands = _as_str_list(ledger.get("verification_commands"))
         results = _as_result_list(ledger.get("verification_results"))
         ledger["verification_commands"] = _append_unique(commands, command)
-        results.append(
-            {
-                "command": command,
-                "success": _bool_value(payload.get("success")),
-                "evidence": evidence,
-            }
-        )
+        result: JsonObject = {
+            "command": command,
+            "success": _bool_value(payload.get("success")),
+            "evidence": evidence,
+        }
+        if event_seq > 0:
+            result["seq"] = event_seq
+        results.append(result)
         ledger["verification_results"] = results
     elif event == "scope_warning":
         warning_value = payload.get("message")
@@ -288,11 +243,16 @@ def _apply_event(ledger: JsonObject, payload: Mapping[str, object]) -> JsonObjec
 
 
 def record_event(payload: Mapping[str, object]) -> JsonObject:
-    ledger = load_ledger(payload)
-    _apply_event(ledger, payload)
-    save_ledger(payload, ledger)
-    _append_agent_event(payload)
-    return ledger
+    root = _project_root(payload)
+    with ledger_transaction(root):
+        ledger = load_ledger(payload)
+        event_payload: dict[str, object] = dict(payload)
+        _ = event_payload.pop("event_seq", None)
+        event_payload["seq"] = _sequence_value(ledger.get("event_seq")) + 1
+        _apply_event(ledger, event_payload)
+        save_ledger(payload, ledger)
+        append_agent_event(root, _agent(payload), event_payload)
+        return ledger
 
 
 def load_agent_ledger(payload: Mapping[str, object]) -> JsonObject:
@@ -300,21 +260,10 @@ def load_agent_ledger(payload: Mapping[str, object]) -> JsonObject:
     if not agent:
         return load_ledger(payload)
     root = _project_root(payload)
-    path = agent_log_path(root, agent)
-    if not path.exists():
+    events = load_agent_events(root, agent)
+    if events is None:
         return load_ledger(payload)
     ledger = default_ledger()
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return load_ledger(payload)
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            raw: object = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(raw, dict):
-            _apply_event(ledger, raw)
+    for event in events:
+        _apply_event(ledger, event)
     return ledger

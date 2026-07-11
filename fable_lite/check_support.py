@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
 import re
 import subprocess
 
 from core.ledger import classify_change_kind
+from core.verify_state import has_successful_verification as has_successful_verification
 
 SENTINEL_RE = re.compile(r"(?P<path>(?:[\w./\\-]+/)?\.done[\w_.-]*|tmp[/\\]\.done[\w_.-]*)", re.IGNORECASE)
 
@@ -75,13 +75,6 @@ def sentinels(prompt: str) -> list[str]:
         if path not in found:
             found.append(path)
     return found
-
-
-def has_successful_verification(ledger: Mapping[str, object]) -> bool:
-    results = ledger.get("verification_results")
-    if not isinstance(results, list):
-        return False
-    return any(isinstance(result, dict) and result.get("success") is True for result in results)
 
 
 def non_docs(paths: list[str]) -> list[str]:

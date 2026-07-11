@@ -24,10 +24,22 @@ def _as_result_list(value: object) -> list[JsonObject]:
     return [item for item in value if isinstance(item, dict)]
 
 
-def _has_successful_verification(ledger: Mapping[str, object]) -> bool:
+def _positive_sequence(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def has_successful_verification(ledger: Mapping[str, object]) -> bool:
+    results = _as_result_list(ledger.get("verification_results"))
+    last_change_seq = _positive_sequence(ledger.get("last_change_seq"))
+    if last_change_seq is None:
+        return any(result.get("success") is True for result in results)
     return any(
         result.get("success") is True
-        for result in _as_result_list(ledger.get("verification_results"))
+        and (verification_seq := _positive_sequence(result.get("seq"))) is not None
+        and verification_seq > last_change_seq
+        for result in results
     )
 
 
@@ -55,6 +67,7 @@ def _block_with_stop_counter(payload: Mapping[str, object], ledger: JsonObject, 
             "message": "최대 2회 차단 후 통과합니다 / allowing after max 2 blocks.",
         }
     ledger["stop_blocks"] = stop_blocks + 1
+    # v2.0 이연: 공유 원장 지원 시 stop_blocks read-modify-write도 ledger_transaction 안으로 옮긴다.
     save_ledger(payload, ledger)
     return {"decision": "block", "reason": reason}
 
@@ -70,7 +83,7 @@ def evaluate_stop(payload: Mapping[str, object]) -> Decision:
     mode_value = payload.get("task_mode") or ledger.get("task_mode")
     mode = mode_value if isinstance(mode_value, str) else "quick"
     changed = bool(_as_str_list(ledger.get("changed_files_seen")))
-    verified = _has_successful_verification(ledger)
+    verified = has_successful_verification(ledger)
 
     # N1 마커는 파일 변경이 있는 턴에만 요구한다 — 조사 팩의 목적은 "수정 전에
     # 제대로 조사했는가"이므로, 아무것도 고치지 않은 답변 전용 턴(질문·상담)에

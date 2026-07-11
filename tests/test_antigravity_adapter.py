@@ -61,18 +61,20 @@ def test_oma_before_model_injects_pack_context_and_records_ledger(tmp_path: Path
     assert ledger["requires_investigation_compliance"] is True
 
 
-def test_oma_before_tool_blocks_high_risk_apply_patch_payload(tmp_path: Path) -> None:
-    patch = "*** Begin Patch\n*** Add File: migrations/001.sql\n+DROP TABLE users;\n*** End Patch\n"
+def test_oma_before_tool_uses_actual_top_level_tool_as_authority(tmp_path: Path) -> None:
     payload: HookPayload = {
         "cwd": str(tmp_path),
+        "tool_name": "run_shell_command",
+        "tool_input": {"command": "rm -rf /"},
+        "metadata": {"tool_name": "read_file", "tool_input": {}},
         "llm_request": {
             "tool_calls": [
                 {
-                    "name": "write_to_file",
-                    "args": {"TargetFile": "migrations/001.sql", "CodeContent": "DROP TABLE users;"}
+                    "name": "read_file",
+                    "args": {"file_path": "README.md"},
                 }
             ]
-        }
+        },
     }
 
     result = run_oma_hook("BeforeTool", payload)
@@ -99,20 +101,127 @@ def test_oma_after_tool_records_file_changes_and_scope_warning(tmp_path: Path) -
 
 
 def test_oma_after_tool_records_shell_verification(tmp_path: Path) -> None:
+    # Given: a verification command with explicit successful tool-result fields.
     payload: HookPayload = {
         "cwd": str(tmp_path),
-        "metadata": {
-            "tool_name": "run_command",
-            "tool_input": {"CommandLine": "python -m pytest tests/"}
-        }
+        "tool_name": "run_shell_command",
+        "tool_input": {"command": "python -m pytest tests/"},
+        "tool_response": {
+            "llmContent": "Output: 3 passed in 0.02s",
+            "returnDisplay": "3 passed in 0.02s",
+            "data": {"exitCode": 0, "isError": False},
+        },
     }
 
+    # When: Antigravity reports the completed tool call.
     result = run_oma_hook("AfterTool", payload)
 
+    # Then: the ledger records the observed successful output as evidence.
     ledger = read_ledger(tmp_path)
     verification = object_value(list_value(ledger["verification_results"])[0])
     assert "recorded verification" in str(result.get("systemMessage", "")).lower() or "fable-lite 원장: 검증 기록." in str(result.get("systemMessage", ""))
     assert verification["success"] is True
+    assert "3 passed in 0.02s" in str(verification["evidence"])
+
+
+def test_oma_after_tool_records_failed_shell_verification_evidence(tmp_path: Path) -> None:
+    # Given: pytest returned a nonzero exit and concrete failure output.
+    failed_stdout = "1 failed in 0.02s\nFAILED tests/test_app.py::test_value"
+    payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "run_shell_command",
+        "tool_input": {"command": "python -m pytest tests/test_app.py"},
+        "tool_response": {
+            "llmContent": f"Output: {failed_stdout}\nExit Code: 1",
+            "returnDisplay": failed_stdout,
+            "data": {"exitCode": 1, "isError": True},
+        },
+    }
+
+    # When: the failed verification reaches AfterTool.
+    run_oma_hook("AfterTool", payload)
+
+    # Then: failure and its real output are preserved in the ledger.
+    ledger = read_ledger(tmp_path)
+    verification = object_value(list_value(ledger["verification_results"])[0])
+    assert verification["command"] == "python -m pytest tests/test_app.py"
+    assert verification["success"] is False
+    assert failed_stdout in str(verification["evidence"])
+    assert isinstance(verification["seq"], int)
+
+
+def test_oma_after_agent_blocks_after_code_change_and_failed_verification(tmp_path: Path) -> None:
+    # Given: a normal code task changed a file and its verification failed.
+    run_oma_hook("BeforeModel", oma_prompt_payload(tmp_path, "app.py에 계산 페이지를 만들어줘"))
+    run_oma_hook(
+        "AfterTool",
+        {
+            "cwd": str(tmp_path),
+            "tool_name": "replace",
+            "tool_input": {"file_path": "app.py", "old_string": "a", "new_string": "b"},
+            "tool_response": {"llmContent": "Updated app.py", "returnDisplay": "Updated app.py"},
+        },
+    )
+    run_oma_hook(
+        "AfterTool",
+        {
+            "cwd": str(tmp_path),
+            "tool_name": "run_shell_command",
+            "tool_input": {"command": "python -m pytest tests/test_app.py"},
+            "tool_response": {
+                "llmContent": "Output: 1 failed\nFAILED tests/test_app.py::test_value\nExit Code: 1",
+                "returnDisplay": "1 failed\nFAILED tests/test_app.py::test_value",
+                "data": {"exitCode": 1, "isError": True},
+            },
+        },
+    )
+    payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "termination_reason": "completed",
+        "llm_request": {
+            "messages": [{"role": "assistant", "content": "작업을 완료했습니다."}],
+        },
+    }
+
+    # When: the agent attempts to finish the changed task.
+    result = run_oma_hook("AfterAgent", payload)
+
+    # Then: the missing successful verification keeps completion blocked.
+    assert result["decision"] == "block"
+    assert "성공한 검증 증거가 없습니다" in str(result.get("reason", ""))
+
+
+def test_oma_after_tool_classifies_verification_result_conservatively(
+    tmp_path: Path,
+) -> None:
+    cases: list[tuple[str, HookPayload, bool]] = [
+        ("nested-error", {"tool_response": {"error": "exit status 1"}}, False),
+        ("nonzero-exit", {"tool_response": {"data": {"exitCode": 2, "isError": True}}}, False),
+        ("failure-output", {"tool_response": {"llmContent": "FAILED test_value"}}, False),
+        ("missing-result-fields", {"tool_response": {}}, False),
+        ("success-output", {"tool_response": {"llmContent": "3 passed"}}, True),
+        ("zero-exit", {"tool_response": {"data": {"exitCode": 0, "isError": False}}}, True),
+    ]
+
+    for case_name, result_fields, expected_success in cases:
+        # Given: one isolated, observable Antigravity tool-result shape.
+        case_root = tmp_path / case_name
+        case_root.mkdir()
+        payload: HookPayload = {
+            "cwd": str(case_root),
+            "tool_name": "run_shell_command",
+            "tool_input": {"command": "python -m pytest tests/test_app.py"},
+            **result_fields,
+        }
+
+        # When: the result is recorded by AfterTool.
+        run_oma_hook("AfterTool", payload)
+
+        # Then: ambiguity fails closed while explicit success or exit zero passes.
+        ledger = read_ledger(case_root)
+        results = list_value(ledger["verification_results"])
+        verification = object_value(results[0])
+        assert verification["success"] is expected_success, case_name
 
 
 def test_oma_after_agent_blocks_if_n1_missing(tmp_path: Path) -> None:

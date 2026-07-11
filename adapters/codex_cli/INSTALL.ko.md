@@ -21,20 +21,32 @@ Codex live capture(`codex exec -c hooks...`)에서 확인한 payload는 Claude C
 - `PostToolUse.tool_response`가 객체가 아니라 문자열일 수 있습니다.
 - `Stop` payload는 `last_assistant_message`를 직접 제공합니다.
 
-## 설치 스니펫
+## 설치
 
-프로젝트 루트에 아래 두 파일을 둡니다.
-
-```toml
-# .codex/config.toml
-[features]
-hooks = true
-```
+어느 작업 디렉터리에서든 fable-lite의 `install.py` 경로와 대상 프로젝트 루트를 넘깁니다.
 
 ```powershell
-New-Item -ItemType Directory -Force .codex
-Copy-Item adapters\codex_cli\hooks.json .codex\hooks.json
+python "C:\경로\fable-lite\adapters\codex_cli\install.py" --target "C:\경로\대상 프로젝트"
 ```
+
+```bash
+python3 "/path/to/fable-lite/adapters/codex_cli/install.py" --target "/path/to/대상 프로젝트"
+```
+
+설치기는 자신의 `install.py` 위치에서 fable-lite 저장소 루트를 찾고, 원본 `hooks.json`의
+`{FABLE_LITE_ROOT}` 토큰 8개(4개 이벤트의 `command`/`commandWindows`)를 검증한 뒤
+플랫폼별로 안전하게 인용한 절대 명령을 구조적으로 렌더링해 대상의 `.codex/hooks.json`만
+새로 만듭니다. 따라서 Codex를 대상 프로젝트에서 실행해도 현재 작업 디렉터리나
+`PYTHONPATH`에 의존하지 않습니다. 원본 `hooks.json`은 설치용 템플릿이므로 대상에 직접
+복사하지 마세요.
+
+설치기는 `.codex/config.toml`과 사용자 전역 `~/.codex/config.toml`을 만들거나 수정하지
+않습니다. `[features] hooks = true` 활성화가 필요한 환경에서는 기존 Codex 설정에서
+사용자가 별도로 관리해야 합니다.
+
+대상 `.codex/hooks.json`이 이미 있으면 내용을 보존한 채 오류로 종료합니다. 업데이트가
+필요하면 기존 훅을 먼저 검토·백업한 뒤 사용자가 명시적으로 정리하고 설치기를 다시
+실행하세요. 설치기가 기존 훅을 자동 병합하거나 덮어쓰지는 않습니다.
 
 Codex CLI에서 `/hooks`를 열어 새 hook을 검토하고 trust 처리합니다. 자동화 검증에서만 다음처럼 trust 검토를 우회할 수 있습니다.
 
