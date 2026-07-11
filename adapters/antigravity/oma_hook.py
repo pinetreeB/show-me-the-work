@@ -57,64 +57,6 @@ def _string_sequence(value: object) -> TypeGuard[Sequence[str]]:
     )
 
 
-def extract_tool_info(payload: Mapping[str, object]) -> tuple[str, dict[str, object]]:
-    tool_name = ""
-    tool_input: dict[str, object] = {}
-    
-    metadata = _mapping(payload.get("metadata"))
-    metadata_name = metadata.get("tool_name")
-    if isinstance(metadata_name, str):
-        tool_name = metadata_name
-    metadata_input = metadata.get("tool_input")
-    if isinstance(metadata_input, Mapping):
-        tool_input = dict(cast(Mapping[str, object], metadata_input))
-    
-    req = _mapping(payload.get("llm_request"))
-    tool_calls = _mapping_sequence(req.get("tool_calls"))
-    if tool_calls:
-        tc = tool_calls[0]
-        name_value = tc.get("name")
-        if isinstance(name_value, str):
-            tool_name = name_value
-        args: object = tc.get("args") or tc.get("input") or {}
-        if isinstance(args, str):
-            try:
-                args = cast(object, json.loads(args))
-            except json.JSONDecodeError:
-                args = {}
-        if isinstance(args, Mapping):
-            tool_input = dict(cast(Mapping[str, object], args))
-    
-    # Map OmA tools to CC tools
-    tool_name_map = {
-        "write_to_file": "Edit",
-        "replace_file_content": "Edit",
-        "multi_replace_file_content": "Edit",
-        "run_command": "Bash",
-        "write_file": "Edit",
-        "edit_file": "Edit"
-    }
-    mapped_name = tool_name_map.get(str(tool_name), str(tool_name))
-    return mapped_name, tool_input
-
-def extract_paths_from_input(tool_input: Mapping[str, object]) -> list[str]:
-    paths: list[str] = []
-    file_paths = tool_input.get("file_paths")
-    if isinstance(file_paths, Sequence) and not isinstance(file_paths, str | bytes):
-        paths.extend(str(path) for path in file_paths)
-    for key in ["file_path", "path", "notebook_path", "TargetPath", "AbsolutePath", "TargetFile"]:
-        value = tool_input.get(key)
-        if isinstance(value, str):
-            paths.append(value)
-    return paths
-
-def extract_command(tool_input: Mapping[str, object]) -> str:
-    for key in ["command", "CommandLine"]:
-        value = tool_input.get(key)
-        if isinstance(value, str):
-            return value
-    return ""
-
 def _get_project_root(payload: Mapping[str, object]) -> str:
     cwd = payload.get("cwd") or os.getcwd()
     return str(cwd)
@@ -141,6 +83,7 @@ def _append_intent_context(lines: list[str], intent_required: bool, intent_comma
     ])
 
 def handle_before_tool(payload: Mapping[str, object]) -> int:
+    from adapters.antigravity.tool_io import extract_command, extract_paths_from_input, extract_tool_info
     from adapters.intent_command import intent_set_command
     from core.contract import evaluate_pretool_contract
 
@@ -162,6 +105,13 @@ def handle_before_tool(payload: Mapping[str, object]) -> int:
     return emit({"decision": "allow"})
 
 def handle_after_tool(payload: Mapping[str, object]) -> int:
+    from adapters.antigravity.tool_io import (
+        extract_command,
+        extract_paths_from_input,
+        extract_tool_info,
+        verification_result,
+    )
+
     root = _get_project_root(payload)
     tool_name, tool_input = extract_tool_info(payload)
 
@@ -182,7 +132,8 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
             })
         ledger = load_ledger({"project_root": root})
         prompt = ledger.get("prompt", "")
-        if not isinstance(prompt, str): prompt = ""
+        if not isinstance(prompt, str):
+            prompt = ""
         
         req = classify_prompt({"prompt": prompt})["requested_paths"] if prompt else []
         scope = evaluate_scope({
@@ -203,12 +154,13 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
     if tool_name in SHELL_TOOLS:
         cmd = extract_command(tool_input)
         if is_verification_command(cmd):
+            success, evidence = verification_result(payload)
             _ = record_event({
                 "project_root": root,
                 "event": "verification",
                 "command": cmd,
-                "success": True,
-                "evidence": "tool output"
+                "success": success,
+                "evidence": evidence
             })
             return emit({"decision": "allow", "systemMessage": "fable-lite 원장: 검증 기록."})
             
@@ -246,7 +198,8 @@ def handle_before_model(payload: Mapping[str, object]) -> int:
     from core.ledger import record_event
 
     prompt_value = payload.get("prompt", "")
-    if not isinstance(prompt_value, str): prompt_value = ""
+    if not isinstance(prompt_value, str):
+        prompt_value = ""
     
     if not prompt_value:
         req = _mapping(payload.get("llm_request"))

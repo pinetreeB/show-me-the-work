@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 from typing import TypeAlias
+
+from adapters.codex_cli.install import render_hooks
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -206,3 +210,100 @@ def test_codex_hooks_fail_open_on_malformed_payload() -> None:
     result = run_hook("pre_tool_use.py", "{not-json")
 
     assert str(result["systemMessage"]).startswith("fable-lite fail-open")
+
+
+def test_codex_installer_loads_all_hook_commands_from_external_project(tmp_path: Path) -> None:
+    target = tmp_path / "외부 프로젝트 with spaces"
+    target.mkdir()
+    isolated_home = tmp_path / "격리 home"
+    isolated_home.mkdir()
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.update({"CODEX_HOME": str(isolated_home / ".codex"), "HOME": str(isolated_home), "USERPROFILE": str(isolated_home)})
+
+    install = subprocess.run(
+        [sys.executable, str(ADAPTERS / "install.py"), "--target", str(target)],
+        cwd=target,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert install.returncode == 0, install.stderr
+    hooks_path = target / ".codex" / "hooks.json"
+    assert hooks_path.is_file()
+    assert not (target / ".codex" / "config.toml").exists()
+
+    installed = object_value(json.loads(hooks_path.read_text(encoding="utf-8")))
+    hooks = object_value(installed["hooks"])
+    payloads: dict[str, HookPayload] = {
+        "UserPromptSubmit": codex_prompt_payload(target, "README.md 제목 오타를 수정하고 테스트를 실행해줘"),
+        "PreToolUse": {
+            "cwd": str(target),
+            "hook_event_name": "PreToolUse",
+            "tool_name": "PowerShell" if os.name == "nt" else "Bash",
+            "tool_input": {"command": "pwd"},
+            "tool_use_id": "call_pre",
+            "session_id": "external-session",
+        },
+        "PostToolUse": {
+            "cwd": str(target),
+            "hook_event_name": "PostToolUse",
+            "tool_name": "PowerShell" if os.name == "nt" else "Bash",
+            "tool_input": {"command": "python -m pytest -q"},
+            "tool_response": "Exit code: 0\nWall time: 1 seconds\nOutput:\n1 passed\n",
+            "tool_use_id": "call_post",
+            "session_id": "external-session",
+        },
+        "Stop": {
+            "cwd": str(target),
+            "hook_event_name": "Stop",
+            "last_assistant_message": "README 제목 오타를 수정하고 테스트했습니다.",
+            "stop_hook_active": False,
+            "session_id": "external-session",
+        },
+    }
+    results: dict[str, HookOutput] = {}
+
+    for event, payload in payloads.items():
+        event_hooks = list_value(hooks[event])
+        command_hooks = list_value(object_value(event_hooks[0])["hooks"])
+        command = object_value(command_hooks[0])["commandWindows" if os.name == "nt" else "command"]
+        assert isinstance(command, str)
+        args: str | list[str] = command if os.name == "nt" else shlex.split(command)
+        process = subprocess.run(
+            args,
+            cwd=target,
+            env=env,
+            input=json.dumps(payload, ensure_ascii=False),
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert process.returncode == 0, f"{event}: {process.stderr}"
+        output = json.loads(process.stdout)
+        assert isinstance(output, dict)
+        results[event] = output
+
+    prompt_output = object_value(results["UserPromptSubmit"]["hookSpecificOutput"])
+    assert prompt_output["hookEventName"] == "UserPromptSubmit"
+    assert isinstance(prompt_output["additionalContext"], str)
+    assert results["PreToolUse"] == {}
+    assert isinstance(results["PostToolUse"]["systemMessage"], str)
+    assert isinstance(results["Stop"]["systemMessage"], str)
+
+
+def test_codex_hook_renderer_quotes_windows_source_path(tmp_path: Path) -> None:
+    if os.name != "nt":
+        return
+    marker = tmp_path / "injected.txt"
+    fake_root = Path(f"C:/fable'; Set-Content -LiteralPath '{marker.as_posix()}' -Value 'INJECTED'; #")
+    assert isinstance(rendered := render_hooks(fake_root), str)
+    command = json.loads(rendered)["hooks"]["UserPromptSubmit"][0]["hooks"][0]["commandWindows"]
+    _ = subprocess.run(command, input="{}", capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, check=False)
+    assert not marker.exists()

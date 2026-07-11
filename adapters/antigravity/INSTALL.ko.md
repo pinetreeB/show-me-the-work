@@ -1,5 +1,13 @@
 # fable-lite Antigravity (OmA) 어댑터 설치 가이드
 
+> ⚠️ **실호스트 발동 미확인 (2026-07-12 실측)**: Antigravity CLI 1.1.1에서 아래 안내를 포함한 6가지 설치 조합을
+> 라이브로 실측한 결과 **훅이 한 번도 발동하지 않았습니다** — 현행 agy의 실물 훅 이벤트는 이 어댑터가 쓰는
+> `BeforeModel/BeforeTool/AfterTool/AfterAgent`가 아니라 `PreToolUse/PostToolUse/PreInvocation/PostInvocation/Stop`
+> 계열이며, `/hooks` UI로 실물 등록을 해도 훅 프로세스가 실행되지 않았습니다 (엔진 미발동 판정).
+> 상세 증거와 재판정 절차: `docs/reviews/p9-agy-live-hooks.md`.
+> 본 어댑터는 **payload 주입 테스트 레벨로만 검증**된 상태입니다. agy 훅 엔진이 발동하는 버전이 확인되면
+> 이벤트 매핑 개편과 함께 본 가이드가 갱신됩니다.
+
 이 문서는 fable-lite 코어를 Antigravity CLI(OmA) 환경에 통합하는 방법을 설명합니다.
 
 ## 주의: 메인 설정 훼손 방지
