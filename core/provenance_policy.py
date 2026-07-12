@@ -38,7 +38,8 @@ def normalize_relative_path(root: Path, path: Path) -> str:
 
 
 def canonical_manifest_key(path: str, windows: bool) -> str:
-    return path.casefold() if windows else path
+    normalized = path.replace("\\", "/")
+    return normalized.casefold() if windows else normalized
 
 
 def load_provenance_config(root: Path) -> ProvenanceConfig:

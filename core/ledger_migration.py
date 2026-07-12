@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
+from .agent_log import ledger_transaction
 from .ledger_schema import JsonObject, JsonValue, LedgerSchemaError, deserialize_v2_ledger, serialize_v2_ledger
 from .ledger_storage import atomic_write_bytes, atomic_write_text, ledger_path
 from .ledger_v1 import default_ledger, sequence_value
@@ -23,6 +24,11 @@ class LedgerMigrationError(RuntimeError):
 
 
 def migrate_v1_ledger(project_root: str) -> JsonObject:
+    with ledger_transaction(project_root):
+        return _migrate_v1_ledger(project_root)
+
+
+def _migrate_v1_ledger(project_root: str) -> JsonObject:
     destination = ledger_path(project_root)
     try:
         original = destination.read_bytes()

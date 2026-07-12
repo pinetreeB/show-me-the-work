@@ -25,9 +25,9 @@ def refresh_v1_projection(ledger: JsonObject, turn: JsonObject) -> JsonObject:
     for field in V1_PROJECTION_FIELDS:
         if field in turn:
             ledger[field] = turn[field]
-    blocks = turn.get("blocks")
-    if isinstance(blocks, dict):
-        ledger["stop_blocks"] = sequence_value(blocks.get("stop"))
+    # Legacy projection counters are conservative maxima; active turn fields remain authoritative.
+    ledger["last_change_seq"] = _max_active_field(ledger, "last_change_seq")
+    ledger["stop_blocks"] = _max_active_stop_blocks(ledger)
     ledger["event_seq"] = global_sequence
     return ledger
 
@@ -45,7 +45,6 @@ def apply_v2_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
         raw_turn = active.get(key)
         if isinstance(raw_turn, dict):
             turn = raw_turn
-            _sync_projected_stop_block(ledger, turn)
             _ = apply_v1_event(turn, payload)
         else:
             turn = _new_turn(payload, event_seq)
@@ -62,6 +61,29 @@ def apply_v2_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
 def _active_turns(ledger: JsonObject) -> JsonObject:
     active = ledger.get("active_turns")
     return active if isinstance(active, dict) else {}
+
+
+def _max_active_field(ledger: JsonObject, field: str) -> int:
+    return max(
+        (
+            sequence_value(turn.get(field))
+            for turn in _active_turns(ledger).values()
+            if isinstance(turn, dict)
+        ),
+        default=0,
+    )
+
+
+def _max_active_stop_blocks(ledger: JsonObject) -> int:
+    return max(
+        (
+            sequence_value(blocks.get("stop"))
+            for turn in _active_turns(ledger).values()
+            if isinstance(turn, dict)
+            and isinstance(blocks := turn.get("blocks"), dict)
+        ),
+        default=0,
+    )
 
 
 def _new_turn(payload: Mapping[str, JsonValue], event_seq: int) -> JsonObject:
@@ -146,16 +168,6 @@ def _discard_legacy_turn(active: JsonObject) -> None:
     legacy = active.get("default")
     if isinstance(legacy, dict) and legacy.get("migration_mode") == "legacy_turn":
         _ = active.pop("default", None)
-
-
-def _sync_projected_stop_block(ledger: JsonObject, turn: JsonObject) -> None:
-    if ledger.get("agent") != turn.get("agent"):
-        return
-    blocks = turn.get("blocks")
-    if not isinstance(blocks, dict):
-        blocks = {"stop": 0}
-        turn["blocks"] = blocks
-    blocks["stop"] = sequence_value(ledger.get("stop_blocks"))
 
 
 def _complete_v2_projection(turn: JsonObject) -> None:

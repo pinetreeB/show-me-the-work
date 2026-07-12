@@ -302,14 +302,13 @@ def evaluate_pretool_contract(payload: Mapping[str, JsonValue]) -> Decision:
 
     paths = _string_list(payload.get("file_paths"))
     command = _command(payload)
-    root = _project_root(payload)
-    if tool in EDIT_TOOLS and needs_intent_block(root):
-        intent_result = block_intent_once(root, _intent_set_command(payload))
+    if tool in EDIT_TOOLS and needs_intent_block(payload):
+        intent_result = block_intent_once(payload, _intent_set_command(payload))
         if intent_result["decision"] == "block":
             return intent_result
 
-    if needs_goals_block(root) and not _is_goals_authoring(paths, command):
-        return block_goals_once(root)
+    if needs_goals_block(payload) and not _is_goals_authoring(paths, command):
+        return block_goals_once(payload)
 
     if paths and all(_is_contract_authoring(path) for path in paths):
         return {"decision": "allow", "message": "contract authoring allowed"}

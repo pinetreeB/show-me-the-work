@@ -5,7 +5,8 @@ from typing import Final, TypeAlias
 
 from .agent_log import ledger_transaction
 from .intent import has_intent
-from .ledger import JsonObject, JsonValue, load_ledger, save_ledger, state_dir
+from .ledger import JsonValue, load_ledger, save_ledger, state_dir
+from .verification_covers import active_turn
 
 
 Decision: TypeAlias = dict[str, JsonValue]
@@ -13,21 +14,23 @@ MAX_GOALS_BLOCKS: Final = 2
 MAX_INTENT_BLOCKS: Final = 2
 
 
-def needs_goals_block(root: str) -> bool:
-    ledger = load_ledger({"project_root": root})
-    return ledger.get("needs_goals") is True and not (state_dir(root) / "goals.json").exists()
+def needs_goals_block(payload: Mapping[str, JsonValue]) -> bool:
+    root = _project_root(payload)
+    return _gate_required(load_ledger(payload), payload, "needs_goals") and not _goals_present(root)
 
 
-def needs_intent_block(root: str) -> bool:
-    ledger = load_ledger({"project_root": root})
-    return ledger.get("intent_required") is True and not has_intent(root)
+def needs_intent_block(payload: Mapping[str, JsonValue]) -> bool:
+    root = _project_root(payload)
+    return _gate_required(load_ledger(payload), payload, "intent_required") and not has_intent(root)
 
 
-def block_goals_once(root: str) -> Decision:
-    payload: JsonObject = {"project_root": root}
+def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
+    root = _project_root(payload)
+    goals_present = _goals_present(root)
+    # A checkpoint created after this hint can consume one capped block, preserving short RMW locking.
     with ledger_transaction(root):
         ledger = load_ledger(payload)
-        if ledger.get("needs_goals") is not True or (state_dir(root) / "goals.json").exists():
+        if not _gate_required(ledger, payload, "needs_goals") or goals_present:
             return {"decision": "allow", "message": "goals checkpoint is present"}
         blocks = _counter_value(ledger, "goals_blocks")
         if blocks >= MAX_GOALS_BLOCKS:
@@ -47,11 +50,13 @@ def block_goals_once(root: str) -> Decision:
     }
 
 
-def block_intent_once(root: str, intent_command: str) -> Decision:
-    payload: JsonObject = {"project_root": root}
+def block_intent_once(payload: Mapping[str, JsonValue], intent_command: str) -> Decision:
+    root = _project_root(payload)
+    intent_present = has_intent(root)
+    # A checkpoint created after this hint can consume one capped block, preserving short RMW locking.
     with ledger_transaction(root):
         ledger = load_ledger(payload)
-        if ledger.get("intent_required") is not True or has_intent(root):
+        if not _gate_required(ledger, payload, "intent_required") or intent_present:
             return {"decision": "allow", "message": "intent checkpoint is present"}
         blocks = _counter_value(ledger, "intent_blocks")
         if blocks >= MAX_INTENT_BLOCKS:
@@ -75,3 +80,29 @@ def block_intent_once(root: str, intent_command: str) -> Decision:
 def _counter_value(ledger: Mapping[str, JsonValue], field: str) -> int:
     value = ledger.get(field)
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _project_root(payload: Mapping[str, JsonValue]) -> str:
+    root = payload.get("project_root") or payload.get("cwd")
+    return root if isinstance(root, str) and root else "."
+
+
+def _goals_present(root: str) -> bool:
+    return (state_dir(root) / "goals.json").exists()
+
+
+def _gate_required(
+    ledger: Mapping[str, JsonValue], payload: Mapping[str, JsonValue], field: str
+) -> bool:
+    if not _has_turn_identity(payload):
+        # Identifier-free v1 calls use the projection under the legacy single-agent assumption.
+        return ledger.get(field) is True
+    turn = active_turn(ledger, payload)
+    return turn is not None and turn.get(field) is True
+
+
+def _has_turn_identity(payload: Mapping[str, JsonValue]) -> bool:
+    return any(
+        isinstance(payload.get(field), str) and bool(payload.get(field))
+        for field in ("agent", "session_id")
+    )
