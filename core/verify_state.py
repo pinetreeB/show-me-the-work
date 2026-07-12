@@ -3,35 +3,36 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypeAlias
 
-from .ledger import JsonObject, load_ledger, save_ledger
+from .ledger import JsonObject, JsonValue, load_ledger, save_ledger
 from .compliance import check_investigation_compliance
 
-JsonValue: TypeAlias = str | int | bool | list[str]
 Decision: TypeAlias = dict[str, JsonValue]
 
 MAX_STOP_BLOCKS = 2
 
 
-def _as_str_list(value: object) -> list[str]:
+def _as_str_list(value: JsonValue | None) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
 
 
-def _as_result_list(value: object) -> list[JsonObject]:
+def _as_result_list(value: JsonValue | None) -> list[JsonObject]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
 
 
-def _positive_sequence(value: object) -> int | None:
+def _positive_sequence(value: JsonValue | None) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
         return value
     return None
 
 
-def has_successful_verification(ledger: Mapping[str, object]) -> bool:
+def has_successful_verification(ledger: Mapping[str, JsonValue]) -> bool:
     results = _as_result_list(ledger.get("verification_results"))
+    if _legacy_seq_less_verification(ledger):
+        return any(result.get("success") is True for result in results)
     last_change_seq = _positive_sequence(ledger.get("last_change_seq"))
     if last_change_seq is None:
         return any(result.get("success") is True for result in results)
@@ -43,22 +44,34 @@ def has_successful_verification(ledger: Mapping[str, object]) -> bool:
     )
 
 
-def _docs_only(ledger: Mapping[str, object]) -> bool:
+def _legacy_seq_less_verification(ledger: Mapping[str, JsonValue]) -> bool:
+    active_turns = ledger.get("active_turns")
+    if not isinstance(active_turns, dict):
+        return False
+    return any(
+        isinstance(turn, dict)
+        and turn.get("migration_mode") == "legacy_turn"
+        and turn.get("legacy_seq_less") is True
+        for turn in active_turns.values()
+    )
+
+
+def _docs_only(ledger: Mapping[str, JsonValue]) -> bool:
     changed = _as_str_list(ledger.get("changed_files_seen"))
     kinds = set(_as_str_list(ledger.get("change_kinds")))
     return bool(changed) and bool(kinds) and kinds <= {"docs"}
 
 
-def _assistant_text(payload: Mapping[str, object]) -> str:
+def _assistant_text(payload: Mapping[str, JsonValue]) -> str:
     value = payload.get("assistant_text")
     return value if isinstance(value, str) else ""
 
 
-def _requires_investigation_compliance(ledger: Mapping[str, object]) -> bool:
+def _requires_investigation_compliance(ledger: Mapping[str, JsonValue]) -> bool:
     return ledger.get("requires_investigation_compliance") is True
 
 
-def _block_with_stop_counter(payload: Mapping[str, object], ledger: JsonObject, reason: str) -> Decision:
+def _block_with_stop_counter(payload: Mapping[str, JsonValue], ledger: JsonObject, reason: str) -> Decision:
     stop_blocks_value = ledger.get("stop_blocks")
     stop_blocks = stop_blocks_value if isinstance(stop_blocks_value, int) else 0
     if stop_blocks >= MAX_STOP_BLOCKS:
@@ -72,7 +85,7 @@ def _block_with_stop_counter(payload: Mapping[str, object], ledger: JsonObject, 
     return {"decision": "block", "reason": reason}
 
 
-def evaluate_stop(payload: Mapping[str, object]) -> Decision:
+def evaluate_stop(payload: Mapping[str, JsonValue]) -> Decision:
     # 주의: stop_hook_active를 이유로 여기서 조건 없이 allow하지 않는다 — 그러면
     # _block_with_stop_counter의 stop_blocks 카운터가 두 번째 검사에서 실행되지 못해
     # MAX_STOP_BLOCKS(2)가 사실상 도달 불가능한 코드가 된다(v1 릴리스 심사 B2 발견,

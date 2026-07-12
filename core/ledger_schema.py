@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 import json
 from typing import NoReturn, TypeAlias
 
@@ -9,10 +8,11 @@ JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
-@dataclass(frozen=True, slots=True)
 class LedgerSchemaError(ValueError):
-    field: str
-    requirement: str
+    def __init__(self, field: str, requirement: str) -> None:
+        self.field = field
+        self.requirement = requirement
+        super().__init__(field, requirement)
 
     def __str__(self) -> str:
         return f"invalid v2 ledger schema at {self.field}: {self.requirement}"
@@ -163,6 +163,14 @@ def validate_v2_ledger(value: JsonValue) -> JsonObject:
         )
         blocks = _object(_required(turn, "blocks", field), f"{field}.blocks")
         _nonnegative_integer(_required(blocks, "stop", f"{field}.blocks"), f"{field}.blocks.stop")
+        if "agent" in turn:
+            _string(turn["agent"], f"{field}.agent")
+        if "migration_mode" in turn:
+            migration_mode = _string(turn["migration_mode"], f"{field}.migration_mode")
+            if migration_mode != "legacy_turn":
+                _reject(f"{field}.migration_mode", "must equal legacy_turn")
+        if "legacy_seq_less" in turn:
+            _boolean(turn["legacy_seq_less"], f"{field}.legacy_seq_less")
     return ledger
 
 
