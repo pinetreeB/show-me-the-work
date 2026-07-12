@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import tempfile
 from typing import TypeAlias, override
+from uuid import uuid4
 
 from .provenance_types import EntryKind, ManifestEntry, ScanIssue, Snapshot
 
@@ -50,6 +51,20 @@ def save_turn_baseline(root: Path, agent: str, turn_id: str, snapshot: Snapshot)
     path = turn_baseline_path(root, agent, turn_id)
     _save(path, snapshot)
     return path
+
+
+def save_turn_baseline_from_current(root: Path, agent: str, turn_id: str, snapshot: Snapshot) -> Path:
+    destination = turn_baseline_path(root, agent, turn_id)
+    source = workspace_current_path(root)
+    temporary = destination.parent / f"snapshot-{uuid4().hex}.tmp"
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        os.link(source, temporary)
+        os.replace(temporary, destination)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        _save(destination, snapshot)
+    return destination
 
 
 def load_turn_baseline(root: Path, agent: str, turn_id: str) -> Snapshot | None:

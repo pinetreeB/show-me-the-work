@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### 2.0.0 draft
+
+### Added - Change provenance
+
+- Added stdlib-only filesystem provenance with BLAKE2b-256 manifests, metadata fast-paths, full Stop reconciliation, Windows casefold collision handling, non-follow symlink/reparse safety, generation rebase, canonical multi-adapter replay, and per-turn verification covers.
+- Added the 200-case W9 golden corpus and Git/non-git plus Claude Code/Codex/Antigravity replay receipts.
+- Added the W10 1k/10k benchmark (`5` warm-ups + `30` measurements) with optional 50k/2GiB stress, percentile/read/stat/RSS metrics, atomic JSON receipt, and a two-receipt release migration guard.
+
+### Release gate status
+
+- Gates 1-10 and 12-13 in `docs/design/v2-provenance.md` section 17 are covered by the W1-W9 implementation and green W9 receipt: no tool-name-only events, parser-miss loss, no-op false positives, stale verification, Git/non-git drift, migration corruption, concurrency loss, adapter replay mismatch, Windows collision overwrite, or premature migration trigger; runtime remains stdlib-only.
+- Gate 11 is green under the rev3 3-AI SLO reconsensus: representative 1k retains 200ms/1,000ms metadata/full p95 budgets, while extreme 10k uses measured 1,000ms/6,000ms budgets after a 1.48s isolated Windows lower-bound probe; native scanning remains rejected and the workload was not reduced.
+- The final receipt records independent 1k and 10k hard gates, clean fast-path reads of 0 bytes, and aggregate green status. With the green W9 receipt, `record_event()` now permits the one-shot v1 ledger migration path.
+
 ## [1.2.0] - 2026-07-12
 
 ### Added — Evidence integrity, host conformance, and release SSOT

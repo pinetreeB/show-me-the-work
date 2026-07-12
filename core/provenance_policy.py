@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from fnmatch import fnmatchcase
+from functools import lru_cache
 from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import Final, TypeAlias
@@ -10,6 +11,7 @@ from typing import Final, TypeAlias
 from .provenance_types import ProvenanceConfig, ProvenanceConfigError, ProvenancePathError
 
 HARD_EXCLUDES: Final = (".git/**", ".fable-lite/**", ".hg/**", ".svn/**")
+HARD_EXCLUDE_DIRS: Final = frozenset((".git", ".fable-lite", ".hg", ".svn"))
 SOFT_EXCLUDES: Final = (
     "node_modules/**",
     ".venv/**",
@@ -19,6 +21,7 @@ SOFT_EXCLUDES: Final = (
     ".mypy_cache/**",
     ".ruff_cache/**",
 )
+SOFT_EXCLUDE_DIRS: Final = frozenset(pattern.removesuffix("/**") for pattern in SOFT_EXCLUDES)
 CONFIG_RELATIVE_PATH: Final = ".fable-lite/provenance-config.json"
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
@@ -66,6 +69,7 @@ def load_provenance_config(root: Path) -> ProvenanceConfig:
     )
 
 
+@lru_cache(maxsize=262_144)
 def is_path_in_scope(path: str, config: ProvenanceConfig) -> bool:
     if is_hard_excluded(path):
         return False
@@ -73,19 +77,20 @@ def is_path_in_scope(path: str, config: ProvenanceConfig) -> bool:
         return True
     if _matches_any(path, config.exclude):
         return False
-    return not _matches_any(path, SOFT_EXCLUDES)
+    return _first_segment(path) not in SOFT_EXCLUDE_DIRS
 
 
 def is_hard_excluded(path: str) -> bool:
-    return _matches_any(path, HARD_EXCLUDES)
+    return _first_segment(path) in HARD_EXCLUDE_DIRS
 
 
+@lru_cache(maxsize=65_536)
 def should_descend(path: str, config: ProvenanceConfig) -> bool:
-    if _matches_any(path, HARD_EXCLUDES):
+    if is_hard_excluded(path):
         return False
     if _matches_any(path, config.include):
         return True
-    if _matches_any(path, config.exclude) or _matches_any(path, SOFT_EXCLUDES):
+    if _matches_any(path, config.exclude) or _first_segment(path) in SOFT_EXCLUDE_DIRS:
         return _has_included_descendant(path, config.include)
     return True
 
@@ -108,6 +113,10 @@ def _patterns(value: JsonValue | None, field: str) -> tuple[str, ...]:
 
 def _matches_any(path: str, patterns: tuple[str, ...]) -> bool:
     return any(_matches(path, pattern) for pattern in patterns)
+
+
+def _first_segment(path: str) -> str:
+    return path.partition("/")[0]
 
 
 def _matches(path: str, pattern: str) -> bool:

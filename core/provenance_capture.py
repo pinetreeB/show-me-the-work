@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
+from io import BufferedReader
 import os
 from pathlib import Path
 import stat
-from typing import BinaryIO, Final
+from typing import Final
 
 from .provenance_types import EntryKind, ManifestEntry, ScanIssue
 
 HASH_CHUNK_BYTES: Final = 1024 * 1024
+MAX_CAPTURE_WORKERS: Final = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,21 +26,19 @@ class CaptureRequest:
     path: Path
     relative: str
     canonical_key: str
+    metadata: os.stat_result
     previous: ManifestEntry | None = None
 
 
 def capture_regular(request: CaptureRequest) -> CapturedPath:
-    for _ in range(2):
+    for attempt in range(2):
         try:
-            before = os.stat(request.path, follow_symlinks=False)
+            before = request.metadata if attempt == 0 else os.stat(request.path, follow_symlinks=False)
             if not stat.S_ISREG(before.st_mode):
                 return CapturedPath(None, ScanIssue(request.relative, "unstable_path"))
             previous = request.previous
             if previous is not None and _can_reuse(previous, before):
-                after = os.stat(request.path, follow_symlinks=False)
-                if _stats_match(before, after):
-                    return CapturedPath(_entry(request, after, previous.digest), None)
-                continue
+                return CapturedPath(_entry(request, before, previous.digest), None)
             with request.path.open("rb") as handle:
                 before_fd = os.fstat(handle.fileno())
                 if not _stats_match(before, before_fd):
@@ -52,10 +53,27 @@ def capture_regular(request: CaptureRequest) -> CapturedPath:
     return CapturedPath(None, ScanIssue(request.relative, "unstable_path"))
 
 
+def capture_regular_many(requests: tuple[CaptureRequest, ...]) -> tuple[CapturedPath, ...]:
+    results: list[CapturedPath | None] = [None] * len(requests)
+    pending: list[tuple[int, CaptureRequest]] = []
+    for index, request in enumerate(requests):
+        if request.previous is not None and _can_reuse(request.previous, request.metadata):
+            results[index] = CapturedPath(_entry(request, request.metadata, request.previous.digest), None)
+        else:
+            pending.append((index, request))
+    if pending:
+        workers = min(MAX_CAPTURE_WORKERS, len(pending))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            captured = executor.map(capture_regular, (request for _, request in pending))
+            for (index, _), result in zip(pending, captured, strict=True):
+                results[index] = result
+    return tuple(result for result in results if result is not None)
+
+
 def capture_symlink(request: CaptureRequest) -> CapturedPath:
     for _ in range(2):
         try:
-            before = os.stat(request.path, follow_symlinks=False)
+            before = request.metadata
             target = os.readlink(request.path)
             after = os.stat(request.path, follow_symlinks=False)
         except OSError:
@@ -108,10 +126,8 @@ def _stat_signature(metadata: os.stat_result) -> tuple[int, int, int, int]:
     )
 
 
-def _digest_stream(handle: BinaryIO) -> str:
-    digest = hashlib.blake2b(digest_size=32)
-    while chunk := handle.read(HASH_CHUNK_BYTES):
-        digest.update(chunk)
+def _digest_stream(handle: BufferedReader) -> str:
+    digest = hashlib.file_digest(handle, lambda: hashlib.blake2b(digest_size=32))
     return f"blake2b-256:{digest.hexdigest()}"
 
 

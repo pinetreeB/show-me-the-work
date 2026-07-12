@@ -11,6 +11,7 @@ from .provenance_capture import (
     CaptureRequest,
     CapturedPath,
     capture_regular,
+    capture_regular_many,
     capture_symlink,
 )
 from .provenance_delta import calculate_net_delta
@@ -79,16 +80,18 @@ class _PathInfo:
 class _ScanState:
     """Accumulates one directory walk because discovery order requires mutable work lists."""
 
-    directories: list[Path]
+    directories: list[tuple[Path, str]]
     entries: list[ManifestEntry]
     observations: list[ManifestEntry]
     issues: list[ScanIssue]
+    regular_requests: list[CaptureRequest]
 
     def __init__(self, root: Path) -> None:
-        self.directories = [root]
+        self.directories = [(root, "")]
         self.entries = []
         self.observations = []
         self.issues = []
+        self.regular_requests = []
 
 
 def snapshot_workspace(
@@ -137,31 +140,46 @@ def workspace_scope_policy_id(root: Path, windows: bool | None = None) -> str:
 def _scan(context: _ScanContext) -> ScanResult:
     state = _ScanState(context.root)
     while state.directories:
-        directory = state.directories.pop()
+        directory, parent_relative = state.directories.pop()
         try:
             with os.scandir(directory) as scan:
-                children = sorted(scan, key=lambda entry: entry.name)
+                children = tuple(scan)
         except OSError:
-            relative = normalize_relative_path(context.root, directory)
-            state.issues.append(ScanIssue(relative, "unreadable_directory"))
+            state.issues.append(ScanIssue(parent_relative, "unreadable_directory"))
             continue
         for child in children:
-            _visit_path(child, context, state)
+            relative = f"{parent_relative}/{child.name}" if parent_relative else child.name
+            _visit_path(child, relative, context, state)
+    for captured in capture_regular_many(tuple(state.regular_requests)):
+        _append_capture(captured, state)
     return ScanResult(tuple(state.entries), tuple(state.observations), tuple(state.issues))
 
 
 def _visit_path(
     child: os.DirEntry[str],
+    relative: str,
     context: _ScanContext,
     state: _ScanState,
 ) -> None:
-    relative = normalize_relative_path(context.root, Path(child.path))
     try:
         metadata = child.stat(follow_symlinks=False)
         is_link = child.is_symlink()
     except OSError:
         state.issues.append(ScanIssue(relative, "unreadable_path"))
         return
+    mode = metadata.st_mode
+    if not is_link and not _is_non_symlink_reparse(metadata, context.windows):
+        if stat.S_ISDIR(mode):
+            if should_descend(relative, context.config) or _has_forced_descendant(relative, context):
+                state.directories.append((Path(child.path), relative))
+            return
+        if stat.S_ISREG(mode):
+            if not _in_scope(relative, context):
+                return
+            key = relative.casefold() if context.windows else relative
+            previous = None if relative in context.force_paths else context.previous_entries.get(key)
+            state.regular_requests.append(CaptureRequest(Path(child.path), relative, key, metadata, previous))
+            return
     info = _PathInfo(
         Path(child.path),
         relative,
@@ -176,20 +194,6 @@ def _visit_path(
         return
     if _is_non_symlink_reparse(metadata, context.windows):
         _visit_reparse(info, context, state)
-        return
-    if stat.S_ISDIR(metadata.st_mode):
-        if should_descend(relative, context.config) or _has_forced_descendant(relative, context):
-            state.directories.append(info.path)
-        return
-    if not _in_scope(relative, context):
-        return
-    if stat.S_ISREG(metadata.st_mode):
-        previous = (
-            None
-            if info.relative in context.force_paths
-            else context.previous_entries.get(info.key)
-        )
-        _append_capture(capture_regular(_capture_request(info, previous)), state)
         return
     state.issues.append(ScanIssue(relative, "special_file"))
 
@@ -230,13 +234,11 @@ def _capture_request(
     info: _PathInfo,
     previous: ManifestEntry | None = None,
 ) -> CaptureRequest:
-    return CaptureRequest(info.path, info.relative, info.key, previous)
+    return CaptureRequest(info.path, info.relative, info.key, info.metadata, previous)
 
 
 def _in_scope(relative: str, context: _ScanContext) -> bool:
-    return not is_hard_excluded(relative) and (
-        is_path_in_scope(relative, context.config) or relative in context.force_paths
-    )
+    return is_path_in_scope(relative, context.config) or relative in context.force_paths
 
 
 def _has_forced_descendant(relative: str, context: _ScanContext) -> bool:

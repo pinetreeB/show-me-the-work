@@ -60,6 +60,8 @@ def _source_for_delta(state: LifecycleState, source: str, path: str) -> str:
 def pending_change_ids(state: LifecycleState, turn: TurnState) -> tuple[str, ...]:
     if state.current is None:
         return ()
+    if turn.baseline.snapshot_id == state.current.snapshot_id:
+        return ()
     return tuple(
         sorted(change_id_for(delta) for delta in calculate_net_delta(turn.baseline, state.current))
     )
