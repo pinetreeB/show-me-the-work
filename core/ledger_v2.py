@@ -5,6 +5,7 @@ from typing import Final
 
 from .ledger_schema import JsonObject, JsonValue
 from .ledger_v1 import V1_PROJECTION_FIELDS, apply_v1_event, default_ledger, sequence_value
+from .verification_covers import agent_key, attach_covers, record_path_revisions
 
 SNAPSHOT_UNAVAILABLE: Final = "snapshot:unavailable"
 EVENT_ONLY_PROMPT: Final = "(event-only)"
@@ -17,13 +18,6 @@ def default_v2_ledger() -> JsonObject:
     ledger["manifest_generation"] = 0
     ledger["active_turns"] = {}
     return ledger
-
-
-def agent_key(payload: Mapping[str, JsonValue]) -> str:
-    host = _string(payload.get("host"), "default")
-    session_id = _string(payload.get("session_id"), "default")
-    agent = _string(payload.get("agent"), "default")
-    return f"{host}:{session_id}:{agent}"
 
 
 def refresh_v1_projection(ledger: JsonObject, turn: JsonObject) -> JsonObject:
@@ -93,7 +87,18 @@ def _update_turn_after_event(turn: JsonObject, payload: Mapping[str, JsonValue])
     snapshot_id = payload.get("current_snapshot_id")
     if isinstance(snapshot_id, str) and snapshot_id:
         turn["current_snapshot_id"] = snapshot_id
-    if payload.get("event") != "change":
+    event = payload.get("event")
+    if event == "verification":
+        covers = payload.get("covers")
+        if isinstance(covers, dict):
+            attach_covers(turn, covers)
+        return
+    if event != "change":
+        return
+    paths = payload.get("paths")
+    if isinstance(paths, list):
+        _apply_path_projection(turn, payload)
+        record_path_revisions(turn, payload)
         return
     change_id = _change_id(payload)
     if change_id:
@@ -103,6 +108,24 @@ def _update_turn_after_event(turn: JsonObject, payload: Mapping[str, JsonValue])
         turn["pending_change_ids"] = pending
     if turn.get("migration_mode") == "legacy_turn":
         turn["legacy_seq_less"] = False
+
+
+def _apply_path_projection(turn: JsonObject, payload: Mapping[str, JsonValue]) -> None:
+    paths = payload.get("paths")
+    if not isinstance(paths, list):
+        return
+    for raw_path in paths:
+        if not isinstance(raw_path, dict):
+            continue
+        path = raw_path.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        event_payload = dict(payload)
+        event_payload["path"] = path
+        kind = raw_path.get("kind")
+        if isinstance(kind, str):
+            event_payload["kind"] = kind
+        _ = apply_v1_event(turn, event_payload)
 
 
 def _change_id(payload: Mapping[str, JsonValue]) -> str:

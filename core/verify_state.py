@@ -5,6 +5,7 @@ from typing import TypeAlias
 
 from .ledger import JsonObject, JsonValue, load_ledger, save_ledger
 from .compliance import check_investigation_compliance
+from .verification_covers import active_turn, covers_verified
 
 Decision: TypeAlias = dict[str, JsonValue]
 
@@ -29,11 +30,18 @@ def _positive_sequence(value: JsonValue | None) -> int | None:
     return None
 
 
-def has_successful_verification(ledger: Mapping[str, JsonValue]) -> bool:
-    results = _as_result_list(ledger.get("verification_results"))
-    if _legacy_seq_less_verification(ledger):
+def has_successful_verification(
+    ledger: Mapping[str, JsonValue],
+    payload: Mapping[str, JsonValue] | None = None,
+) -> bool:
+    turn = active_turn(ledger, payload)
+    if turn is not None and (covers_result := covers_verified(turn)) is not None:
+        return covers_result
+    state: Mapping[str, JsonValue] = turn if turn is not None else ledger
+    results = _as_result_list(state.get("verification_results"))
+    if _legacy_seq_less_verification(ledger, turn):
         return any(result.get("success") is True for result in results)
-    last_change_seq = _positive_sequence(ledger.get("last_change_seq"))
+    last_change_seq = _positive_sequence(state.get("last_change_seq"))
     if last_change_seq is None:
         return any(result.get("success") is True for result in results)
     return any(
@@ -44,7 +52,14 @@ def has_successful_verification(ledger: Mapping[str, JsonValue]) -> bool:
     )
 
 
-def _legacy_seq_less_verification(ledger: Mapping[str, JsonValue]) -> bool:
+def _legacy_seq_less_verification(
+    ledger: Mapping[str, JsonValue], turn: JsonObject | None
+) -> bool:
+    if turn is not None:
+        return (
+            turn.get("migration_mode") == "legacy_turn"
+            and turn.get("legacy_seq_less") is True
+        )
     active_turns = ledger.get("active_turns")
     if not isinstance(active_turns, dict):
         return False
@@ -93,15 +108,17 @@ def evaluate_stop(payload: Mapping[str, JsonValue]) -> Decision:
     # 무한루프 방지는 아래 _block_with_stop_counter의 stop_blocks>=MAX_STOP_BLOCKS
     # 캡 하나로 충분하다 — stop_hook_active 여부와 무관하게 최대 2회 차단 후 반드시 통과한다.
     ledger = load_ledger(payload)
-    mode_value = payload.get("task_mode") or ledger.get("task_mode")
+    turn = active_turn(ledger, payload)
+    state: Mapping[str, JsonValue] = turn if turn is not None else ledger
+    mode_value = payload.get("task_mode") or state.get("task_mode")
     mode = mode_value if isinstance(mode_value, str) else "quick"
-    changed = bool(_as_str_list(ledger.get("changed_files_seen")))
-    verified = has_successful_verification(ledger)
+    changed = bool(_as_str_list(state.get("changed_files_seen")))
+    verified = has_successful_verification(ledger, payload)
 
     # N1 마커는 파일 변경이 있는 턴에만 요구한다 — 조사 팩의 목적은 "수정 전에
     # 제대로 조사했는가"이므로, 아무것도 고치지 않은 답변 전용 턴(질문·상담)에
     # 마커를 강제하면 규율이 아니라 마찰이다 (v1.1.3, 사용자 피드백).
-    if changed and _requires_investigation_compliance(ledger):
+    if changed and _requires_investigation_compliance(state):
         compliance = check_investigation_compliance({"text": _assistant_text(payload)})
         if compliance["compliant"] is not True:
             return _block_with_stop_counter(

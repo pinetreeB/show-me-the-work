@@ -13,6 +13,7 @@ from .ledger_schema import JsonObject as JsonObject, JsonScalar as JsonScalar, J
 from .ledger_storage import atomic_write_text, ledger_path as ledger_path, state_dir as state_dir
 from .ledger_v1 import apply_v1_event, classify_change_kind as classify_change_kind, default_ledger, sequence_value
 from .ledger_v2 import apply_v2_event, default_v2_ledger
+from .verification_covers import active_turn, capture_covers
 
 
 def _project_root(payload: Mapping[str, JsonValue]) -> str:
@@ -98,6 +99,18 @@ def migrate_ledger_to_v2(payload: Mapping[str, JsonValue]) -> JsonObject:
         return migrate_v1_ledger(root)
 
 
+def capture_verification_covers(payload: Mapping[str, JsonValue]) -> JsonObject:
+    root = _project_root(payload)
+    with ledger_transaction(root):
+        ledger = load_ledger(payload)
+        if ledger.get("schema_version") != 2:
+            raise LedgerSchemaError("ledger.schema_version", "must equal 2 for covers capture")
+        turn = active_turn(ledger, payload)
+        if turn is None:
+            raise LedgerSchemaError("ledger.active_turns", "must contain the verification agent turn")
+        return capture_covers(ledger, turn)
+
+
 def load_agent_ledger(payload: Mapping[str, JsonValue]) -> JsonObject:
     agent = _agent(payload)
     if not agent:
@@ -106,7 +119,20 @@ def load_agent_ledger(payload: Mapping[str, JsonValue]) -> JsonObject:
     events = load_agent_events(root, agent)
     if events is None:
         return load_ledger(payload)
+    if _agent_events_have_v2_state(events):
+        ledger = default_v2_ledger()
+        for event in events:
+            _ = apply_v2_event(ledger, event)
+        return ledger
     ledger = default_ledger()
     for event in events:
         _ = apply_v1_event(ledger, event)
     return ledger
+
+
+def _agent_events_have_v2_state(events: list[JsonObject]) -> bool:
+    return any(
+        isinstance(event.get("paths"), list)
+        or isinstance(event.get("covers"), dict)
+        for event in events
+    )
