@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+import os
 
 from .ledger_schema import JsonObject, JsonValue
 from .ledger_v1 import sequence_value
+from .provenance_policy import canonical_manifest_key
 
 
 def agent_key(payload: Mapping[str, JsonValue]) -> str:
@@ -63,12 +65,13 @@ def record_path_revisions(turn: JsonObject, payload: Mapping[str, JsonValue]) ->
         change_id = _string(raw_path.get("change_id"), "")
         if not path or not change_id:
             continue
+        key = canonical_manifest_key(path, os.name == "nt")
         before = _digest(raw_path.get("before"))
         after = _digest(raw_path.get("after"))
         kind = _string(raw_path.get("kind"), "artifact")
         requires = raw_path.get("requires_verification") is not False and kind != "docs"
-        if path not in baselines:
-            baselines[path] = before
+        if key not in baselines:
+            baselines[key] = before
         audit.append(
             {
                 "change_id": change_id,
@@ -77,10 +80,10 @@ def record_path_revisions(turn: JsonObject, payload: Mapping[str, JsonValue]) ->
                 "change_event_id": event_id,
             }
         )
-        if after == baselines[path]:
-            _ = revisions.pop(path, None)
+        if after == baselines[key]:
+            _ = revisions.pop(key, None)
             continue
-        revisions[path] = {
+        revisions[key] = {
             "change_id": change_id,
             "path": path,
             "after": after,

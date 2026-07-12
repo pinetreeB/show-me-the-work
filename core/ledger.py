@@ -94,9 +94,7 @@ def record_event(payload: Mapping[str, JsonValue]) -> JsonObject:
 
 
 def migrate_ledger_to_v2(payload: Mapping[str, JsonValue]) -> JsonObject:
-    root = _project_root(payload)
-    with ledger_transaction(root):
-        return migrate_v1_ledger(root)
+    return migrate_v1_ledger(_project_root(payload))
 
 
 def capture_verification_covers(payload: Mapping[str, JsonValue]) -> JsonObject:
