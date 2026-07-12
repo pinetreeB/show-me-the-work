@@ -270,7 +270,7 @@ def test_ledger_preserves_corrupted_json_as_backup_before_regenerating(tmp_path:
     )
     ledger = load_ledger({"project_root": str(tmp_path)})
 
-    assert (state_dir / "ledger.json.bak").read_text(encoding="utf-8") == "{broken"
+    assert next(state_dir.glob("ledger.json.corrupt-*.bak")).read_text(encoding="utf-8") == "{broken"
     assert ledger["prompt"] == "버그 고쳐줘"
 
 

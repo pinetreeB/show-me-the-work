@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
+from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
 import tempfile
-from typing import TypeAlias
+from uuid import uuid4
 
 from .agent_log import (
     agent_log_path as agent_log_path,
@@ -13,10 +14,14 @@ from .agent_log import (
     ledger_transaction,
     load_agent_events,
 )
-
-JsonScalar: TypeAlias = str | int | bool | None
-JsonValue: TypeAlias = JsonScalar | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
-JsonObject: TypeAlias = dict[str, JsonValue]
+from .ledger_schema import (
+    LedgerSchemaError,
+    JsonObject as JsonObject,
+    JsonScalar as JsonScalar,
+    JsonValue as JsonValue,
+    serialize_v2_ledger,
+    validate_v2_ledger,
+)
 
 DOC_EXTS = (".md", ".txt", ".rst", ".adoc")
 CODE_EXTS = (".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".sql", ".ps1")
@@ -73,6 +78,15 @@ def load_ledger(payload: Mapping[str, object]) -> JsonObject:
     except OSError:
         return default_ledger()
     if isinstance(loaded, dict):
+        schema_version = loaded.get("schema_version")
+        if schema_version == 2:
+            return validate_v2_ledger(loaded)
+        if schema_version is not None and (
+            not isinstance(schema_version, int)
+            or isinstance(schema_version, bool)
+            or schema_version != 1
+        ):
+            raise LedgerSchemaError("ledger.schema_version", "must be 1 or 2")
         merged = default_ledger()
         for key, value in loaded.items():
             if isinstance(key, str):
@@ -84,10 +98,9 @@ def load_ledger(payload: Mapping[str, object]) -> JsonObject:
 def _preserve_corrupt_ledger(path: Path) -> None:
     if not path.exists():
         return
-    backup = path.with_name(f"{path.name}.bak")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    backup = path.with_name(f"{path.name}.corrupt-{timestamp}-{uuid4().hex}.bak")
     try:
-        if backup.exists():
-            backup.unlink()
         path.replace(backup)
     except OSError:
         return
@@ -98,7 +111,13 @@ def save_ledger(payload: Mapping[str, object], ledger: JsonObject) -> None:
     directory = state_dir(root)
     directory.mkdir(parents=True, exist_ok=True)
     destination = ledger_path(root)
-    serialized = json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True)
+    schema_version = ledger.get("schema_version")
+    serialized = serialize_v2_ledger(ledger) if schema_version == 2 else json.dumps(
+        ledger,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
     handle = tempfile.NamedTemporaryFile(
         "w",
         encoding="utf-8",

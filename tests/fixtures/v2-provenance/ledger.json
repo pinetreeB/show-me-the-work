@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "task_mode": "deep",
+  "prompt": "core/ledger.py W1 계약을 고정한다",
+  "packs": ["verification-grounding"],
+  "changed_files_seen": ["core/ledger.py"],
+  "change_kinds": ["code"],
+  "verification_commands": ["python -m pytest tests/ -q"],
+  "verification_results": [
+    {
+      "command": "python -m pytest tests/ -q",
+      "success": true,
+      "evidence": "152 passed",
+      "seq": 18
+    }
+  ],
+  "event_seq": 18,
+  "last_change_seq": 17,
+  "stop_blocks": 1,
+  "goals_blocks": 0,
+  "intent_blocks": 0,
+  "requires_investigation_compliance": false,
+  "needs_goals": false,
+  "intent_required": false,
+  "ambiguity_score": 0,
+  "scope_warnings": [],
+  "agent": "codex",
+  "manifest_generation": 1,
+  "active_turns": {
+    "default": {
+      "turn_id": "turn-001",
+      "start_seq": 1,
+      "baseline_snapshot_id": "blake2b-256:before",
+      "current_snapshot_id": "blake2b-256:after",
+      "pending_change_ids": ["blake2b-256:ledger-transition"],
+      "blocks": {
+        "stop": 1
+      }
+    }
+  }
+}

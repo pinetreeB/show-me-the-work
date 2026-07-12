@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "event": "verification",
+  "event_id": "verification-18",
+  "seq": 18,
+  "turn_id": "turn-001",
+  "agent": "codex",
+  "invocation_id": "invocation-002",
+  "command": "python -m pytest tests/ -q",
+  "success": true,
+  "evidence": "152 passed",
+  "covers": {
+    "through_seq": 17,
+    "snapshot_id": "blake2b-256:after",
+    "change_ids": ["blake2b-256:ledger-transition"],
+    "change_event_ids": ["change-17"],
+    "path_revisions": [
+      {
+        "change_id": "blake2b-256:ledger-transition",
+        "path": "core/ledger.py",
+        "after": "blake2b-256:after",
+        "change_event_id": "change-17"
+      }
+    ]
+  }
+}

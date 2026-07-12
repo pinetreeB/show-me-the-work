@@ -1,0 +1,26 @@
+{
+  "task_mode": "deep",
+  "prompt": "legacy ledger fixture",
+  "packs": ["verification-grounding"],
+  "changed_files_seen": ["legacy.py"],
+  "change_kinds": ["code"],
+  "verification_commands": ["python -m pytest tests/ -q"],
+  "verification_results": [
+    {
+      "command": "python -m pytest tests/ -q",
+      "success": true,
+      "evidence": "1 passed"
+    }
+  ],
+  "event_seq": 3,
+  "last_change_seq": 2,
+  "stop_blocks": 1,
+  "goals_blocks": 0,
+  "intent_blocks": 0,
+  "requires_investigation_compliance": false,
+  "needs_goals": false,
+  "intent_required": false,
+  "ambiguity_score": 0,
+  "scope_warnings": [],
+  "agent": "codex"
+}

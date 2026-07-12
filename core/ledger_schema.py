@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+import json
+from typing import NoReturn, TypeAlias
+
+JsonScalar: TypeAlias = str | int | float | bool | None
+JsonValue: TypeAlias = JsonScalar | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
+JsonObject: TypeAlias = dict[str, JsonValue]
+
+@dataclass(frozen=True, slots=True)
+class LedgerSchemaError(ValueError):
+    field: str
+    requirement: str
+
+    def __str__(self) -> str:
+        return f"invalid v2 ledger schema at {self.field}: {self.requirement}"
+
+
+def _reject(field: str, requirement: str) -> NoReturn:
+    raise LedgerSchemaError(field=field, requirement=requirement)
+
+
+def _object(value: JsonValue, field: str) -> JsonObject:
+    if not isinstance(value, dict):
+        _reject(field, "must be an object")
+    return value
+
+
+def _required(value: JsonObject, key: str, field: str) -> JsonValue:
+    if key not in value:
+        _reject(f"{field}.{key}", "is required")
+    return value[key]
+
+
+def _string(value: JsonValue, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        _reject(field, "must be a non-empty string")
+    return value
+
+
+def _boolean(value: JsonValue, field: str) -> bool:
+    if not isinstance(value, bool):
+        _reject(field, "must be a boolean")
+    return value
+
+
+def _nonnegative_integer(value: JsonValue, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        _reject(field, "must be a non-negative integer")
+    return value
+
+
+def _positive_integer(value: JsonValue, field: str) -> int:
+    result = _nonnegative_integer(value, field)
+    if result == 0:
+        _reject(field, "must be a positive integer")
+    return result
+
+
+def _confidence(value: JsonValue, field: str) -> float:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        _reject(field, "must be a number between 0.0 and 1.0")
+    result = float(value)
+    if not 0.0 <= result <= 1.0:
+        _reject(field, "must be between 0.0 and 1.0")
+    return result
+
+
+def _string_list(value: JsonValue, field: str) -> list[str]:
+    if not isinstance(value, list):
+        _reject(field, "must be a list")
+    return [_string(item, f"{field}[{index}]") for index, item in enumerate(value)]
+
+
+def _optional_digest(value: JsonValue, field: str) -> str | None:
+    if value is None:
+        return None
+    return _string(value, field)
+
+
+def _v2_schema(value: JsonObject, field: str) -> None:
+    schema_version = _required(value, "schema_version", field)
+    if schema_version != 2 or isinstance(schema_version, bool):
+        _reject(f"{field}.schema_version", "must equal 2")
+
+
+def _validate_v1_projection(value: JsonObject) -> None:
+    _string(_required(value, "task_mode", "ledger"), "ledger.task_mode")
+    _string(_required(value, "prompt", "ledger"), "ledger.prompt")
+    _string_list(_required(value, "packs", "ledger"), "ledger.packs")
+    _string_list(
+        _required(value, "changed_files_seen", "ledger"),
+        "ledger.changed_files_seen",
+    )
+    _string_list(_required(value, "change_kinds", "ledger"), "ledger.change_kinds")
+    _string_list(
+        _required(value, "verification_commands", "ledger"),
+        "ledger.verification_commands",
+    )
+    results = _required(value, "verification_results", "ledger")
+    if not isinstance(results, list):
+        _reject("ledger.verification_results", "must be a list")
+    for index, raw_result in enumerate(results):
+        result = _object(raw_result, f"ledger.verification_results[{index}]")
+        _string(
+            _required(result, "command", f"ledger.verification_results[{index}]"),
+            f"ledger.verification_results[{index}].command",
+        )
+        _boolean(
+            _required(result, "success", f"ledger.verification_results[{index}]"),
+            f"ledger.verification_results[{index}].success",
+        )
+        _string(
+            _required(result, "evidence", f"ledger.verification_results[{index}]"),
+            f"ledger.verification_results[{index}].evidence",
+        )
+        if "seq" in result:
+            _nonnegative_integer(result["seq"], f"ledger.verification_results[{index}].seq")
+    for field in ("event_seq", "last_change_seq", "stop_blocks", "goals_blocks", "intent_blocks"):
+        _nonnegative_integer(_required(value, field, "ledger"), f"ledger.{field}")
+    for field in (
+        "requires_investigation_compliance",
+        "needs_goals",
+        "intent_required",
+    ):
+        _boolean(_required(value, field, "ledger"), f"ledger.{field}")
+    _nonnegative_integer(
+        _required(value, "ambiguity_score", "ledger"),
+        "ledger.ambiguity_score",
+    )
+    _string_list(_required(value, "scope_warnings", "ledger"), "ledger.scope_warnings")
+    _string(_required(value, "agent", "ledger"), "ledger.agent")
+
+
+def validate_v2_ledger(value: JsonValue) -> JsonObject:
+    ledger = _object(value, "ledger")
+    _v2_schema(ledger, "ledger")
+    _validate_v1_projection(ledger)
+    _nonnegative_integer(
+        _required(ledger, "manifest_generation", "ledger"),
+        "ledger.manifest_generation",
+    )
+    active_turns = _object(_required(ledger, "active_turns", "ledger"), "ledger.active_turns")
+    for agent, raw_turn in active_turns.items():
+        _string(agent, "ledger.active_turns key")
+        field = f"ledger.active_turns.{agent}"
+        turn = _object(raw_turn, field)
+        _string(_required(turn, "turn_id", field), f"{field}.turn_id")
+        _nonnegative_integer(_required(turn, "start_seq", field), f"{field}.start_seq")
+        _string(
+            _required(turn, "baseline_snapshot_id", field),
+            f"{field}.baseline_snapshot_id",
+        )
+        _string(
+            _required(turn, "current_snapshot_id", field),
+            f"{field}.current_snapshot_id",
+        )
+        _string_list(
+            _required(turn, "pending_change_ids", field),
+            f"{field}.pending_change_ids",
+        )
+        blocks = _object(_required(turn, "blocks", field), f"{field}.blocks")
+        _nonnegative_integer(_required(blocks, "stop", f"{field}.blocks"), f"{field}.blocks.stop")
+    return ledger
+
+
+def serialize_v2_ledger(value: JsonValue) -> str:
+    return json.dumps(validate_v2_ledger(value), ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def deserialize_v2_ledger(serialized: str) -> JsonObject:
+    try:
+        value: JsonValue = json.loads(serialized)
+    except json.JSONDecodeError as exc:
+        raise LedgerSchemaError(field="ledger", requirement="must be valid JSON") from exc
+    return validate_v2_ledger(value)
