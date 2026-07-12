@@ -145,9 +145,10 @@ def evaluate_without_io(
         return {
             "decision": "block",
             "reason": (
-                "fable-lite Stop gate: provenance 관측이 불완전하여 clean을 주장할 수 없습니다. "
+                "[smtw] Stop gate: provenance 관측이 불완전하여 clean을 주장할 수 없습니다. "
                 "재시도 가능한 관측 또는 검증을 수행하세요. "
-                "/ Incomplete provenance cannot claim a clean mutation-capable turn."
+                "/ Incomplete provenance cannot claim a clean mutation-capable turn.\n"
+                "Show me the work."
             ),
         }
 
@@ -157,24 +158,26 @@ def evaluate_without_io(
             return {
                 "decision": "block",
                 "reason": (
-                    "fable-lite N1: 조사 팩 마커가 부족합니다. "
+                    "[smtw] N1: 조사 팩 마커가 부족합니다. "
                     "`가설 1:`/`Hypothesis 1:`, `증거:`/`Evidence:`, `기각:`/`Rejected:`를 포함하세요. "
                     "단 마커는 하단에 각 1줄 기록이면 충분합니다 — 본문은 비개발자도 읽는 쉬운 설명을 먼저 쓰고, "
                     "보고 전체를 기술 문서로 만들지 마세요. "
                     "/ Investigation pack markers are required — one compact line each at the bottom; "
-                    "keep the report body in plain language first."
+                    "keep the report body in plain language first.\n"
+                    "Show me the work."
                 ),
             }
 
     if mode == "quick" or _docs_only(state) or not changed or verified:
-        return {"decision": "allow", "message": "fable-lite Stop gate allow."}
+        return {"decision": "allow", "message": "[smtw] Stop gate allow."}
 
     return {
         "decision": "block",
         "reason": (
-            "fable-lite Stop gate: 변경 파일이 있지만 성공한 검증 증거가 없습니다. "
+            "[smtw] Stop gate: 변경 파일이 있지만 성공한 검증 증거가 없습니다. "
             "가장 좁은 테스트/실행 관측을 수행하고 evidence를 기록하세요. "
-            "/ Changed files require observed successful verification."
+            "/ Changed files require observed successful verification.\n"
+            "Show me the work."
         ),
     }
 

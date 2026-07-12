@@ -1,4 +1,4 @@
-<!-- fable-lite pack: Completion Declaration Discipline (S4) — structural principles from fablize (MIT), fully rewritten -->
+<!-- show-me-the-work pack: Completion Declaration Discipline (S4) — structural principles from fablize (MIT), fully rewritten -->
 <!-- Stop hook target: the closing patterns this pack governs are automatically checked by the S4 Stop hook -->
 <completion_declaration_discipline>
 
@@ -56,5 +56,6 @@ When filling in this format, don't lead with meta-commentary like "Organizing th
 
 The Stop hook inspects the closing paragraph of your final response, and if the pattern from item 1 appears (an unfulfilled promise with no question mark), it blocks the turn and demands you redo the work. The same block applies if a turn changed files but has no recorded verification tool calls at all — except that consecutive blocks are capped at 2; after that it passes through, but you must state the unverified fact in your report (design principle 6).
 This hook looks only at **the closing text of the turn and the tool-call record** — not at your "claims." Talking your way around it does not work. Follow steps 1–3 yourself and you will never trip this hook.
+Every Stop block message ends with the exact signature line: `Show me the work.`
 
 </completion_declaration_discipline>

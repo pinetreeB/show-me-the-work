@@ -1,14 +1,15 @@
 {
-  "name": "fable-lite",
-  "version": "1.2.0",
-  "description": "Korean-first Claude Code harness that externalizes Fable-style verification, investigation, scope, and high-risk contract discipline with stdlib Python hooks.",
+  "name": "show-me-the-work",
+  "version": "2.0.0",
+  "description": "Evidence-based AI work supervision for Claude Code: show the executed verification before claiming completion.",
   "author": {
-    "name": "fable-lite team"
+    "name": "show-me-the-work team"
   },
   "license": "MIT",
   "keywords": [
     "claude-code",
-    "fable",
+    "evidence",
+    "ai-supervision",
     "verification",
     "harness",
     "korean"

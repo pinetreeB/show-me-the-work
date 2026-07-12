@@ -1,4 +1,4 @@
-# fable-lite v-Next 로드맵 — 3-AI 종합 (최종안)
+# show-me-the-work v-Next 로드맵 — 3-AI 종합 (최종안)
 
 > 2026-07-11. 입력: tmp/v-next-plan-codex.md(구현 실측) + tmp/v-next-plan-agy.md(제품·리스크) + tmp/v-next-plan-claude.md(오케스트레이터).
 > 쟁점은 좌상 Claude가 코드 직접 검증으로 판정 완료. 사용자 방향승인 대기.

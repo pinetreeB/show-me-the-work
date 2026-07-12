@@ -44,7 +44,7 @@ def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
     return {
         "decision": "block",
         "reason": (
-            "fable-lite N2: 2+ 스토리 작업은 `.fable-lite/goals.json` 체크포인트가 먼저 필요합니다. "
+            "[smtw] N2: 2+ 스토리 작업은 `.fable-lite/goals.json` 체크포인트가 먼저 필요합니다. "
             "goals plan을 작성하거나 명시 확인 후 다시 시도하세요. "
             "/ Multi-story work requires a goals checkpoint first."
         ),
@@ -70,7 +70,7 @@ def block_intent_once(payload: Mapping[str, JsonValue], intent_command: str) -> 
     return {
         "decision": "block",
         "reason": (
-            "fable-lite intent gate: 요청 의도가 모호해 수정 전 `.fable-lite/intent.json` 확정이 필요합니다. "
+            "[smtw] intent gate: 요청 의도가 모호해 수정 전 `.fable-lite/intent.json` 확정이 필요합니다. "
             "`확인질문 N:` 형식으로 목표/범위/비목표를 확인한 뒤 "
             f"`{intent_command}` 명령을 그대로 실행해 기록하세요. "
             "/ Ambiguous edit intent requires intent.json first."

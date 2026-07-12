@@ -1,4 +1,4 @@
-# 소나무봇(Pinetree-B) fable-lite 배포 가능성 조사
+# 소나무봇(Pinetree-B) show-me-the-work 배포 가능성 조사
 
 ## 1. 조사 결과 요약 (Online 및 파일 상태)
 * **네트워크 상태**: `pinetree-b` SSH 접속 가능 (Online 확인됨, Hostname: `Pinetree_B`)

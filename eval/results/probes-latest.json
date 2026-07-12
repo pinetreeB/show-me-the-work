@@ -42,7 +42,7 @@
                 "changed_files_seen": [
                   "index.html"
                 ],
-                "current_snapshot_id": "blake2b-256:dca9f755655d2d5a1549996faa5cc0e9bd4fcd2b438f8d2a93c1d5c532bace72",
+                "current_snapshot_id": "blake2b-256:ca2a8eebc78c0f1cc49afaf838d2e9a4429cfada1d4cc1e425df0240ccec51a6",
                 "event_seq": 4,
                 "goals_blocks": 0,
                 "intent_blocks": 0,
@@ -109,7 +109,7 @@
           },
           "stop": {
             "decision": "block",
-            "reason": "fable-lite Stop gate: 변경 파일이 있지만 성공한 검증 증거가 없습니다. 가장 좁은 테스트/실행 관측을 수행하고 evidence를 기록하세요. / Changed files require observed successful verification."
+            "reason": "[smtw] Stop gate: 변경 파일이 있지만 성공한 검증 증거가 없습니다. 가장 좁은 테스트/실행 관측을 수행하고 evidence를 기록하세요. / Changed files require observed successful verification.\nShow me the work."
           }
         },
         "status": "pass"
@@ -190,11 +190,11 @@
           },
           "pre": {
             "decision": "block",
-            "reason": "fable-lite N2: 2+ 스토리 작업은 `.fable-lite/goals.json` 체크포인트가 먼저 필요합니다. goals plan을 작성하거나 명시 확인 후 다시 시도하세요. / Multi-story work requires a goals checkpoint first."
+            "reason": "[smtw] N2: 2+ 스토리 작업은 `.fable-lite/goals.json` 체크포인트가 먼저 필요합니다. goals plan을 작성하거나 명시 확인 후 다시 시도하세요. / Multi-story work requires a goals checkpoint first."
           },
           "submit": {
             "hookSpecificOutput": {
-              "additionalContext": "fable-lite 활성화: 작업 규율을 절차로 적용하세요.\nmode=deep\n렌더/실행 산출물은 RUN→OBSERVE→FIX→RE-RUN 증거 없이는 완료하지 마세요.\n2+ 스토리 작업입니다. goals 체크포인트를 만들거나 사용자에게 명시 확인을 받으세요.",
+              "additionalContext": "show-me-the-work 활성화: 작업 규율을 절차로 적용하세요.\nmode=deep\n렌더/실행 산출물은 RUN→OBSERVE→FIX→RE-RUN 증거 없이는 완료하지 마세요.\n2+ 스토리 작업입니다. goals 체크포인트를 만들거나 사용자에게 명시 확인을 받으세요.",
               "hookEventName": "UserPromptSubmit"
             }
           }
@@ -246,7 +246,7 @@
                 "changed_files_seen": [
                   "README.md"
                 ],
-                "current_snapshot_id": "blake2b-256:c5785b0b19aa716fdb4db47a88eca34f0363580098fae6c7f71e769a0f813338",
+                "current_snapshot_id": "blake2b-256:080655840c66f968f333df2fbde10d48f42eac3ca466a4490924a9a02881a276",
                 "event_seq": 4,
                 "goals_blocks": 0,
                 "intent_blocks": 0,
@@ -340,13 +340,13 @@
         "observed": {
           "debug": {
             "hookSpecificOutput": {
-              "additionalContext": "fable-lite 활성화: 작업 규율을 절차로 적용하세요.\nmode=deep\n조사 팩 준수 필수: 출력에 `가설 1:`, `가설 2:`, `가설 3:`, `기각:`, `증거:`를 포함하세요.\n수정 전 재현과 경쟁 가설을 먼저 기록하세요.",
+              "additionalContext": "show-me-the-work 활성화: 작업 규율을 절차로 적용하세요.\nmode=deep\n조사 팩 준수 필수: 출력에 `가설 1:`, `가설 2:`, `가설 3:`, `기각:`, `증거:`를 포함하세요.\n수정 전 재현과 경쟁 가설을 먼저 기록하세요.",
               "hookEventName": "UserPromptSubmit"
             }
           },
           "page": {
             "hookSpecificOutput": {
-              "additionalContext": "fable-lite 활성화: 작업 규율을 절차로 적용하세요.\nmode=normal\n렌더/실행 산출물은 RUN→OBSERVE→FIX→RE-RUN 증거 없이는 완료하지 마세요.",
+              "additionalContext": "show-me-the-work 활성화: 작업 규율을 절차로 적용하세요.\nmode=normal\n렌더/실행 산출물은 RUN→OBSERVE→FIX→RE-RUN 증거 없이는 완료하지 마세요.",
               "hookEventName": "UserPromptSubmit"
             }
           }
@@ -370,7 +370,7 @@
         "observed": {
           "returncode": 0,
           "stderr_tail": "C:\\Python312\\Lib\\site-packages\\requests\\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.0.1)/charset_normalizer (3.4.4) doesn't match a supported version!\n  warnings.warn(\n",
-          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 33 items\n\ntests\\test_core_contracts.py .................................           [100%]\n\n============================= 33 passed in 0.19s ==============================\n"
+          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 33 items\n\ntests\\test_core_contracts.py .................................           [100%]\n\n============================= 33 passed in 0.20s ==============================\n"
         },
         "status": "pass"
       },
@@ -391,7 +391,7 @@
         "observed": {
           "pre": {
             "decision": "block",
-            "reason": "fable-lite R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. / High-risk edits require a valid task contract first."
+            "reason": "[smtw] R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. / High-risk edits require a valid task contract first."
           }
         },
         "status": "pass"
@@ -413,7 +413,7 @@
         "observed": {
           "pre": {
             "decision": "block",
-            "reason": "fable-lite R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. / High-risk edits require a valid task contract first."
+            "reason": "[smtw] R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. / High-risk edits require a valid task contract first."
           }
         },
         "status": "pass"
@@ -435,35 +435,35 @@
         "observed": {
           "post_tool_use.py": {
             "json": {
-              "systemMessage": "fable-lite fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes"
+              "systemMessage": "[smtw] fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes"
             },
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"fable-lite fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes\"}"
+            "stdout": "{\"systemMessage\": \"[smtw] fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes\"}"
           },
           "pre_tool_use.py": {
             "json": {
-              "systemMessage": "fable-lite fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes"
+              "systemMessage": "[smtw] fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes"
             },
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"fable-lite fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes\"}"
+            "stdout": "{\"systemMessage\": \"[smtw] fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes\"}"
           },
           "stop.py": {
             "json": {
-              "systemMessage": "fable-lite fail-open: malformed JSON payload: Expecting property name enclosed in double quotes"
+              "systemMessage": "[smtw] fail-open: malformed JSON payload: Expecting property name enclosed in double quotes"
             },
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"fable-lite fail-open: malformed JSON payload: Expecting property name enclosed in double quotes\"}"
+            "stdout": "{\"systemMessage\": \"[smtw] fail-open: malformed JSON payload: Expecting property name enclosed in double quotes\"}"
           },
           "user_prompt_submit.py": {
             "json": {
-              "systemMessage": "fable-lite fail-open: malformed JSON payload: Expecting property name enclosed in double quotes"
+              "systemMessage": "[smtw] fail-open: malformed JSON payload: Expecting property name enclosed in double quotes"
             },
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"fable-lite fail-open: malformed JSON payload: Expecting property name enclosed in double quotes\"}"
+            "stdout": "{\"systemMessage\": \"[smtw] fail-open: malformed JSON payload: Expecting property name enclosed in double quotes\"}"
           }
         },
         "status": "pass"
@@ -492,7 +492,7 @@
         "observed": {
           "returncode": 0,
           "stderr_tail": "C:\\Python312\\Lib\\site-packages\\requests\\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.0.1)/charset_normalizer (3.4.4) doesn't match a supported version!\n  warnings.warn(\n",
-          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 47 items\n\ntests\\test_adapters.py ............                                      [ 25%]\ntests\\test_core_contracts.py .................................           [ 95%]\ntests\\test_goals_cli.py ..                                               [100%]\n\n============================= 47 passed in 3.92s ==============================\n"
+          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 47 items\n\ntests\\test_adapters.py ............                                      [ 25%]\ntests\\test_core_contracts.py .................................           [ 95%]\ntests\\test_goals_cli.py ..                                               [100%]\n\n============================= 47 passed in 3.37s ==============================\n"
         },
         "status": "pass"
       },
@@ -512,7 +512,7 @@
         "mode": "on",
         "observed": {
           "stop": {
-            "systemMessage": "fable-lite Stop gate allow."
+            "systemMessage": "[smtw] Stop gate allow."
           }
         },
         "status": "pass"
@@ -534,19 +534,19 @@
         "observed": {
           "english": {
             "json": {
-              "systemMessage": "fable-lite Stop gate allow."
+              "systemMessage": "[smtw] Stop gate allow."
             },
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"fable-lite Stop gate allow.\"}"
+            "stdout": "{\"systemMessage\": \"[smtw] Stop gate allow.\"}"
           },
           "korean": {
             "json": {
-              "systemMessage": "fable-lite Stop gate allow."
+              "systemMessage": "[smtw] Stop gate allow."
             },
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"fable-lite Stop gate allow.\"}"
+            "stdout": "{\"systemMessage\": \"[smtw] Stop gate allow.\"}"
           }
         },
         "status": "pass"
@@ -589,7 +589,7 @@
                 "changed_files_seen": [
                   "app.py"
                 ],
-                "current_snapshot_id": "blake2b-256:2398b2b5ac69bb98582a2471a62af8105a55edb1e689c8943b6b6a165f0605a8",
+                "current_snapshot_id": "blake2b-256:9555b158ef32b49c485deeb9e9b4b58f627f4a7e789efd6456e3a6006457abe6",
                 "event_seq": 4,
                 "goals_blocks": 0,
                 "intent_blocks": 0,
@@ -658,7 +658,7 @@
           },
           "stop": {
             "decision": "block",
-            "reason": "fable-lite N1: 조사 팩 마커가 부족합니다. `가설 1:`/`Hypothesis 1:`, `증거:`/`Evidence:`, `기각:`/`Rejected:`를 포함하세요. 단 마커는 하단에 각 1줄 기록이면 충분합니다 — 본문은 비개발자도 읽는 쉬운 설명을 먼저 쓰고, 보고 전체를 기술 문서로 만들지 마세요. / Investigation pack markers are required — one compact line each at the bottom; keep the report body in plain language first."
+            "reason": "[smtw] N1: 조사 팩 마커가 부족합니다. `가설 1:`/`Hypothesis 1:`, `증거:`/`Evidence:`, `기각:`/`Rejected:`를 포함하세요. 단 마커는 하단에 각 1줄 기록이면 충분합니다 — 본문은 비개발자도 읽는 쉬운 설명을 먼저 쓰고, 보고 전체를 기술 문서로 만들지 마세요. / Investigation pack markers are required — one compact line each at the bottom; keep the report body in plain language first.\nShow me the work."
           }
         },
         "status": "pass"
@@ -706,7 +706,7 @@
                 "changed_files_seen": [
                   "app.py"
                 ],
-                "current_snapshot_id": "blake2b-256:164e7bd2c5eda289a8483bc9425afcc96b46c3a0878d53244e7a3263e86cc1de",
+                "current_snapshot_id": "blake2b-256:f212e531513a864da3382ee4df2f6debb8e897cb456aec5b66f78b9aa5f35120",
                 "event_seq": 4,
                 "goals_blocks": 0,
                 "intent_blocks": 0,

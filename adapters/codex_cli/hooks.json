@@ -8,7 +8,7 @@
             "command": "python3 \"{FABLE_LITE_ROOT}/adapters/codex_cli/user_prompt_submit.py\"",
             "commandWindows": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"python '{FABLE_LITE_ROOT}/adapters/codex_cli/user_prompt_submit.py'\"",
             "timeout": 10,
-            "statusMessage": "fable-lite prompt routing"
+            "statusMessage": "smtw prompt routing"
           }
         ]
       }
@@ -22,7 +22,7 @@
             "command": "python3 \"{FABLE_LITE_ROOT}/adapters/codex_cli/pre_tool_use.py\"",
             "commandWindows": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"python '{FABLE_LITE_ROOT}/adapters/codex_cli/pre_tool_use.py'\"",
             "timeout": 10,
-            "statusMessage": "fable-lite pre-tool gate"
+            "statusMessage": "smtw pre-tool gate"
           }
         ]
       }
@@ -36,7 +36,7 @@
             "command": "python3 \"{FABLE_LITE_ROOT}/adapters/codex_cli/post_tool_use.py\"",
             "commandWindows": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"python '{FABLE_LITE_ROOT}/adapters/codex_cli/post_tool_use.py'\"",
             "timeout": 10,
-            "statusMessage": "fable-lite post-tool ledger"
+            "statusMessage": "smtw post-tool ledger"
           }
         ]
       }
@@ -49,7 +49,7 @@
             "command": "python3 \"{FABLE_LITE_ROOT}/adapters/codex_cli/stop.py\"",
             "commandWindows": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"python '{FABLE_LITE_ROOT}/adapters/codex_cli/stop.py'\"",
             "timeout": 10,
-            "statusMessage": "fable-lite stop gate"
+            "statusMessage": "smtw stop gate"
           }
         ]
       }

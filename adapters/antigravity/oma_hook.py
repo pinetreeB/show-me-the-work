@@ -44,7 +44,7 @@ def emit(payload: Mapping[str, object]) -> int:
 
 
 def fail_open(msg: str) -> int:
-    return emit({"decision": "allow", "systemMessage": f"fable-lite fail-open: {msg}"})
+    return emit({"decision": "allow", "systemMessage": f"[smtw] fail-open: {msg}"})
 
 def handle_before_tool(payload: Mapping[str, object]) -> int:
     from adapters.antigravity.tool_io import extract_command, extract_paths_from_input, extract_tool_info
@@ -114,7 +114,7 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
         observation = observe_post_tool(Path(root), invocation)
         verification_command = family == "shell" and is_verification_command(command)
         if observation.incomplete and not verification_command:
-            return emit({"decision": "allow", "systemMessage": "fable-lite provenance incomplete; fail-open observation."})
+            return emit({"decision": "allow", "systemMessage": "[smtw] provenance incomplete; fail-open observation."})
         paths = list(observation.changed_paths)
         ledger = load_ledger({"project_root": root})
         prompt = ledger.get("prompt", "")
@@ -144,7 +144,7 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
                 "hookSpecificOutput": {"additionalContext": str(scope.get("message"))}
             })
         if family == "edit":
-            return emit({"decision": "allow", "systemMessage": f"fable-lite provenance: observed {len(paths)} change(s)."})
+            return emit({"decision": "allow", "systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
         if verification_command:
             covers = verification_covers(Path(root), invocation)
             verification: JsonObject = {
@@ -164,8 +164,8 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
             _ = record_event({
                 **verification,
             })
-            return emit({"decision": "allow", "systemMessage": "fable-lite 원장: 검증 기록."})
-        return emit({"decision": "allow", "systemMessage": f"fable-lite provenance: observed {len(paths)} change(s)."})
+            return emit({"decision": "allow", "systemMessage": "[smtw] 원장: 검증 기록."})
+        return emit({"decision": "allow", "systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
     return emit({"decision": "allow"})
 
 def handle_before_model(payload: Mapping[str, object]) -> int:
@@ -222,7 +222,7 @@ def handle_before_model(payload: Mapping[str, object]) -> int:
     })
     
     lines = [
-        "fable-lite 활성화: 작업 규율을 절차로 적용하세요.",
+        "show-me-the-work 활성화: 작업 규율을 절차로 적용하세요.",
         f"mode={result.get('mode', 'quick')}"
     ]
     if "investigation" in packs:

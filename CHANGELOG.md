@@ -1,10 +1,10 @@
 # Changelog
 
-## [Unreleased]
-
-### 2.0.0 draft
+## [2.0.0] - 2026-07-13
 
 ### Added - Change provenance
+
+- Renamed the public product and plugin from `fable-lite` to `show-me-the-work` (`smtw`): the project grew from transferring Fable 5 working discipline into evidence-based AI work supervision. Internal `.fable-lite/`, `FABLE_LITE_*`, Python module, CLI launcher, and package identifiers remain compatible in v2.0.
 
 - Added stdlib-only filesystem provenance with BLAKE2b-256 manifests, metadata fast-paths, full Stop reconciliation, Windows casefold collision handling, non-follow symlink/reparse safety, generation rebase, canonical multi-adapter replay, and per-turn verification covers.
 - Added the 200-case W9 golden corpus and Git/non-git plus Claude Code/Codex/Antigravity replay receipts.

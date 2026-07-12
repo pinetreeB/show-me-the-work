@@ -236,9 +236,9 @@ def classify_prompt(payload: Mapping[str, object]) -> JsonObject:
         mode = "normal"
 
     needs_goals = False if is_briefing else is_multi or len(requested_paths) >= 2
-    message = "fable-lite: 한국어 라우팅 완료 / routing complete."
+    message = "[smtw] 한국어 라우팅 완료 / routing complete."
     if is_briefing:
-        message = "fable-lite: briefing 감지 / routing complete."
+        message = "[smtw] briefing 감지 / routing complete."
     return {
         "mode": mode,
         "packs": packs,

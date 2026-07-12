@@ -1,4 +1,4 @@
-# fable-lite Antigravity (OmA) 어댑터 설치 가이드
+# show-me-the-work Antigravity (OmA) 어댑터 설치 가이드
 
 > ⚠️ **실호스트 발동 미확인 (2026-07-12 실측)**: Antigravity CLI 1.1.1에서 아래 안내를 포함한 6가지 설치 조합을
 > 라이브로 실측한 결과 **훅이 한 번도 발동하지 않았습니다** — 현행 agy의 실물 훅 이벤트는 이 어댑터가 쓰는
@@ -8,7 +8,7 @@
 > 본 어댑터는 **payload 주입 테스트 레벨로만 검증**된 상태입니다. agy 훅 엔진이 발동하는 버전이 확인되면
 > 이벤트 매핑 개편과 함께 본 가이드가 갱신됩니다.
 
-이 문서는 fable-lite 코어를 Antigravity CLI(OmA) 환경에 통합하는 방법을 설명합니다.
+이 문서는 show-me-the-work 코어를 Antigravity CLI(OmA) 환경에 통합하는 방법을 설명합니다.
 
 ## 주의: 메인 설정 훼손 방지
 
@@ -17,14 +17,14 @@ OmA의 글로벌 설정 파일인 `~/.gemini/config/plugins/oh-my-antigravity/ho
 ## 설치 방법
 
 1. **절대 경로 치환 (수동)**
-   fable-lite 저장소의 `adapters/antigravity/hooks.json` 파일을 열고, 템플릿의 `{FABLE_LITE_ROOT}` 부분을 사용자가 실제 클론한 fable-lite의 절대 경로(예: `C:/Users/rotat/fable-lite`)로 직접 치환해야 합니다. 이 작업은 현재 수동으로 진행해야 합니다.
+   show-me-the-work 저장소의 `adapters/antigravity/hooks.json` 파일을 열고, 템플릿의 `{FABLE_LITE_ROOT}` 부분을 사용자가 실제 클론한 show-me-the-work의 절대 경로(예: `C:/Users/rotat/show-me-the-work`)로 직접 치환해야 합니다. 내부 환경변수 이름은 v2.0 호환성을 위해 유지합니다. 이 작업은 현재 수동으로 진행해야 합니다.
    
 2. **로컬 프로젝트에 적용**
-   fable-lite 하네스를 적용하려는 대상 프로젝트의 경로로 이동하여, 아래와 같이 로컬 훅 설정 파일을 복사합니다.
+   show-me-the-work 하네스를 적용하려는 대상 프로젝트의 경로로 이동하여, 아래와 같이 로컬 훅 설정 파일을 복사합니다.
 
    ```bash
    mkdir -p .gemini
-   cp /path/to/fable-lite/adapters/antigravity/hooks.json .gemini/hooks.json
+   cp /path/to/show-me-the-work/adapters/antigravity/hooks.json .gemini/hooks.json
    ```
 
    > ⚠️ **로컬 훅 등록 주의**: OmA는 프로젝트 로컬의 훅을 로드할 때 `.gemini/hooks.json` 파일을 사용합니다. 다른 경로(예: `.omg/...`)를 사용하면 훅이 조용히 무시되므로 주의하십시오. 만약 대상 프로젝트에 이미 사용 중인 `.gemini/hooks.json` 파일이 존재한다면 덮어쓰지 말고 JSON 내용을 수동으로 병합(Merge)하십시오.

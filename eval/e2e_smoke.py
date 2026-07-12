@@ -1,4 +1,4 @@
-"""fable-lite E2E 스모크 — 실제 Claude Code 훅 스키마 페이로드로 훅 체인을 구동해
+"""show-me-the-work E2E 스모크 — 실제 Claude Code 훅 스키마 페이로드로 훅 체인을 구동해
    AC를 종단 검증한다. 실제 CC 설치 없이 훅 command를 그대로 실행한다.
 
    실행: python eval/e2e_smoke.py   (repo 루트에서)
@@ -62,7 +62,7 @@ def main() -> int:
     r = run_hook("user_prompt_submit.py", {"hook_event_name": "UserPromptSubmit", "cwd": proj, "prompt": "왜 로그인이 안 돼"})
     ctx = json.dumps(r, ensure_ascii=False)
     check("AC5 한국어 디버그 라우팅", "가설" in ctx and "조사 팩" in ctx, "(investigation 팩 주입)")
-    check("AC10 한국어 메시지", "fable-lite 활성화" in ctx)
+    check("AC10 한국어 메시지", "show-me-the-work 활성화" in ctx)
     led = os.path.join(proj, ".fable-lite", "ledger.json")
     check("AC3 N1 배선(ledger 플래그)", os.path.exists(led) and json.loads(pathlib.Path(led).read_text(encoding="utf-8")).get("requires_investigation_compliance") is True)
 
@@ -141,7 +141,7 @@ def main() -> int:
     shutil.rmtree(proj, ignore_errors=True)
 
     passed = sum(1 for ok, _ in results if ok)
-    print(f"\n=== fable-lite E2E 스모크: {passed}/{len(results)} ===")
+    print(f"\n=== show-me-the-work E2E 스모크: {passed}/{len(results)} ===")
     for ok, line in results:
         print(("  [OK] " if ok else "  [XX] ") + line)
     return 0 if passed == len(results) else 1

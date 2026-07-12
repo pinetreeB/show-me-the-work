@@ -1,17 +1,17 @@
 {
-  "name": "fable-lite",
+  "name": "show-me-the-work",
   "owner": {
-    "name": "fable-lite team"
+    "name": "show-me-the-work team"
   },
   "metadata": {
-    "description": "Korean-first Claude Code harness that externalizes Fable-style verification, investigation, scope, and high-risk contract discipline with stdlib Python hooks.",
-    "version": "1.2.0"
+    "description": "Evidence-based AI work supervision: show the executed verification before claiming completion.",
+    "version": "2.0.0"
   },
   "plugins": [
     {
-      "name": "fable-lite",
+      "name": "show-me-the-work",
       "source": "./",
-      "description": "Korean-first Claude Code harness that externalizes Fable-style verification, investigation, scope, and high-risk contract discipline with stdlib Python hooks.",
+      "description": "Evidence-based AI work supervision: show the executed verification before claiming completion.",
       "category": "workflow"
     }
   ]

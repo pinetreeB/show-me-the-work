@@ -187,4 +187,4 @@ def test_antigravity_intent_gate_records_prompt_and_blocks_edit(tmp_path: Path) 
 def test_intent_hooks_fail_open_on_malformed_payload() -> None:
     result = run_hook(CLAUDE / "pre_tool_use.py", "{not-json")
 
-    assert str(result["systemMessage"]).startswith("fable-lite fail-open")
+    assert str(result["systemMessage"]).startswith("[smtw] fail-open")

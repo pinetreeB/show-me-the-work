@@ -78,7 +78,7 @@ def test_scan_progress_uses_stderr_without_corrupting_hook_stdout() -> None:
 
     # Then: hook stdout remains JSON-safe and the user sees a reassuring file-count message.
     assert stdout.getvalue() == ""
-    assert "[fable-lite] 10,000개 파일 상태 검증 중" in stderr.getvalue()
+    assert "[smtw] 10,000개 파일 상태 검증 중" in stderr.getvalue()
 
 
 def test_clean_turn_baseline_atomically_links_workspace_current(tmp_path: Path) -> None:

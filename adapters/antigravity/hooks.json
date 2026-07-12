@@ -3,7 +3,7 @@
     "BeforeModel": [
       {
         "type": "command",
-        "name": "fable-lite-before-model",
+        "name": "show-me-the-work-before-model",
         "command": "python \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" BeforeModel",
         "timeout": 5000
       }
@@ -11,7 +11,7 @@
     "BeforeTool": [
       {
         "type": "command",
-        "name": "fable-lite-before-tool",
+        "name": "show-me-the-work-before-tool",
         "command": "python \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" BeforeTool",
         "timeout": 5000
       }
@@ -19,7 +19,7 @@
     "AfterTool": [
       {
         "type": "command",
-        "name": "fable-lite-after-tool",
+        "name": "show-me-the-work-after-tool",
         "command": "python \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" AfterTool",
         "timeout": 5000
       }
@@ -27,7 +27,7 @@
     "AfterAgent": [
       {
         "type": "command",
-        "name": "fable-lite-after-agent",
+        "name": "show-me-the-work-after-agent",
         "command": "python \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" AfterAgent",
         "timeout": 5000
       }

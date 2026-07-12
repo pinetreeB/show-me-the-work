@@ -1,4 +1,4 @@
-<!-- fable-lite pack: Systematic Investigation Protocol (S3) — structural principles from fablize (MIT), fully rewritten -->
+<!-- show-me-the-work pack: Systematic Investigation Protocol (S3) — structural principles from fablize (MIT), fully rewritten -->
 <!-- compliance.py marker contract: model output from turns where this pack is injected will be parsed for adherence -->
 <systematic_investigation_protocol>
 

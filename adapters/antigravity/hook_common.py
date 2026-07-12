@@ -121,4 +121,4 @@ def handle_after_agent(payload: Mapping[str, object]) -> int:
     result = evaluate_stop(stop_payload)
     if result.get("decision") == "block":
         return emit({"decision": "block", "reason": str(result.get("reason", ""))})
-    return emit({"decision": "allow", "systemMessage": str(result.get("message", "fable-lite Stop gate allow."))})
+    return emit({"decision": "allow", "systemMessage": str(result.get("message", "[smtw] Stop gate allow."))})

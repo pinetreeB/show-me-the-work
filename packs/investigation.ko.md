@@ -1,4 +1,4 @@
-<!-- fable-lite pack: 체계적 조사 프로토콜 (S3) — 원리 구조는 fablize(MIT) 차용, 문장 전면 재작성 -->
+<!-- show-me-the-work pack: 체계적 조사 프로토콜 (S3) — 원리 구조는 fablize(MIT) 차용, 문장 전면 재작성 -->
 <!-- compliance.py 마커 계약: 이 팩이 주입된 턴의 모델 출력을 파싱하여 준수를 검증한다 -->
 <체계적_조사_프로토콜>
 

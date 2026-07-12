@@ -1,11 +1,11 @@
-# fable-lite 아키텍처 계약 (v2 provenance 추가 — 2026-07-13)
+# show-me-the-work 아키텍처 계약 (v2 provenance 추가 — 2026-07-13)
 
 > P3 병렬 구현의 영역 계약. 각 작업자는 자기 영역만 수정한다. 변경 필요 시 좌상 오케스트레이터 승인.
 
 ## 디렉토리 계약
 
 ```
-fable-lite/
+show-me-the-work/
 ├── .claude-plugin/plugin.json        # 플러그인 메타                      [Codex]
 ├── core/                             # 순수 Python 판정 코어 — CC 의존 import 0, stdlib only
 │   ├── classify.py                   # 과제 분류: quick/normal/deep + risk flags + 한국어 패턴 (N2·N4)

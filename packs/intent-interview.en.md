@@ -1,4 +1,4 @@
-<!-- fable-lite pack: Intent Gate (v1.1) — replaces the "understanding intent from an ambiguous
+<!-- show-me-the-work pack: Intent Gate (v1.1) — replaces the "understanding intent from an ambiguous
      instruction" part of Fable-style discipline with a procedure instead of a capability.
      Structural principles follow docs/design/intent-gate.md (frozen design). -->
 <!-- PreToolUse target: if ledger.intent_required=true and .fable-lite/intent.json does not exist,

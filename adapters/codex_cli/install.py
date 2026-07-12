@@ -21,7 +21,7 @@ POWERSHELL: Final = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Install self-locating fable-lite hooks into a Codex project.",
+        description="Install self-locating show-me-the-work hooks into a Codex project.",
     )
     _ = parser.add_argument("--target", required=True, type=Path, help="Target project directory")
     return parser
@@ -91,7 +91,7 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[2]
     rendered = render_hooks(repo_root)
     if rendered is None:
-        print("fable-lite Codex hook template is invalid; installation aborted.", file=sys.stderr)
+        print("show-me-the-work Codex hook template is invalid; installation aborted.", file=sys.stderr)
         return 2
 
     destination = target_value.resolve() / ".codex" / "hooks.json"
@@ -103,7 +103,7 @@ def main() -> int:
         print(f"Refusing to overwrite existing Codex hooks: {destination}", file=sys.stderr)
         return 1
 
-    print(f"Installed fable-lite Codex hooks: {destination}")
+    print(f"Installed show-me-the-work Codex hooks: {destination}")
     return 0
 
 
