@@ -9,12 +9,9 @@ import os
 from pathlib import Path
 import re
 import time
-from typing import TypeAlias
 from uuid import uuid4
 
-JsonScalar: TypeAlias = str | int | bool | None
-JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
-JsonObject: TypeAlias = dict[str, JsonValue]
+from .ledger_schema import JsonObject, JsonValue
 LOCK_WAIT_SECONDS = 15.0
 STALE_LOCK_SECONDS = 10.0
 
@@ -149,8 +146,8 @@ def ledger_transaction(project_root: str) -> Iterator[None]:
             yield
 
 
-def _json_safe(value: object) -> bool:
-    if isinstance(value, str | int | bool) or value is None:
+def _json_safe(value: JsonValue) -> bool:
+    if isinstance(value, str | int | float | bool) or value is None:
         return True
     if isinstance(value, list):
         return all(_json_safe(item) for item in value)
@@ -159,8 +156,8 @@ def _json_safe(value: object) -> bool:
     return False
 
 
-def _json_value(value: object) -> JsonValue | None:
-    if isinstance(value, str | int | bool) or value is None:
+def _json_value(value: JsonValue) -> JsonValue:
+    if isinstance(value, str | int | float | bool) or value is None:
         return value
     if isinstance(value, list):
         return [_json_value(item) for item in value]
@@ -169,7 +166,7 @@ def _json_value(value: object) -> JsonValue | None:
     return None
 
 
-def _event_payload(payload: Mapping[str, object]) -> JsonObject:
+def _event_payload(payload: Mapping[str, JsonValue]) -> JsonObject:
     return {
         key: _json_value(value)
         for key, value in payload.items()
@@ -177,10 +174,17 @@ def _event_payload(payload: Mapping[str, object]) -> JsonObject:
     }
 
 
+def _normalize_agent_event(event: JsonObject) -> JsonObject:
+    if event.get("schema_version") == 2:
+        return event
+    event["legacy_event"] = True
+    return event
+
+
 def append_agent_event(
     project_root: str,
     agent: str,
-    payload: Mapping[str, object],
+    payload: Mapping[str, JsonValue],
 ) -> None:
     if not agent:
         return
@@ -210,11 +214,11 @@ def load_agent_events(project_root: str, agent: str) -> list[JsonObject] | None:
         if not line.strip():
             continue
         try:
-            raw: object = json.loads(line)
+            raw: JsonValue = json.loads(line)
         except json.JSONDecodeError:
             continue
         if _json_safe(raw):
             event = _json_value(raw)
             if isinstance(event, dict):
-                events.append(event)
+                events.append(_normalize_agent_event(event))
     return events

@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Final
+
+from .ledger_schema import JsonObject, JsonValue
+from .ledger_v1 import V1_PROJECTION_FIELDS, apply_v1_event, default_ledger, sequence_value
+
+SNAPSHOT_UNAVAILABLE: Final = "snapshot:unavailable"
+EVENT_ONLY_PROMPT: Final = "(event-only)"
+NO_TOOL_OUTPUT: Final = "(no tool output)"
+
+
+def default_v2_ledger() -> JsonObject:
+    ledger = default_ledger()
+    ledger["schema_version"] = 2
+    ledger["manifest_generation"] = 0
+    ledger["active_turns"] = {}
+    return ledger
+
+
+def agent_key(payload: Mapping[str, JsonValue]) -> str:
+    host = _string(payload.get("host"), "default")
+    session_id = _string(payload.get("session_id"), "default")
+    agent = _string(payload.get("agent"), "default")
+    return f"{host}:{session_id}:{agent}"
+
+
+def refresh_v1_projection(ledger: JsonObject, turn: JsonObject) -> JsonObject:
+    global_sequence = sequence_value(ledger.get("event_seq"))
+    for field in V1_PROJECTION_FIELDS:
+        if field in turn:
+            ledger[field] = turn[field]
+    blocks = turn.get("blocks")
+    if isinstance(blocks, dict):
+        ledger["stop_blocks"] = sequence_value(blocks.get("stop"))
+    ledger["event_seq"] = global_sequence
+    return ledger
+
+
+def apply_v2_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> JsonObject:
+    event_seq = sequence_value(payload.get("seq"))
+    ledger["event_seq"] = max(sequence_value(ledger.get("event_seq")), event_seq)
+    active = _active_turns(ledger)
+    key = agent_key(payload)
+    event = payload.get("event")
+    if event == "prompt":
+        _discard_legacy_turn(active)
+        turn = _new_turn(payload, event_seq)
+    else:
+        raw_turn = active.get(key)
+        if isinstance(raw_turn, dict):
+            turn = raw_turn
+            _sync_projected_stop_block(ledger, turn)
+            _ = apply_v1_event(turn, payload)
+        else:
+            turn = _new_turn(payload, event_seq)
+        _update_turn_after_event(turn, payload)
+    active[key] = turn
+    ledger["active_turns"] = active
+    manifest_generation = payload.get("manifest_generation")
+    if isinstance(manifest_generation, int) and not isinstance(manifest_generation, bool):
+        ledger["manifest_generation"] = max(0, manifest_generation)
+    _complete_v2_projection(turn)
+    return refresh_v1_projection(ledger, turn)
+
+
+def _active_turns(ledger: JsonObject) -> JsonObject:
+    active = ledger.get("active_turns")
+    return active if isinstance(active, dict) else {}
+
+
+def _new_turn(payload: Mapping[str, JsonValue], event_seq: int) -> JsonObject:
+    event_payload = dict(payload)
+    event_payload["seq"] = event_seq
+    turn = apply_v1_event(default_ledger(), event_payload)
+    turn["turn_id"] = _string(payload.get("turn_id"), f"turn-{event_seq}")
+    turn["start_seq"] = event_seq
+    turn["baseline_snapshot_id"] = _string(
+        payload.get("baseline_snapshot_id"), SNAPSHOT_UNAVAILABLE
+    )
+    turn["current_snapshot_id"] = _string(
+        payload.get("current_snapshot_id"), SNAPSHOT_UNAVAILABLE
+    )
+    turn["pending_change_ids"] = []
+    turn["blocks"] = {"stop": 0}
+    turn["agent"] = _string(payload.get("agent"), "default")
+    _update_turn_after_event(turn, payload)
+    return turn
+
+
+def _update_turn_after_event(turn: JsonObject, payload: Mapping[str, JsonValue]) -> None:
+    snapshot_id = payload.get("current_snapshot_id")
+    if isinstance(snapshot_id, str) and snapshot_id:
+        turn["current_snapshot_id"] = snapshot_id
+    if payload.get("event") != "change":
+        return
+    change_id = _change_id(payload)
+    if change_id:
+        pending = _string_list(turn.get("pending_change_ids"))
+        if change_id not in pending:
+            pending.append(change_id)
+        turn["pending_change_ids"] = pending
+    if turn.get("migration_mode") == "legacy_turn":
+        turn["legacy_seq_less"] = False
+
+
+def _change_id(payload: Mapping[str, JsonValue]) -> str:
+    direct = payload.get("change_id")
+    if isinstance(direct, str) and direct:
+        return direct
+    paths = payload.get("paths")
+    if not isinstance(paths, list) or not paths:
+        return ""
+    first = paths[0]
+    if not isinstance(first, dict):
+        return ""
+    value: JsonValue | None = first.get("change_id")
+    return value if isinstance(value, str) else ""
+
+
+def _discard_legacy_turn(active: JsonObject) -> None:
+    legacy = active.get("default")
+    if isinstance(legacy, dict) and legacy.get("migration_mode") == "legacy_turn":
+        _ = active.pop("default", None)
+
+
+def _sync_projected_stop_block(ledger: JsonObject, turn: JsonObject) -> None:
+    if ledger.get("agent") != turn.get("agent"):
+        return
+    blocks = turn.get("blocks")
+    if not isinstance(blocks, dict):
+        blocks = {"stop": 0}
+        turn["blocks"] = blocks
+    blocks["stop"] = sequence_value(ledger.get("stop_blocks"))
+
+
+def _complete_v2_projection(turn: JsonObject) -> None:
+    if not _string(turn.get("prompt"), ""):
+        turn["prompt"] = EVENT_ONLY_PROMPT
+    results = turn.get("verification_results")
+    if not isinstance(results, list):
+        return
+    for result in results:
+        if isinstance(result, dict) and not _string(result.get("evidence"), ""):
+            result["evidence"] = NO_TOOL_OUTPUT
+
+
+def _string(value: JsonValue | None, default: str) -> str:
+    return value if isinstance(value, str) and value else default
+
+
+def _string_list(value: JsonValue | None) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
