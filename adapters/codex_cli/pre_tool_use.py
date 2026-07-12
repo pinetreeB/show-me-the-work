@@ -6,7 +6,7 @@ import sys
 
 
 def _fail_open(message: str) -> int:
-    data = json.dumps({"systemMessage": f"fable-lite fail-open(게이트 오류, 통과 처리): {message}"}, ensure_ascii=False)
+    data = json.dumps({"systemMessage": f"[smtw] fail-open(게이트 오류, 통과 처리): {message}"}, ensure_ascii=False)
     _ = sys.stdout.buffer.write(data.encode("utf-8"))
     _ = sys.stdout.buffer.write(b"\n")
     return 0

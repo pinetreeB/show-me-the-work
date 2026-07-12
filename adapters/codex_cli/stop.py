@@ -17,7 +17,7 @@ REAPER_TIMEOUT_SECONDS: Final = 8
 
 def _fail_open(message: str) -> int:
     data = json.dumps(
-        {"systemMessage": f"fable-lite fail-open: {message}"}, ensure_ascii=False
+        {"systemMessage": f"[smtw] fail-open: {message}"}, ensure_ascii=False
     )
     _ = sys.stdout.buffer.write(data.encode("utf-8"))
     _ = sys.stdout.buffer.write(b"\n")
@@ -123,7 +123,7 @@ def main() -> int:
         result = evaluate_stop(stop_payload)
         if result["decision"] == "block":
             return emit({"decision": "block", "reason": str(result["reason"])})
-        message = str(result.get("message", "fable-lite Stop gate allow."))
+        message = str(result.get("message", "[smtw] Stop gate allow."))
         _run_process_reaper(root, project_root_value)
         return emit({"systemMessage": message})
     except Exception as exc:  # noqa: BLE001  # noqa: BROAD_EXCEPT_OK

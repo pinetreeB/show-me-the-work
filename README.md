@@ -1,6 +1,8 @@
-# fable-lite
+# show-me-the-work
 
-[![version](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)](CHANGELOG.md)
+**show-me-the-work** (`smtw`, Korean: **쇼미더워크**) is evidence-based AI work supervision: no executed proof, no credible "done."
+
+[![version](https://img.shields.io/badge/version-2.0.0-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > 🇰🇷 **한국어가 1차 문서입니다**: [`README.ko.md`](README.ko.md)
@@ -14,23 +16,23 @@ When you ask an AI (Claude, Codex…) to write code, it's capable but sometimes 
 - It picks **one guess** for a bug and fixes that (maybe the wrong spot)
 - It says "I'll do X next" and just **stops**
 
-`fable-lite` is an **automatic quality inspector** that sits next to the AI. When the AI tries to call something "done" without checking, it **blocks and demands evidence**. You do nothing — install once, and it works on every task.
+`show-me-the-work` is an **automatic quality inspector** that sits next to the AI. When the AI tries to call something "done" without checking, it **blocks and demands evidence**. You do nothing — install once, and it works on every task.
 
 > Think of it as a flexible QA supervisor assigned to a skilled-but-careless worker. Silent most of the time; it only steps in the moment someone says "done" without proof.
 
-**One honest caveat**: fable-lite doesn't make the AI *smarter* — it just makes cutting corners *impossible to finish*. (In a real on/off comparison, correctness was identical; what differed was how rigorously the work got verified.)
+**One honest caveat**: show-me-the-work doesn't make the AI *smarter* — it just makes cutting corners *impossible to finish*. (In a real on/off comparison, correctness was identical; what differed was how rigorously the work got verified.)
 
-## 📖 Why the name "fable-lite"
+## 📖 Why "show-me-the-work"
 
-This project began with a question: **could Fable 5 — Anthropic's top-tier model — be recreated on lower models?** After surveying prior attempts and controlled experiments, the answer was clear: the model's raw capability (spotting problems nobody asked about, the depth to crack hard problems) obviously cannot be transplanted.
+This project was renamed from **fable-lite** in v2.0. It began by asking whether Fable 5's working discipline could be transferred to lower models. The answer was useful but narrower than imitation: model capability cannot be transplanted, while verification, investigation, and completion discipline can be enforced as procedure.
 
-But what people who use Fable actually feel isn't just capability. It's **the force of pushing through to the end** — never calling something "done" before verifying it, running what it builds with its own hands, not stopping halfway. That part turned out to be **procedure, not capability** — which means hooks can enforce it.
+By v2.0, the product had grown into **evidence-based AI work supervision** across Claude Code, Codex, and Antigravity. The old name described the starting experiment; the new name describes the product.
 
-So we dropped Fable's weight (model capability) and carried over only its way of working — hence **fable-lite**.
+The name reverses two familiar cheat-code memes: StarCraft's `show me the money` and the broader "show me" challenge. This is the anti-cheat version: **Show me the work.** Don't tell the user it passed — show the run, the observation, and the evidence.
 
 ## 🤝 Synergy with LazyCodex (ulw)
 
-[LazyCodex/OmO](https://github.com/code-yeongyu/oh-my-openagent)'s `ulw` drives tasks to completion; fable-lite inspects evidence at every completion attempt — the roles don't overlap. Run both on Codex CLI (`adapters/codex_cli/INSTALL.ko.md`) and you get runs that **push all the way through, but can't finish with an unverified "done"**. This repository itself was built with that combo (implemented under ulw, inspected by fable-lite).
+[LazyCodex/OmO](https://github.com/code-yeongyu/oh-my-openagent)'s `ulw` drives tasks to completion; show-me-the-work inspects evidence at every completion attempt — the roles don't overlap. Run both on Codex CLI (`adapters/codex_cli/INSTALL.ko.md`) and you get runs that **push all the way through, but can't finish with an unverified "done"**. This repository itself was built with that combo (implemented under ulw, inspected by smtw).
 
 ## 💬 Common objections (FAQ)
 
@@ -39,18 +41,18 @@ So we dropped Fable's weight (model capability) and carried over only its way of
 **Asking in words and blocking in code are different things.** That objection is true for the first half only.
 
 - Writing "always verify before finishing" in a prompt is a **request**. The AI can ignore it — in our measurement, instruction-only compliance was **0/3**.
-- fable-lite is not a request; it is a **lock**. Until the condition (evidence of an actually-executed verification) is met, the "done" declaration and tool calls are **rejected at the program level**. There is no layer where the model gets to "decide not to comply" — the same measurement showed hard gates converging to **3/3** blocked-then-recovered-with-real-evidence ([experiment report](docs/reviews/p5b-n1-natural.md)).
+- show-me-the-work is not a request; it is a **lock**. Until the condition (evidence of an actually-executed verification) is met, the "done" declaration and tool calls are **rejected at the program level**. There is no layer where the model gets to "decide not to comply" — the same measurement showed hard gates converging to **3/3** blocked-then-recovered-with-real-evidence ([experiment report](docs/reviews/p5b-n1-natural.md)).
 
 One fun piece of evidence: while building this repository, **even a frontier model (Fable 5) got blocked by this gate and had to rewrite its report.** Hooks don't rely on the model's goodwill.
 
 ### "Verification is the human's job. Why build this at all?"
 
-Agreed — **final responsibility stays with the human, and fable-lite doesn't replace that.** What it blocks is the step before: **the AI claiming "I verified it" while having executed nothing.**
+Agreed — **final responsibility stays with the human, and show-me-the-work doesn't replace that.** What it blocks is the step before: **the AI claiming "I verified it" while having executed nothing.**
 
 - People who can't read code (a core audience of this tool) have **no way to tell** that claim is fake.
 - People who can read code still can't personally verify the thousands of lines an AI produces per day.
 
-fable-lite is a **first-pass filter**: no executed evidence, no "done". It doesn't remove human verification — it raises the trustworthiness of what reaches the human.
+show-me-the-work is a **first-pass filter**: no executed evidence, no "done". It doesn't remove human verification — it raises the trustworthiness of what reaches the human.
 
 ### "Can't the AI just fill in the format and slip through?"
 
@@ -60,13 +62,13 @@ fable-lite is a **first-pass filter**: no executed evidence, no "done". It doesn
 2. The behavior change is **measured, blind-judged**: ON won 5/5 tasks, and every gap appeared exactly where verification gets tedious ([A/B report](docs/reviews/e1-ab-report.md)).
 3. It doesn't block forever — after 2 blocks it lets the run proceed (no deadlocks). That's a safety valve, and an honest limitation we document.
 
-In short: **fable-lite is not a tool that makes you trust the AI — it's a tool that lets you trust it less.**
+In short: **show-me-the-work is not a tool that makes you trust the AI — it's a tool that lets you trust it less.**
 
 ---
 
 ## Technical summary
 
-A Korean-first Claude Code harness that makes lower Claude models (Opus, Sonnet) follow **Fable 5's working discipline** — investigation, verification grounding, evidence-gated completion, scope control, and high-risk contracts — enforced as **deterministic hooks**, not suggestions.
+A Korean-first, evidence-based AI work supervisor for Claude Code, Codex, and Antigravity — investigation, verification grounding, evidence-gated completion, scope control, and high-risk contracts enforced as **deterministic hooks**, not suggestions.
 
 **A procedure transplant, not a capability transplant.** Weight-level abilities (out-of-spec defect discovery, self-driven implication depth) are explicitly out of scope; the harness escalates honestly instead of pretending.
 
@@ -92,6 +94,8 @@ The qualitative gap **held across 3 repeat runs** (OFF verified 0/3, ON 3/3), th
 
 Pure-stdlib Python core (zero Claude Code imports — platform-neutral, adapters are thin wrappers), single state dir `.fable-lite/`, every hook fail-open, Windows-native.
 
+> Compatibility note: the internal state path remains `.fable-lite/` in v2.0 to avoid breaking existing installations. A public alias is planned for v2.1.
+
 ## Install
 
 **Requires Python 3.12+ on PATH in the target environment** — the hooks are stdlib-Python scripts, so a host without a resolvable `python` (e.g. a fresh worker box) must install it first. No third-party packages.
@@ -99,12 +103,12 @@ Pure-stdlib Python core (zero Claude Code imports — platform-neutral, adapters
 Recommended local-clone install:
 
 ```
-git clone https://github.com/pinetreeB/fable-lite
-claude plugin marketplace add <path-to-fable-lite>
-/plugin install fable-lite@fable-lite
+git clone https://github.com/pinetreeB/show-me-the-work
+claude plugin marketplace add <path-to-show-me-the-work>
+/plugin install show-me-the-work@show-me-the-work
 ```
 
-After the plugin is registered in a marketplace, `/plugin marketplace add pinetreeB/fable-lite` can replace the local path step.
+After the plugin is registered in a marketplace, `/plugin marketplace add pinetreeB/show-me-the-work` can replace the local path step.
 
 ## Verify
 

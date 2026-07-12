@@ -60,7 +60,7 @@ def emit(payload: Mapping[str, JsonValue]) -> int:
 
 
 def fail_open(message: str) -> int:
-    return emit({"systemMessage": f"fable-lite fail-open: {message}"})
+    return emit({"systemMessage": f"[smtw] fail-open: {message}"})
 
 
 def tool_input(payload: Mapping[str, JsonValue]) -> JsonObject:

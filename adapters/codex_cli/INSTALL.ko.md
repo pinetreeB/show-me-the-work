@@ -8,7 +8,7 @@
 - Codex는 `hooks.json` 또는 `config.toml`의 inline `[hooks]`를 로드합니다. 한 레이어에서 둘을 동시에 쓰면 병합 경고가 날 수 있으므로 `hooks.json` 한 방식만 권장합니다.
 - project-local `.codex/config.toml`과 `.codex/hooks.json`은 프로젝트가 trusted일 때만 로드됩니다.
 - non-managed command hook은 신뢰 검토가 필요합니다. 자동화에서만 `--dangerously-bypass-hook-trust`를 사용할 수 있습니다.
-- `timeout` 단위는 초이고, 생략 시 Codex 기본값은 600초입니다. fable-lite hook은 10초로 둡니다.
+- `timeout` 단위는 초이고, 생략 시 Codex 기본값은 600초입니다. show-me-the-work hook은 10초로 둡니다.
 - 현재 matcher가 의미 있는 이벤트는 `PreToolUse`, `PostToolUse` 등입니다. `UserPromptSubmit`과 `Stop`은 matcher가 무시됩니다.
 
 ## 실제 payload 차이
@@ -23,17 +23,17 @@ Codex live capture(`codex exec -c hooks...`)에서 확인한 payload는 Claude C
 
 ## 설치
 
-어느 작업 디렉터리에서든 fable-lite의 `install.py` 경로와 대상 프로젝트 루트를 넘깁니다.
+어느 작업 디렉터리에서든 show-me-the-work의 `install.py` 경로와 대상 프로젝트 루트를 넘깁니다.
 
 ```powershell
-python "C:\경로\fable-lite\adapters\codex_cli\install.py" --target "C:\경로\대상 프로젝트"
+python "C:\경로\show-me-the-work\adapters\codex_cli\install.py" --target "C:\경로\대상 프로젝트"
 ```
 
 ```bash
-python3 "/path/to/fable-lite/adapters/codex_cli/install.py" --target "/path/to/대상 프로젝트"
+python3 "/path/to/show-me-the-work/adapters/codex_cli/install.py" --target "/path/to/대상 프로젝트"
 ```
 
-설치기는 자신의 `install.py` 위치에서 fable-lite 저장소 루트를 찾고, 원본 `hooks.json`의
+설치기는 자신의 `install.py` 위치에서 show-me-the-work 저장소 루트를 찾고, 원본 `hooks.json`의
 `{FABLE_LITE_ROOT}` 토큰 8개(4개 이벤트의 `command`/`commandWindows`)를 검증한 뒤
 플랫폼별로 안전하게 인용한 절대 명령을 구조적으로 렌더링해 대상의 `.codex/hooks.json`만
 새로 만듭니다. 따라서 Codex를 대상 프로젝트에서 실행해도 현재 작업 디렉터리나

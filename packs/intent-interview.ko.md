@@ -1,4 +1,4 @@
-<!-- fable-lite pack: 의도 게이트 (Intent Gate, v1.1) — "알잘딱"의 "알"(모호한 지시에서 의도 파악)을
+<!-- show-me-the-work pack: 의도 게이트 (Intent Gate, v1.1) — "알잘딱"의 "알"(모호한 지시에서 의도 파악)을
      능력이 아니라 절차로 대체한다. 원리 구조는 docs/design/intent-gate.md(동결 설계)를 따른다. -->
 <!-- PreToolUse 판정 대상: ledger.intent_required=true인데 .fable-lite/intent.json이 없으면
      Edit/Write/MultiEdit/NotebookEdit이 차단된다(상한 2회, fail-open). Bash는 차단 대상이 아니다. -->

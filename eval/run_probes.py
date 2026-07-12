@@ -203,7 +203,7 @@ def _prb06() -> ProbeCheck:
         page = _run_hook("user_prompt_submit.py", {"cwd": str(root), "prompt": "로그인 페이지 만들어줘."})
         debug_text = json.dumps(_object(debug.get("json")), ensure_ascii=False)
         page_text = json.dumps(_object(page.get("json")), ensure_ascii=False)
-        passed = "조사 팩" in debug_text and "RUN" in page_text and "fable-lite 활성화" in debug_text
+        passed = "조사 팩" in debug_text and "RUN" in page_text and "show-me-the-work 활성화" in debug_text
         return passed, {"debug": _object(debug.get("json")), "page": _object(page.get("json"))}
 
 
@@ -228,7 +228,7 @@ def _prb09() -> ProbeCheck:
 def _prb10() -> ProbeCheck:
     scripts = ["user_prompt_submit.py", "pre_tool_use.py", "post_tool_use.py", "stop.py"]
     observed = {script: _run_hook_raw(script, "{ broken") for script in scripts}
-    passed = all(_str(_object(result.get("json")).get("systemMessage")).startswith("fable-lite fail-open") for result in observed.values())
+    passed = all(_str(_object(result.get("json")).get("systemMessage")).startswith("[smtw] fail-open") for result in observed.values())
     return passed, _json_object(observed)
 
 
@@ -290,7 +290,13 @@ def _prb17() -> ProbeCheck:
 
 def _prb18() -> ProbeCheck:
     files = [ROOT / "README.ko.md", ADAPTERS / "user_prompt_submit.py", ADAPTERS / "pre_tool_use.py", ADAPTERS / "post_tool_use.py", ADAPTERS / "stop.py"]
-    observed = {path.name: ("fable-lite" in path.read_text(encoding="utf-8") and any("\uac00" <= ch <= "\ud7a3" for ch in path.read_text(encoding="utf-8"))) for path in files}
+    observed = {
+        path.name: (
+            any(brand in path.read_text(encoding="utf-8") for brand in ("show-me-the-work", "[smtw]"))
+            and any("\uac00" <= ch <= "\ud7a3" for ch in path.read_text(encoding="utf-8"))
+        )
+        for path in files
+    }
     return all(observed.values()), _json_object(observed)
 
 
@@ -341,7 +347,7 @@ def write_report(output: Path) -> JsonObject:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run deterministic fable-lite probes.")
+    parser = argparse.ArgumentParser(description="Run deterministic show-me-the-work probes.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--strict",

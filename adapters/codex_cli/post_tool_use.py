@@ -6,7 +6,7 @@ import runpy
 import sys
 
 def _fail_open(message: str) -> int:
-    data = json.dumps({"systemMessage": f"fable-lite fail-open(게이트 오류, 통과 처리): {message}"}, ensure_ascii=False)
+    data = json.dumps({"systemMessage": f"[smtw] fail-open(게이트 오류, 통과 처리): {message}"}, ensure_ascii=False)
     _ = sys.stdout.buffer.write(data.encode("utf-8"))
     _ = sys.stdout.buffer.write(b"\n")
     return 0
@@ -44,7 +44,7 @@ def main() -> int:
             observation = observe_post_tool(Path(root), invocation)
             verification_command = family == "shell" and is_verification_command(command)
             if observation.incomplete and not verification_command:
-                return common["emit"]({"systemMessage": "fable-lite provenance incomplete; fail-open observation."})
+                return common["emit"]({"systemMessage": "[smtw] provenance incomplete; fail-open observation."})
             paths = list(observation.changed_paths)
             ledger = load_ledger({"project_root": root})
             prompt = ledger.get("prompt")
@@ -80,7 +80,7 @@ def main() -> int:
                     }
                 )
             if family == "edit":
-                return common["emit"]({"systemMessage": f"fable-lite provenance: observed {len(paths)} change(s)."})
+                return common["emit"]({"systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
             if verification_command:
                 covers = verification_covers(Path(root), invocation)
                 verification = {
@@ -100,8 +100,8 @@ def main() -> int:
                 record_event(
                     verification
                 )
-                return common["emit"]({"systemMessage": "fable-lite 원장: 검증 기록 / recorded verification."})
-            return common["emit"]({"systemMessage": f"fable-lite provenance: observed {len(paths)} change(s)."})
+                return common["emit"]({"systemMessage": "[smtw] 원장: 검증 기록 / recorded verification."})
+            return common["emit"]({"systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
         return common["emit"]({})
     except Exception as exc:
         return _fail_open(str(exc))

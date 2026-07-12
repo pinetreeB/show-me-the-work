@@ -6,7 +6,7 @@ import sys
 
 
 def _fail_open(message: str) -> int:
-    data = json.dumps({"systemMessage": f"fable-lite fail-open: {message}"}, ensure_ascii=False)
+    data = json.dumps({"systemMessage": f"[smtw] fail-open: {message}"}, ensure_ascii=False)
     _ = sys.stdout.buffer.write(data.encode("utf-8"))
     _ = sys.stdout.buffer.write(b"\n")
     return 0
@@ -46,7 +46,7 @@ def main() -> int:
         # allow 경로: systemMessage(사용자 정보용)만 반환한다. hookSpecificOutput.additionalContext를
         # 채우면 Claude Code가 이를 "계속 진행" 신호로 받아 stop_hook_active 사이클에서 모델을 반복
         # 재호출한다(라이브 E2E 발견 A). 통과 시엔 모델에 줄 추가 컨텍스트가 없다.
-        message = str(result.get("message", "fable-lite Stop gate allow."))
+        message = str(result.get("message", "[smtw] Stop gate allow."))
         return emit({"systemMessage": message})
     except Exception as exc:  # noqa: BLE001
         return _fail_open(str(exc))

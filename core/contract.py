@@ -259,7 +259,7 @@ def evaluate_r1_contract(payload: Mapping[str, JsonValue]) -> Decision:
     return {
         "decision": "block",
         "reason": (
-            "fable-lite R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. "
+            "[smtw] R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. "
             "restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. "
             "/ High-risk edits require a valid task contract first."
         ),

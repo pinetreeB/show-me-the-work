@@ -120,7 +120,7 @@ def test_oma_after_tool_records_shell_verification(tmp_path: Path) -> None:
     # Then: the ledger records the observed successful output as evidence.
     ledger = read_ledger(tmp_path)
     verification = object_value(list_value(ledger["verification_results"])[0])
-    assert "recorded verification" in str(result.get("systemMessage", "")).lower() or "fable-lite 원장: 검증 기록." in str(result.get("systemMessage", ""))
+    assert "recorded verification" in str(result.get("systemMessage", "")).lower() or "[smtw] 원장: 검증 기록." in str(result.get("systemMessage", ""))
     assert verification["success"] is True
     assert "3 passed in 0.02s" in str(verification["evidence"])
 
@@ -191,6 +191,7 @@ def test_oma_after_agent_blocks_after_code_change_and_failed_verification(tmp_pa
     # Then: the missing successful verification keeps completion blocked.
     assert result["decision"] == "block"
     assert "성공한 검증 증거가 없습니다" in str(result.get("reason", ""))
+    assert str(result.get("reason", "")).endswith("Show me the work.")
 
 
 def test_oma_after_tool_classifies_verification_result_conservatively(
@@ -289,11 +290,11 @@ def test_oma_after_tool_records_bash_script_and_make_test_as_verification(tmp_pa
     bash_result = run_oma_hook("AfterTool", bash_payload)
     make_result = run_oma_hook("AfterTool", make_payload)
 
-    assert "fable-lite 원장: 검증 기록." in str(bash_result.get("systemMessage", ""))
-    assert "fable-lite 원장: 검증 기록." in str(make_result.get("systemMessage", ""))
+    assert "[smtw] 원장: 검증 기록." in str(bash_result.get("systemMessage", ""))
+    assert "[smtw] 원장: 검증 기록." in str(make_result.get("systemMessage", ""))
 
 
 def test_oma_hooks_fail_open_on_malformed_payload() -> None:
     result = run_oma_hook("BeforeTool", "{not-json")
 
-    assert str(result.get("systemMessage", "")).startswith("fable-lite fail-open")
+    assert str(result.get("systemMessage", "")).startswith("[smtw] fail-open")

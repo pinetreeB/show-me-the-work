@@ -211,7 +211,7 @@ def test_codex_posttool_records_bash_script_and_make_test_as_verification(tmp_pa
 def test_codex_hooks_fail_open_on_malformed_payload() -> None:
     result = run_hook("pre_tool_use.py", "{not-json")
 
-    assert str(result["systemMessage"]).startswith("fable-lite fail-open")
+    assert str(result["systemMessage"]).startswith("[smtw] fail-open")
 
 
 def test_codex_installer_loads_all_hook_commands_from_external_project(tmp_path: Path) -> None:

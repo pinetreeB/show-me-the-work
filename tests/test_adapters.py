@@ -173,6 +173,7 @@ def test_stop_blocks_missing_n1_markers_when_investigation_turn_changed_files(tm
 
     assert stop_result["decision"] == "block"
     assert "조사 팩" in str(stop_result["reason"])
+    assert str(stop_result["reason"]).endswith("Show me the work.")
 
 
 def test_stop_allows_answer_only_investigation_turn_without_markers(tmp_path: Path) -> None:
@@ -236,14 +237,14 @@ def test_hooks_fail_open_on_malformed_payload() -> None:
     )
 
     assert process.returncode == 0
-    assert json.loads(process.stdout)["systemMessage"].startswith("fable-lite fail-open")
+    assert json.loads(process.stdout)["systemMessage"].startswith("[smtw] fail-open")
 
 
 def test_plugin_manifest_and_hooks_json_exist() -> None:
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     hooks = json.loads((ADAPTERS / "hooks.json").read_text(encoding="utf-8"))
 
-    assert plugin["name"] == "fable-lite"
+    assert plugin["name"] == "show-me-the-work"
     assert "hooks" in plugin
     assert "Bash|PowerShell" in hooks["hooks"]["PreToolUse"][0]["matcher"]
     for hook_entries in hooks["hooks"].values():

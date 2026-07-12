@@ -16,7 +16,7 @@ def scan_progress(file_count: int, delay_seconds: float = PROGRESS_DELAY_SECONDS
         target=_notify_after_delay,
         args=(finished, file_count, delay_seconds),
         daemon=True,
-        name="fable-lite-scan-progress",
+        name="smtw-scan-progress",
     )
     notifier.start()
     try:
@@ -31,7 +31,7 @@ def _notify_after_delay(finished: Event, file_count: int, delay_seconds: float) 
         return
     target = f"{file_count:,}개 파일" if file_count else "프로젝트 파일"
     try:
-        _ = sys.stderr.write(f"[fable-lite] {target} 상태 검증 중... 안전하게 변경 여부를 확인하고 있습니다.\n")
+        _ = sys.stderr.write(f"[smtw] {target} 상태 검증 중... 안전하게 변경 여부를 확인하고 있습니다.\n")
         _ = sys.stderr.flush()
     except (OSError, ValueError):
         return

@@ -1,6 +1,6 @@
-# fable-lite v2 멀티 CLI 어댑터 리서치 및 설계
+# show-me-the-work v2 멀티 CLI 어댑터 리서치 및 설계
 
-본 문서는 `fable-lite`의 판정 코어(순수 Python, dict-in/dict-out 구조)를 Claude Code 외의 타 CLI 환경(Codex CLI, Antigravity CLI)으로 확장하기 위한 v2 어댑터 설계 및 이식성 분석 결과입니다.
+본 문서는 `show-me-the-work`의 판정 코어(순수 Python, dict-in/dict-out 구조)를 Claude Code 외의 타 CLI 환경(Codex CLI, Antigravity CLI)으로 확장하기 위한 v2 어댑터 설계 및 이식성 분석 결과입니다.
 
 ## 1. 타겟 CLI 환경 분석
 
@@ -23,7 +23,7 @@ Antigravity(OmA - oh-my-antigravity 플러그인 생태계)의 실제 환경을 
 
 ## 2. 게이트별 이식성 매트릭스 (Portability)
 
-현재 `fable-lite` 코어 로직을 3개 CLI 플랫폼에 이식할 때의 강제력 수준입니다.
+현재 `show-me-the-work` 코어 로직을 3개 CLI 플랫폼에 이식할 때의 강제력 수준입니다.
 
 | ID | 기능명 | Claude Code (v1) | Codex CLI (v2 타겟) | Antigravity CLI (agy) (v2 타겟) |
 | :--- | :--- | :--- | :--- | :--- |
@@ -42,20 +42,20 @@ Antigravity(OmA - oh-my-antigravity 플러그인 생태계)의 실제 환경을 
 
 ## 3. v2 권장 스코프 및 아키텍처
 
-fable-lite v2 확장을 위한 최적의 접근법과 순서는 다음과 같습니다.
+show-me-the-work v2 확장을 위한 최적의 접근법과 순서는 다음과 같습니다.
 
 ### 3.1 1단계: Codex CLI 어댑터 우선 개발
-*   **이유**: Codex CLI의 훅 인터페이스(`PreToolUse`, `PostToolUse`, `Stop`) 구조가 Claude Code와 가장 유사합니다. 기존 `adapters/claude_code/*.py` 래퍼 스크립트의 페이로드 매핑 계층(Payload Mapping Layer)만 약간 수정하면 `fable-lite`의 순수 Python 코어(`core/`)를 그대로 100% 재사용할 수 있습니다.
+*   **이유**: Codex CLI의 훅 인터페이스(`PreToolUse`, `PostToolUse`, `Stop`) 구조가 Claude Code와 가장 유사합니다. 기존 `adapters/claude_code/*.py` 래퍼 스크립트의 페이로드 매핑 계층(Payload Mapping Layer)만 약간 수정하면 `show-me-the-work`의 순수 Python 코어(`core/`)를 그대로 100% 재사용할 수 있습니다.
 *   **형태 (래퍼 스크립트 기반)**: 
-    1.  `fable-lite` 패키지 내에 `adapters/codex_cli/` 경로를 신설.
+    1.  `show-me-the-work` 저장소 내에 `adapters/codex_cli/` 경로를 신설.
     2.  Codex의 `hooks.json`이 `adapters/codex_cli/` 하위의 Python 래퍼 스크립트를 호출하도록 구성.
     3.  소프트 지시(S3 팩 등)는 `AGENTS.md` 자동 생성기/병합기를 통해 프로젝트 루트에 동적으로 주입(fablever 방식 차용).
 
 ### 3.2 2단계: Antigravity CLI (agy) 어댑터
-*   **이유**: OmA 파이프라인(P0-safety 등)이 `fable-lite`의 하드 게이트 이념과 일치합니다.
+*   **이유**: OmA 파이프라인(P0-safety 등)이 `show-me-the-work`의 하드 게이트 이념과 일치합니다.
 *   **형태 (OmA 훅 파이프라인 통합)**:
     1.  `adapters/agy/` 어댑터를 생성하여 `BeforeTool` -> `evaluate_pretool_contract()`, `AfterAgent` -> `evaluate_stop()` 등으로 1:1 매핑.
-    2.  `.omg/state/hooks.json` 또는 글로벌 `hooks.json`에 `fable-lite` 판정 스크립트를 커맨드 형태로 등록하여 훅 생태계에 편입.
+    2.  `.omg/state/hooks.json` 또는 글로벌 `hooks.json`에 `show-me-the-work` 판정 스크립트를 커맨드 형태로 등록하여 훅 생태계에 편입.
 
 ### 3.3 배제된 형태 (왜 MCP 서버가 아닌가?)
-*   **이유**: MCP(Model Context Protocol)는 모델에게 '외부 시스템(DB, 파일, API)을 읽거나 쓰는 도구(Tool)'를 부여하는 표준입니다. 그러나 `fable-lite`의 핵심 가치인 "모델이 검증 없이 종료하려고 단 강제로 막는(Stop hook 차단) 행위"나 "도구 실행 전 강제로 스펙을 요구하는(PreToolUse 차단) 행위"는 모델의 자율적 행동을 외부에서 개입(Intercept)해야 하므로 MCP 서버의 권한 밖입니다. 따라서 **훅(Hook) 시스템에 바인딩된 래퍼 스크립트 형태**가 필수적입니다.
+*   **이유**: MCP(Model Context Protocol)는 모델에게 '외부 시스템(DB, 파일, API)을 읽거나 쓰는 도구(Tool)'를 부여하는 표준입니다. 그러나 `show-me-the-work`의 핵심 가치인 "모델이 검증 없이 종료하려고 단 강제로 막는(Stop hook 차단) 행위"나 "도구 실행 전 강제로 스펙을 요구하는(PreToolUse 차단) 행위"는 모델의 자율적 행동을 외부에서 개입(Intercept)해야 하므로 MCP 서버의 권한 밖입니다. 따라서 **훅(Hook) 시스템에 바인딩된 래퍼 스크립트 형태**가 필수적입니다.
