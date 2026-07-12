@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "event": "change",
+  "event_id": "change-17",
+  "seq": 17,
+  "turn_id": "turn-001",
+  "agent": "codex",
+  "source": "shell",
+  "owner": "codex",
+  "attribution_status": "exclusive",
+  "observed_by": ["codex"],
+  "confidence": 1.0,
+  "source_confidence": 0.9,
+  "invocation_id": "invocation-001",
+  "observed_at": "post_tool",
+  "snapshot_before": "blake2b-256:before",
+  "snapshot_after": "blake2b-256:after",
+  "paths": [
+    {
+      "change_id": "blake2b-256:ledger-transition",
+      "path": "core/ledger.py",
+      "op": "modify",
+      "kind": "code",
+      "before": "blake2b-256:before",
+      "after": "blake2b-256:after",
+      "requires_verification": true
+    }
+  ]
+}
