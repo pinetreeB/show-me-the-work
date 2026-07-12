@@ -1,6 +1,6 @@
 # fable-lite
 
-[![version](https://img.shields.io/badge/version-1.0.0-brightgreen.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.2.0-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## 🎯 이게 뭔가요? (비개발자·바이브코더를 위한 설명)

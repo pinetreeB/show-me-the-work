@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.0] - 2026-07-12
+
+### Added — Evidence integrity, host conformance, and release SSOT
+
+- P0 Evidence Integrity adds conservative Antigravity verification-result parsing, monotonic ledger sequences with verification epochs, and a self-locating Codex installer whose four hooks work from projects outside the fable-lite checkout.
+- Three-host Stop conformance now replays real Claude Code Stop, Codex CLI Stop, and Antigravity AfterAgent payload shapes for the shared two-block cap, fresh-verification recovery, and N1-marker recovery. Antigravity coverage is payload injection only, not proof that its host hook engine fires.
+- `.claude-plugin/plugin.json` is the version SSOT. The stdlib-only `scripts/sync_version.py` synchronizes marketplace metadata, `pyproject.toml`, and both README badges; `--check` reports drift without writing, and release hygiene compares every version surface.
+- The classifier corpus distinguishes bare `next.js`/`node.js`/`vue.js` technology names from explicit file references and no longer treats `생성` alone as an observable artifact request. Real filenames and HTML/page/game/chart/SVG/UI targets retain their existing behavior.
+
+### Fixed — P4 review hardening
+
+- Applied nine review fixes: explicit Antigravity result signals now outrank ANSI-stripped text fallback; support checks reuse epoch-aware verification; docs changes do not advance the verification epoch; agent-log locks verify ownership; malformed tool names fall through to the next authoritative payload source; Codex installation refuses to overwrite an existing hooks file; failed Codex verification blocks Stop; fresh Antigravity verification allows Stop; and externally installed Codex hooks exercise the unverified-change block path.
+- Antigravity payload handling now covers the observed `tool_response` result shape and string boolean signals while preserving conservative fallback when explicit result fields are absent.
+
+### Known Limitations
+
+- Antigravity 1.1.1 did not invoke the configured hook process in six live installation attempts. Its adapter remains tested through deterministic payload injection until the host exposes a working live hook engine; see `docs/reviews/p9-agy-live-hooks.md`.
+- Moving the Stop block-counter update into the shared ledger transaction remains deferred to v2.0. Current per-file lock ownership is hardened, but multi-process Stop-counter serialization is outside v1.2 scope.
+
 ## [1.1.3] - 2026-07-08
 
 ### Changed — N1 markers only on turns that change files (user feedback)

@@ -24,11 +24,43 @@ ARTIFACT_PATTERNS = (
     "차트",
     "만들어",
     "만들어줘",
-    "생성",
     "build",
     "render",
     "page",
 )
+CREATION_ARTIFACT_PATTERNS = (
+    "이미지",
+    "문서",
+    "보고서",
+    "파일",
+    "컴포넌트",
+    "템플릿",
+    "프로젝트",
+    "앱",
+    "스크립트",
+    "설정",
+    "image",
+    "pdf",
+    "file",
+    "component",
+    "template",
+    "project",
+    "app",
+    "script",
+    "config",
+)
+CREATION_ARTIFACT_SUBSTRINGS = tuple(
+    pattern for pattern in CREATION_ARTIFACT_PATTERNS if not pattern.isascii()
+)
+CREATION_ARTIFACT_REGEXES = tuple(
+    re.compile(
+        rf"(?<![A-Za-z0-9_]){re.escape(pattern)}(?![A-Za-z0-9_])",
+        re.IGNORECASE,
+    )
+    for pattern in CREATION_ARTIFACT_PATTERNS
+    if pattern.isascii()
+)
+ARTIFACT_REGEXES = (re.compile(r"\b(?:ui|game|chart)\b", re.IGNORECASE),)
 MULTI_STORY_PATTERNS = (
     "그리고",
     "고치고",
@@ -52,12 +84,24 @@ BOOT_MARKER_RES = (
     re.compile(r"\s*역할 부여"),
     re.compile(r"\s*role briefing", re.IGNORECASE),
 )
-WAIT_PATTERNS = ("대기하라", "대기해라", "대기하세요", "대기해", "대기 해", "standby", "await further")
+WAIT_PATTERNS = (
+    "대기하라",
+    "대기해라",
+    "대기하세요",
+    "대기해",
+    "대기 해",
+    "standby",
+    "await further",
+)
 KOREAN_ACTION_STEMS = "고쳐|고치|수정|구현|보완|개선|만들|추가|작성|생성|연동|해결|처리|통합|설정|적용|변경|업데이트|삭제|제거|배포|리팩터링?"
-KOREAN_ACTION_SUFFIXES = "해|하라|해라|해줘|해 줘|해주세요|하세요|합시다|해야|부탁|바람|요망"
+KOREAN_ACTION_SUFFIXES = (
+    "해|하라|해라|해줘|해 줘|해주세요|하세요|합시다|해야|부탁|바람|요망"
+)
 KOREAN_ACTION_ADVERBS = "좀|꼭|먼저|바로|다시"
 IMPERATIVE_ACTION_RES = (
-    re.compile(rf"({KOREAN_ACTION_STEMS})(?:\s*(?:{KOREAN_ACTION_ADVERBS})\s*)?({KOREAN_ACTION_SUFFIXES})"),
+    re.compile(
+        rf"({KOREAN_ACTION_STEMS})(?:\s*(?:{KOREAN_ACTION_ADVERBS})\s*)?({KOREAN_ACTION_SUFFIXES})"
+    ),
     re.compile(r"(만들어|바꿔|고쳐)(줘|라| 줘|주세요)?"),
     re.compile(r"고치고\b"),
     re.compile(
@@ -65,8 +109,16 @@ IMPERATIVE_ACTION_RES = (
         re.IGNORECASE,
     ),
 )
+ENGLISH_GENERATION_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:creat(?:e(?:s|d)?|ing)|generat(?:e(?:s|d)?|ing))(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+KOREAN_NOMINAL_GENERATION_RE = re.compile(r"생성\s*(?:필요|좀)\s*(?:[.!?]|$)")
 PATHLIKE_TLDS: set[str] = {"com", "net", "org", "io", "kr", "dev"}
-MENTIONED_PATH_RE: re.Pattern[str] = re.compile(r"[\w./\\-]+\.(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]+")
+BARE_TECHNOLOGY_NAMES: frozenset[str] = frozenset({"next.js", "node.js", "vue.js"})
+MENTIONED_PATH_RE: re.Pattern[str] = re.compile(
+    r"[\w./\\-]+\.(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]+"
+)
 
 
 def _text(payload: Mapping[str, object]) -> str:
@@ -87,6 +139,20 @@ def _contains_regex(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
     return any(pattern.search(text) for pattern in patterns)
 
 
+def _contains_creation_target(text: str) -> bool:
+    return _contains_any(text, CREATION_ARTIFACT_SUBSTRINGS) or _contains_regex(
+        text, CREATION_ARTIFACT_REGEXES
+    )
+
+
+def _is_generation_request(text: str) -> bool:
+    return (
+        ("생성" in text and _contains_regex(text, IMPERATIVE_ACTION_RES))
+        or ENGLISH_GENERATION_RE.search(text) is not None
+        or (KOREAN_NOMINAL_GENERATION_RE.search(text) is not None)
+    )
+
+
 def _has_boot_marker(text: str) -> bool:
     return any(pattern.match(text) for pattern in BOOT_MARKER_RES)
 
@@ -96,22 +162,55 @@ def _is_briefing(text: str) -> bool:
     return has_signal and not _contains_regex(text, IMPERATIVE_ACTION_RES)
 
 
+def _has_file_boundary(text: str, match: re.Match[str], candidate: str) -> bool:
+    if "/" in candidate or "\\" in candidate:
+        return True
+    if (
+        text[match.start() - 1 : match.start()] == "`"
+        and text[match.end() : match.end() + 1] == "`"
+    ):
+        return True
+    before = text[max(0, match.start() - 8) : match.start()].rstrip()
+    after = text[match.end() : match.end() + 8].lstrip()
+    return (
+        before.endswith("파일")
+        or after.startswith("파일")
+        or re.search(r"\bfile\W*$", before, re.IGNORECASE) is not None
+        or re.match(r"^file\b", after, re.IGNORECASE) is not None
+    )
+
+
 def _mentioned_paths(text: str) -> list[str]:
     paths: list[str] = []
     for match in MENTIONED_PATH_RE.finditer(text):
         candidate = match.group(0)
         extension = candidate.rsplit(".", maxsplit=1)[1].casefold()
-        is_domain = extension in PATHLIKE_TLDS and "/" not in candidate and "\\" not in candidate
-        if not is_domain:
+        is_domain = (
+            extension in PATHLIKE_TLDS
+            and "/" not in candidate
+            and "\\" not in candidate
+        )
+        is_bare_technology = (
+            candidate.casefold() in BARE_TECHNOLOGY_NAMES
+            and not _has_file_boundary(text, match, candidate)
+        )
+        if not is_domain and not is_bare_technology:
             paths.append(candidate)
     return paths
 
 
 def classify_prompt(payload: Mapping[str, object]) -> JsonObject:
     prompt = _text(payload)
+    requested_paths = _mentioned_paths(prompt)
     is_debug = _is_debug(prompt)
     is_briefing = _is_briefing(prompt)
-    is_artifact = _contains_any(prompt, ARTIFACT_PATTERNS) and not is_briefing
+    is_generation_request = _is_generation_request(prompt)
+    has_generation_target = bool(requested_paths) or _contains_creation_target(prompt)
+    is_artifact = (
+        _contains_any(prompt, ARTIFACT_PATTERNS)
+        or _contains_regex(prompt, ARTIFACT_REGEXES)
+        or (is_generation_request and has_generation_target)
+    ) and not is_briefing
     is_multi = (
         _contains_any(prompt, MULTI_STORY_PATTERNS)
         or _contains_regex(prompt, MULTI_STORY_REGEXES)
@@ -136,7 +235,6 @@ def classify_prompt(payload: Mapping[str, object]) -> JsonObject:
     if is_briefing and mode == "quick":
         mode = "normal"
 
-    requested_paths = _mentioned_paths(prompt)
     needs_goals = False if is_briefing else is_multi or len(requested_paths) >= 2
     message = "fable-lite: 한국어 라우팅 완료 / routing complete."
     if is_briefing:
