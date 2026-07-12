@@ -21,7 +21,7 @@ from .provenance_store import (
     SnapshotStoreError,
     delete_turn_baseline,
     load_workspace_current,
-    save_turn_baseline,
+    save_turn_baseline_from_current,
     save_workspace_current,
     turn_baseline_path,
     workspace_current_path,
@@ -49,6 +49,10 @@ class ProvenanceLifecycle:
     @property
     def workspace_current_path(self) -> Path:
         return workspace_current_path(self._root)
+
+    @property
+    def observed_file_count(self) -> int:
+        return len(self._state.current.entries) if self._state.current is not None else 0
 
     @property
     def changes(self) -> tuple[ObservedChange, ...]:
@@ -82,7 +86,7 @@ class ProvenanceLifecycle:
             return result
         turn = TurnState(agent, turn_id, result.snapshot, self._state.event_seq, mutation_capable)
         try:
-            save_turn_baseline(self._root, agent, turn_id, turn.baseline)
+            save_turn_baseline_from_current(self._root, agent, turn_id, turn.baseline)
         except SnapshotStoreError:
             return self._mark_incomplete(result)
         self._state.turns[(agent, turn_id)] = turn
@@ -218,26 +222,25 @@ class ProvenanceLifecycle:
             if self._state.generation != generation:
                 return None
             before = self._state.current
-            deltas = () if before is None else calculate_net_delta(before, snapshot)
+            unchanged = before if before is not None and before.snapshot_id == snapshot.snapshot_id else None
+            deltas = () if before is None or unchanged is not None else calculate_net_delta(before, snapshot)
             changes = record_deltas(self._state, ObservationInput(deltas, agent, source))
-            reconciled_at = before.full_reconciled_at if before is not None and before.snapshot_id == snapshot.snapshot_id else None
+            reconciled_at = unchanged.full_reconciled_at if unchanged is not None else None
             snapshot = replace(snapshot, full_reconciled_at=reconciled_at)
-            try:
-                save_workspace_current(self._root, snapshot)
-            except SnapshotStoreError:
-                return self._mark_incomplete(self._result(snapshot, changes, full_scan, 0))
+            if unchanged is None:
+                try:
+                    save_workspace_current(self._root, snapshot)
+                except SnapshotStoreError:
+                    return self._mark_incomplete(self._result(snapshot, changes, full_scan, 0))
+            elif unchanged.full_reconciled_at is not None:
+                snapshot = unchanged
             self._state.current = snapshot
             self._state.generation += 1
             self._state.incomplete = False
             self._state.current_is_stop_full = reconciled_at is not None
             return self._result(snapshot, changes, full_scan, 0)
 
-    def _turn_result(
-        self,
-        result: ObservationResult,
-        turn: TurnState,
-        stop_cap_reserved: bool,
-    ) -> ObservationResult:
+    def _turn_result(self, result: ObservationResult, turn: TurnState, stop_cap_reserved: bool) -> ObservationResult:
         pending = pending_change_ids(self._state, turn)
         return replace(
             result,

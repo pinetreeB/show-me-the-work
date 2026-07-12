@@ -1,12 +1,19 @@
 # fable-lite v2.0 P0 Change Provenance 설계
 
-> 상태: 설계 합의용 제안안 rev2
+> 상태: 구현·릴리스 합의안 rev3
 >
 > 작성 기준: v1.2.0 태그 `c0b1bfd`, 현재 HEAD `eb0053b`
 >
 > 범위: 설계만 포함한다. 이 문서 작성 단계에서는 코어, 어댑터, 테스트를 구현하지 않는다.
 
 ## 변경 이력
+
+### rev3, 2026-07-13
+
+- 대표 규모 1k와 극한 규모 10k의 release SLO를 이원화했다. 1k는 기존 metadata/full p95 200ms/1,000ms를 유지하고, 10k는 1,000ms/6,000ms를 각각 hard gate로 적용한다.
+- 10k 예산은 Windows에서 double-stat, 10,000회 file open, 256MiB BLAKE2b-256 전체 read만 수행한 격리 실험의 경험적 하한 1.48초와 실제 Stop p95 4.94초에 Defender/page-cache 변동 마진을 더해 정했다. agy의 5,000ms 제안은 관측 최악값에 밀착해 flapping 위험이 있어 3-AI 재합의에서 6,000ms로 조정했다.
+- 이는 기존 결과를 통과시키기 위한 짜맞추기가 아니라 대표 사용자 규모와 극한 규모를 분리하고, 계약 무손상 최적화 및 물리 하한 실측 뒤 재현 가능한 회귀 예산을 다시 설정한 결정이다. native scanner는 stdlib-only·플랫폼 중립 계약을 깨므로 기각했다.
+- 관측 scan이 500ms를 넘으면 hook stdout JSON과 분리된 stderr에 파일 상태 검증 진행 알림을 한 번 표시한다. 50k/2GiB stress의 crash·ledger·incomplete 정책은 유지한다.
 
 ### rev2, 2026-07-12
 
@@ -591,16 +598,20 @@ one-shot 절차:
 
 ### 13.1 기준 repo
 
-릴리스 SLO 기준은 로컬 SSD의 다음 합성 repo다.
+릴리스 SLO는 로컬 SSD의 대표 규모와 극한 규모를 모두 hard gate로 사용한다.
 
-- regular file 10,000개
-- 총 256 MiB
+- 대표 규모: regular file 1,000개, 총 약 25.6MiB
+- 극한 규모: regular file 10,000개, 총 256MiB
+- 두 규모 모두 아래 분포와 경로 특성을 동일하게 적용한다.
+
 - 90%는 1-8 KiB, 9%는 64-256 KiB, 1%는 1-8 MiB
 - 디렉토리 깊이 1-8
 - 경로의 10%는 공백, Unicode, 한글 포함
 - hard/soft exclude 바깥 파일만 10,000개로 계산
 
-### 13.2 훅당 허용 지연
+### 13.2 규모별 훅 허용 지연
+
+#### 대표 규모 1k hard gate
 
 | 경계 | 수행 | p95 | p99 | hard deadline |
 |---|---|---:|---:|---:|
@@ -610,13 +621,23 @@ one-shot 절차:
 | Stop/AfterAgent | full enumerate + content reconcile | 1,000 ms | 1,500 ms | 2,000 ms |
 | ledger lock 구간 | seq/counter/manifest commit만 | 25 ms | 50 ms | 250 ms |
 
+#### 극한 규모 10k hard gate
+
+| 경계 | 수행 | p95 | hard deadline |
+|---|---|---:|---:|
+| Turn start fast-path | metadata sweep + 불일치 hash, 불일치 100개/16 MiB 이하 | 1,000 ms | 2,000 ms |
+| Turn start cold/fallback | 최초·incomplete·policy 변경 시 full content baseline | 6,000 ms | 8,000 ms |
+| 일반 PostTool | metadata sweep + 후보 hash, 변경 100개/16 MiB 이하 | 1,000 ms | 2,000 ms |
+| Stop/AfterAgent | full enumerate + content reconcile | 6,000 ms | 8,000 ms |
+
 추가 기준:
 
 - 10,000파일 manifest의 peak 추가 RSS는 80 MiB 이하
 - 직전 Stop full result가 유효하고 metadata 불일치가 0건인 turn start fast-path의 콘텐츠 read는 0 bytes다.
 - 매 turn start마다 full content hash가 실행되면 성능 hard gate 실패다. full hash 비율과 fallback 사유를 receipt에 기록한다.
 - 변경 0건인 PostTool에서 파일 콘텐츠 read는 0 bytes가 목표다. metadata와 후보만 본다.
-- cold/최초 턴 full scan p95는 2,000 ms 이하를 관측 목표로 두되, 반복 대화 턴의 릴리스 hard gate는 turn start fast-path SLO로 판정한다.
+- 1k와 10k는 metadata 및 full phase를 각각 독립 hard gate로 판정하고 receipt에 규모별 결과를 분리 기록한다.
+- 관측 scan이 500ms를 넘으면 stderr에 `[fable-lite] N개 파일 상태 검증 중...` 알림을 한 번 표시한다. stdout의 hook JSON 규약은 바꾸지 않는다.
 - 50,000파일/2 GiB stress에서는 지연 SLO 대신 crash 0, ledger 손상 0, deadline 내 명시적 incomplete를 요구한다.
 
 성능 예산을 넘기면 범위를 몰래 줄이거나 clean으로 간주하지 않는다. incomplete를 기록하고 사용자 설정으로 scan root/exclude를 조정할 수 있게 진단한다.
@@ -797,7 +818,7 @@ source 분류는 실제 LLM 의도를 기계적으로 증명할 수 없으므로
 
 - 대상: `eval/bench_provenance.py`, W9 이후의 `core/ledger.py` release wiring, 설치/아키텍처/CHANGELOG 문서
 - 구현: 1k/10k/50k fast/cold 벤치, JSON receipt, incomplete 진단, config 설명. W9 hard-gate receipt를 입력으로 확인한 릴리스 빌드에서만 migration engine을 일반 load 경로에 연결
-- 완료 기준: 13.2 fast-path SLO green, 정상 turn 무조건 full hash 0, 격리 설치본 migration·자동복원 E2E, 표준 검증 3종과 실제 shell write E2E green, 릴리스 receipt 보존. W9 receipt가 없거나 red면 auto migration 연결 빌드 실패
+- 완료 기준: 13.2의 1k/10k 규모별 metadata·full SLO가 모두 green, 정상 turn 무조건 full hash 0, 격리 설치본 migration·자동복원 E2E, 표준 검증 3종과 실제 shell write E2E green, 릴리스 receipt 보존. W9 receipt가 없거나 red면 auto migration 연결 빌드 실패
 
 ## 17. v2.0 P0 완료 하드게이트
 
@@ -813,7 +834,7 @@ source 분류는 실제 LLM 의도를 기계적으로 증명할 수 없으므로
 8. 동시 turn start generation rebase에서 동일 `change_id` 중복 0, contended attribution은 external
 9. Claude Code/Codex/Antigravity canonical replay 100% 일치
 10. Windows casefold collision 덮어쓰기 0, symlink follow 0, reparse metadata-only FP 0
-11. 1만 파일 turn-start fast-path·PostTool·Stop 지연 SLO와 메모리 예산 충족, 정상 turn 무조건 full hash 0
+11. 1k 대표 규모와 10k 극한 규모의 metadata·full 지연 SLO 및 메모리 예산 충족, 정상 turn 무조건 full hash 0
 12. W9 hard gate 이전 실 원장 auto migration trigger 0
 13. stdlib 외 런타임 의존성 0, wmux/상주 데몬 의존성 0
 

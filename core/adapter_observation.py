@@ -7,6 +7,7 @@ from typing import Final
 from .adapter_change_events import record_observed_changes
 from .ledger import JsonObject, capture_verification_covers, load_ledger, record_event
 from .provenance_lifecycle import ProvenanceLifecycle
+from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
 from .provenance_store import SnapshotStoreError
 from .shell_hints import shell_candidate_paths
@@ -62,7 +63,9 @@ class ObservationReport:
 
 def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
     try:
-        result = ProvenanceLifecycle(root).start_turn(invocation.agent_key, invocation.turn_id)
+        lifecycle = ProvenanceLifecycle(root)
+        with scan_progress(lifecycle.observed_file_count):
+            result = lifecycle.start_turn(invocation.agent_key, invocation.turn_id)
     except (KeyError, OSError, SnapshotStoreError):
         return _incomplete_report()
     return _report(result, result.snapshot.snapshot_id if result.snapshot is not None else "")
@@ -73,12 +76,13 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
     try:
         lifecycle = ProvenanceLifecycle(root)
         lifecycle.resume_turn(invocation.agent_key, invocation.turn_id, _mutation_capable(invocation))
-        started = lifecycle.begin_invocation(
-            invocation.agent_key,
-            invocation.turn_id,
-            invocation.invocation_id,
-            invocation.candidate_paths,
-        )
+        with scan_progress(lifecycle.observed_file_count):
+            started = lifecycle.begin_invocation(
+                invocation.agent_key,
+                invocation.turn_id,
+                invocation.invocation_id,
+                invocation.candidate_paths,
+            )
         covers = _covers(root, invocation)
     except (KeyError, OSError, SnapshotStoreError):
         report = _incomplete_report()
@@ -100,7 +104,8 @@ def observe_post_tool(root: Path, invocation: CanonicalInvocation) -> Observatio
             _stored_candidates(root, invocation),
             False,
         )
-        result = lifecycle.post_tool(started, _source(invocation))
+        with scan_progress(lifecycle.observed_file_count):
+            result = lifecycle.post_tool(started, _source(invocation))
     except (KeyError, OSError, SnapshotStoreError):
         report = _incomplete_report()
         _record_status(root, invocation, report)
@@ -116,7 +121,8 @@ def finish_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRepor
     try:
         lifecycle = ProvenanceLifecycle(root)
         lifecycle.resume_turn(invocation.agent_key, invocation.turn_id, _mutation_capable(invocation))
-        result = lifecycle.finish_turn(invocation.agent_key, invocation.turn_id)
+        with scan_progress(lifecycle.observed_file_count):
+            result = lifecycle.finish_turn(invocation.agent_key, invocation.turn_id)
     except KeyError:
         return ObservationReport("", "", (), False, True)
     except (OSError, SnapshotStoreError):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import UTC, datetime
 import json
-import os
+import os as os
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,6 +13,7 @@ from .ledger_schema import JsonObject as JsonObject, JsonScalar as JsonScalar, J
 from .ledger_storage import atomic_write_text, ledger_path as ledger_path, state_dir as state_dir
 from .ledger_v1 import apply_v1_event, classify_change_kind as classify_change_kind, default_ledger, sequence_value
 from .ledger_v2 import apply_v2_event, default_v2_ledger
+from .release_gate import auto_migration_enabled
 from .verification_covers import active_turn, capture_covers
 
 
@@ -76,6 +77,11 @@ def save_ledger(payload: Mapping[str, JsonValue], ledger: JsonObject) -> None:
 def record_event(payload: Mapping[str, JsonValue]) -> JsonObject:
     root = _project_root(payload)
     destination = ledger_path(root)
+    if auto_migration_enabled() and _legacy_ledger_exists(destination):
+        try:
+            _ = migrate_v1_ledger(root)
+        except LedgerMigrationError:
+            return load_ledger(payload)
     with ledger_transaction(root):
         existed_before_load = destination.exists()
         ledger = load_ledger(payload)
@@ -91,6 +97,21 @@ def record_event(payload: Mapping[str, JsonValue]) -> JsonObject:
         save_ledger(payload, ledger)
         append_agent_event(root, _agent(payload), event_payload)
         return ledger
+
+
+def _legacy_ledger_exists(destination: Path) -> bool:
+    try:
+        loaded: JsonValue = json.loads(destination.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(loaded, dict):
+        return False
+    schema_version = loaded.get("schema_version")
+    return schema_version is None or (
+        isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+        and schema_version == 1
+    )
 
 
 def migrate_ledger_to_v2(payload: Mapping[str, JsonValue]) -> JsonObject:

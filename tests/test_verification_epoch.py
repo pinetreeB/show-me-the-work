@@ -214,7 +214,8 @@ def test_first_new_change_invalidates_v1_seq_less_verification(tmp_path: Path) -
     _write_ledger(tmp_path, _legacy_ledger())
 
     # When: record_event assigns a sequence to the first post-upgrade change.
-    _record_change(tmp_path, "new.py")
+    with patch("core.ledger.auto_migration_enabled", return_value=False):
+        _record_change(tmp_path, "new.py")
     result = evaluate_stop({"project_root": str(tmp_path)})
 
     # Then: the old unsequenced success cannot verify the new change.

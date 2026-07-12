@@ -1,0 +1,245 @@
+{
+  "hard_gate": {
+    "passed": true
+  },
+  "platform": "nt",
+  "scales": [
+    {
+      "files": 1000,
+      "ledger_valid": true,
+      "measurements": 30,
+      "phases": {
+        "cold_start": {
+          "content_read_bytes": 805306350,
+          "full_scan_count": 30,
+          "hash_calls": 30000,
+          "incomplete_count": 0,
+          "max_ns": 340597200,
+          "p50_ns": 278763200,
+          "p95_ns": 335501800,
+          "p99_ns": 340597200,
+          "rss_peak_bytes": 10072064,
+          "sample_count": 30,
+          "stat_count": 120000,
+          "tracemalloc_peak_bytes": 8649850
+        },
+        "fast_path": {
+          "content_read_bytes": 0,
+          "full_scan_count": 0,
+          "hash_calls": 0,
+          "incomplete_count": 0,
+          "max_ns": 82924000,
+          "p50_ns": 44430100,
+          "p95_ns": 61697200,
+          "p99_ns": 82924000,
+          "rss_peak_bytes": 7086080,
+          "sample_count": 30,
+          "stat_count": 30000,
+          "tracemalloc_peak_bytes": 1522581
+        },
+        "post_tool": {
+          "content_read_bytes": 0,
+          "full_scan_count": 0,
+          "hash_calls": 0,
+          "incomplete_count": 0,
+          "max_ns": 65728200,
+          "p50_ns": 39207200,
+          "p95_ns": 63725400,
+          "p99_ns": 65728200,
+          "rss_peak_bytes": 5492736,
+          "sample_count": 30,
+          "stat_count": 30000,
+          "tracemalloc_peak_bytes": 1522365
+        },
+        "stop": {
+          "content_read_bytes": 805306350,
+          "full_scan_count": 30,
+          "hash_calls": 30000,
+          "incomplete_count": 0,
+          "max_ns": 379292400,
+          "p50_ns": 279457400,
+          "p95_ns": 350205600,
+          "p99_ns": 379292400,
+          "rss_peak_bytes": 6238208,
+          "sample_count": 30,
+          "stat_count": 120000,
+          "tracemalloc_peak_bytes": 8158451
+        }
+      },
+      "scenario_coverage": [],
+      "slo": {
+        "budgets_ms": {
+          "cold_start": 1000,
+          "fast_path": 200,
+          "post_tool": 200,
+          "stop": 1000
+        },
+        "failures": [],
+        "passed": true,
+        "rss_budget_bytes": 83886080,
+        "rss_peak_bytes": 10072064
+      },
+      "total_bytes": 26843545,
+      "warmups": 5
+    },
+    {
+      "files": 10000,
+      "ledger_valid": true,
+      "measurements": 30,
+      "phases": {
+        "cold_start": {
+          "content_read_bytes": 8053063680,
+          "full_scan_count": 30,
+          "hash_calls": 300000,
+          "incomplete_count": 0,
+          "max_ns": 4089453600,
+          "p50_ns": 2548486000,
+          "p95_ns": 3552499500,
+          "p99_ns": 4089453600,
+          "rss_peak_bytes": 49971200,
+          "sample_count": 30,
+          "stat_count": 1200000,
+          "tracemalloc_peak_bytes": 37511232
+        },
+        "fast_path": {
+          "content_read_bytes": 0,
+          "full_scan_count": 0,
+          "hash_calls": 0,
+          "incomplete_count": 0,
+          "max_ns": 532114600,
+          "p50_ns": 295984400,
+          "p95_ns": 526497600,
+          "p99_ns": 532114600,
+          "rss_peak_bytes": 48320512,
+          "sample_count": 30,
+          "stat_count": 300000,
+          "tracemalloc_peak_bytes": 15249333
+        },
+        "post_tool": {
+          "content_read_bytes": 0,
+          "full_scan_count": 0,
+          "hash_calls": 0,
+          "incomplete_count": 0,
+          "max_ns": 516390300,
+          "p50_ns": 285524300,
+          "p95_ns": 497682900,
+          "p99_ns": 516390300,
+          "rss_peak_bytes": 52301824,
+          "sample_count": 30,
+          "stat_count": 300000,
+          "tracemalloc_peak_bytes": 15242389
+        },
+        "stop": {
+          "content_read_bytes": 8053063680,
+          "full_scan_count": 30,
+          "hash_calls": 300000,
+          "incomplete_count": 0,
+          "max_ns": 3861454600,
+          "p50_ns": 2606761300,
+          "p95_ns": 3716256200,
+          "p99_ns": 3861454600,
+          "rss_peak_bytes": 37089280,
+          "sample_count": 30,
+          "stat_count": 1200000,
+          "tracemalloc_peak_bytes": 37181406
+        }
+      },
+      "scenario_coverage": [
+        {
+          "content_read_bytes": 0,
+          "dirty_files": 0,
+          "git": false,
+          "hash_calls": 0,
+          "incomplete": false
+        },
+        {
+          "content_read_bytes": 1724,
+          "dirty_files": 1,
+          "git": false,
+          "hash_calls": 1,
+          "incomplete": false
+        },
+        {
+          "content_read_bytes": 172400,
+          "dirty_files": 100,
+          "git": false,
+          "hash_calls": 100,
+          "incomplete": false
+        },
+        {
+          "content_read_bytes": 0,
+          "dirty_files": 0,
+          "git": true,
+          "hash_calls": 0,
+          "incomplete": false
+        },
+        {
+          "content_read_bytes": 1724,
+          "dirty_files": 1,
+          "git": true,
+          "hash_calls": 1,
+          "incomplete": false
+        },
+        {
+          "content_read_bytes": 172400,
+          "dirty_files": 100,
+          "git": true,
+          "hash_calls": 100,
+          "incomplete": false
+        }
+      ],
+      "slo": {
+        "budgets_ms": {
+          "cold_start": 6000,
+          "fast_path": 1000,
+          "post_tool": 1000,
+          "stop": 6000
+        },
+        "failures": [],
+        "passed": true,
+        "rss_budget_bytes": 83886080,
+        "rss_peak_bytes": 52301824
+      },
+      "total_bytes": 268435456,
+      "warmups": 5
+    }
+  ],
+  "schema_version": 2,
+  "seed": 20260712,
+  "slo": {
+    "failures": [],
+    "passed": true,
+    "scales": {
+      "10k": {
+        "budgets_ms": {
+          "cold_start": 6000,
+          "fast_path": 1000,
+          "post_tool": 1000,
+          "stop": 6000
+        },
+        "failures": [],
+        "passed": true,
+        "rss_budget_bytes": 83886080,
+        "rss_peak_bytes": 52301824
+      },
+      "1k": {
+        "budgets_ms": {
+          "cold_start": 1000,
+          "fast_path": 200,
+          "post_tool": 200,
+          "stop": 1000
+        },
+        "failures": [],
+        "passed": true,
+        "rss_budget_bytes": 83886080,
+        "rss_peak_bytes": 10072064
+      }
+    }
+  },
+  "stress": {
+    "incomplete": false,
+    "ledger_valid": true,
+    "reason": "not_requested",
+    "requested": false
+  }
+}

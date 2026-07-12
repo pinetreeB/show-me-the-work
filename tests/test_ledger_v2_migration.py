@@ -203,7 +203,8 @@ def test_v1_record_event_does_not_auto_migrate_an_existing_ledger(tmp_path: Path
     destination = _write_ledger(tmp_path, original)
 
     # When: the normal record path receives its next v1-compatible event.
-    result = record_event({"project_root": str(tmp_path), "event": "scope_warning", "message": "legacy"})
+    with patch("core.ledger.auto_migration_enabled", return_value=False):
+        result = record_event({"project_root": str(tmp_path), "event": "scope_warning", "message": "legacy"})
 
     # Then: the v1 format remains active and no migration archive is created.
     persisted = json.loads(destination.read_text(encoding="utf-8"))

@@ -1,4 +1,4 @@
-# fable-lite 아키텍처 계약 (동결 — 2026-07-06)
+# fable-lite 아키텍처 계약 (v2 provenance 추가 — 2026-07-13)
 
 > P3 병렬 구현의 영역 계약. 각 작업자는 자기 영역만 수정한다. 변경 필요 시 좌상 오케스트레이터 승인.
 
@@ -13,7 +13,9 @@ fable-lite/
 │   ├── verify_state.py               # Stop 판정: changed+unverified 차단 로직
 │   ├── compliance.py                 # N1: 팩 준수 검증 (가설 수·증거 인용·기각 보고 파싱)
 │   ├── scope_guard.py                # N3: 범위 이탈 감지
-│   └── contract.py                   # R1: high-risk spec-before-edit 판정
+│   ├── contract.py                   # R1: high-risk spec-before-edit 판정
+│   ├── provenance*.py                # manifest·lifecycle·source 귀속·snapshot 저장
+│   └── release_gate.py               # W9/W10 receipt 기반 v1 자동 migration 가드
 ├── goals/goals.py                    # S2: 체크포인트 엔진 (CLI, .fable-lite/goals.json)  [Codex]
 ├── adapters/claude_code/             # CC 훅 어댑터 (thin wrapper — 판정은 전부 core 호출) [Codex]
 │   ├── hooks.json                    # UserPromptSubmit / PostToolUse / Stop / PreToolUse
@@ -38,6 +40,28 @@ fable-lite/
 6. **차단 상한**: Stop 게이트 최대 2회 차단 후 통과 (무한 트랩 금지, stop_hook_active 가드)
 7. **fablize MIT 차용 표기**: 검증된 절차 구조는 차용하되 문장은 재작성, README에 출처 명기
 8. **메시지 한국어 우선** (영어 병기)
+
+## v2 change provenance 계층
+
+v2는 어댑터의 도구 이름이나 shell parser 결과를 변경의 정본으로 사용하지 않는다. 각 어댑터는
+후보 경로와 source hint만 전달하고, `core/provenance*.py`가 실제 파일시스템 snapshot을 만들어
+동일한 canonical change event로 합친다.
+
+1. 직전 Stop의 `workspace-current`가 유효하면 turn start와 변경 없는 PostTool은 metadata sweep만
+   수행한다. metadata가 같은 파일은 digest를 재사용하며 콘텐츠 read는 0 bytes다.
+2. 최초/cold/incomplete/policy 변경은 full baseline을 만들고, Stop은 parser 결과와 무관하게 전체
+   콘텐츠를 reconcile한다. 파일별 `stat before -> hash -> stat after` 불일치는 한 번 재시도한다.
+3. Windows 경로는 casefold canonical key를 쓰되 표시 경로를 보존한다. 충돌·불안정 경로·reparse
+   위험은 임의의 clean 판정 대신 explicit incomplete로 남긴다.
+4. observation 중에는 ledger lock을 잡지 않는다. commit 시 generation을 확인하고 한 번 rebase하며,
+   같은 물리 변경은 `change_id`로 dedupe하고 소유권 경합은 `external`로 낮춘다.
+5. snapshot은 `.fable-lite/snapshots/`, 감사 원장은 `.fable-lite/ledger.json`에 저장한다. clean fast
+   turn baseline은 `workspace-current`의 hard link를 원자 교체해 중복 JSON 직렬화를 피한다.
+
+v1 원장 자동 migration은 `eval/results/provenance-latest.json`과
+`eval/results/bench-latest.json`의 hard gate가 모두 green일 때만 `record_event()`에 연결된다. receipt가
+없거나 red거나 malformed이면 v1 dual-read를 유지하고 archive/migration side effect를 만들지 않는다.
+2026-07-13 rev3 W10 receipt는 1k/10k 규모별 hard gate가 모두 green이며 이 경로는 활성화됐다.
 
 ## 영역 배타 (충돌 차단)
 

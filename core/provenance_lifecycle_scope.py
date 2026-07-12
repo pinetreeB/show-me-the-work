@@ -7,7 +7,7 @@ from pathlib import Path
 from .agent_log import ledger_transaction
 from .provenance import SnapshotScanOptions, snapshot_workspace_with_options
 from .provenance_policy import is_path_in_scope, load_provenance_config
-from .provenance_store import SnapshotStoreError, save_turn_baseline, save_workspace_current
+from .provenance_store import SnapshotStoreError, save_turn_baseline_from_current, save_workspace_current
 from .provenance_types import Snapshot
 from .provenance_lifecycle_types import LifecycleState
 
@@ -48,7 +48,7 @@ def prime_candidate_scope(
         snapshot = replace(snapshot, full_reconciled_at=reconciled_at)
         try:
             save_workspace_current(root, snapshot)
-            save_turn_baseline(root, agent, turn_id, snapshot)
+            save_turn_baseline_from_current(root, agent, turn_id, snapshot)
         except SnapshotStoreError:
             return False
         state.current = snapshot
