@@ -42,7 +42,7 @@
                 "changed_files_seen": [
                   "index.html"
                 ],
-                "current_snapshot_id": "blake2b-256:e6f813abd314a98bf517006946dcd6859dc2b97bc5129d6f7b7bc583ab320fe5",
+                "current_snapshot_id": "blake2b-256:e7b511dd7e7755968d29bff1ea27735b99ade1fff18db4aaf9909be93118011e",
                 "event_seq": 4,
                 "goals_blocks": 0,
                 "intent_blocks": 0,
@@ -246,7 +246,7 @@
                 "changed_files_seen": [
                   "README.md"
                 ],
-                "current_snapshot_id": "blake2b-256:625a39346be02c9197d882eb822ae7fd0e242a1ed3a1b47cb8dc03a34119b1c5",
+                "current_snapshot_id": "blake2b-256:88a6d6ebc3b4ec04131fa4f7225dcb0e6c14201480abfd99f05befe25dc7e8c9",
                 "event_seq": 4,
                 "goals_blocks": 0,
                 "intent_blocks": 0,
@@ -370,7 +370,7 @@
         "observed": {
           "returncode": 0,
           "stderr_tail": "C:\\Python312\\Lib\\site-packages\\requests\\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.0.1)/charset_normalizer (3.4.4) doesn't match a supported version!\n  warnings.warn(\n",
-          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 33 items\n\ntests\\test_core_contracts.py .................................           [100%]\n\n============================= 33 passed in 0.25s ==============================\n"
+          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 33 items\n\ntests\\test_core_contracts.py .................................           [100%]\n\n============================= 33 passed in 0.93s ==============================\n"
         },
         "status": "pass"
       },
@@ -492,7 +492,7 @@
         "observed": {
           "returncode": 0,
           "stderr_tail": "C:\\Python312\\Lib\\site-packages\\requests\\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.0.1)/charset_normalizer (3.4.4) doesn't match a supported version!\n  warnings.warn(\n",
-          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 47 items\n\ntests\\test_adapters.py ............                                      [ 25%]\ntests\\test_core_contracts.py .................................           [ 95%]\ntests\\test_goals_cli.py ..                                               [100%]\n\n============================= 47 passed in 8.70s ==============================\n"
+          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 47 items\n\ntests\\test_adapters.py ............                                      [ 25%]\ntests\\test_core_contracts.py .................................           [ 95%]\ntests\\test_goals_cli.py ..                                               [100%]\n\n============================= 47 passed in 5.40s ==============================\n"
         },
         "status": "pass"
       },
@@ -589,7 +589,7 @@
                 "changed_files_seen": [
                   "app.py"
                 ],
-                "current_snapshot_id": "blake2b-256:40177ceccde13aba2ac4b49909a9c3e822953d477e029615c6977cc105fc8a2c",
+                "current_snapshot_id": "blake2b-256:b3aa731689a56f51d0d814642b73b4f7909bf59b0e18a3b0dd699943754efb99",
                 "event_seq": 4,
                 "goals_blocks": 0,
                 "intent_blocks": 0,
@@ -706,7 +706,7 @@
                 "changed_files_seen": [
                   "app.py"
                 ],
-                "current_snapshot_id": "blake2b-256:3aa37f5699a10de6dcd4965373f2108f1bdfe1b3d5227f70fc6c07a01b1adb01",
+                "current_snapshot_id": "blake2b-256:9009bf73704f6bee53c5424d2be06f362da218d1887739b022cba77cf9b456fd",
                 "event_seq": 4,
                 "goals_blocks": 0,
                 "intent_blocks": 0,

@@ -6,9 +6,7 @@ from pathlib import Path
 
 from .agent_log import ledger_transaction
 from .provenance import (
-    SnapshotScanOptions,
     calculate_net_delta,
-    snapshot_workspace_with_options,
 )
 from .provenance_lifecycle_types import (
     Invocation,
@@ -30,6 +28,7 @@ from .provenance_store import (
 )
 from .provenance_turn_resume import load_resumed_turn
 from .provenance_lifecycle_start import can_fast_start, candidate_paths as candidate_paths_for_root
+from .provenance_lifecycle_scope import prime_candidate_scope, scan_snapshot
 from .provenance_types import Snapshot
 
 
@@ -95,8 +94,11 @@ class ProvenanceLifecycle:
         turn_id: str,
         invocation_id: str,
         candidate_paths: tuple[str, ...],
+        prime_candidates: bool = True,
     ) -> Invocation:
-        _ = self._state.turns[(agent, turn_id)]
+        candidates = candidate_paths_for_root(self._root, candidate_paths)
+        if prime_candidates and not prime_candidate_scope(self._root, self._state, agent, turn_id, candidates):
+            self._state.incomplete = True
         snapshot_id = self._state.current.snapshot_id if self._state.current is not None else ""
         return Invocation(
             invocation_id,
@@ -104,7 +106,7 @@ class ProvenanceLifecycle:
             turn_id,
             self._state.event_seq,
             snapshot_id,
-            candidate_paths_for_root(self._root, candidate_paths),
+            candidates,
         )
 
     def resume_turn(
@@ -175,11 +177,7 @@ class ProvenanceLifecycle:
         forced_paths: frozenset[str],
         full_scan: bool,
     ) -> Snapshot:
-        options = SnapshotScanOptions(
-            previous=None if full_scan else previous,
-            force_paths=forced_paths,
-        )
-        return snapshot_workspace_with_options(self._root, options)
+        return scan_snapshot(self._root, previous, forced_paths, full_scan)
 
     def _observe(
         self,

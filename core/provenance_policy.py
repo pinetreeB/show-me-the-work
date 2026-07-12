@@ -67,13 +67,17 @@ def load_provenance_config(root: Path) -> ProvenanceConfig:
 
 
 def is_path_in_scope(path: str, config: ProvenanceConfig) -> bool:
-    if _matches_any(path, HARD_EXCLUDES):
+    if is_hard_excluded(path):
         return False
     if _matches_any(path, config.include):
         return True
     if _matches_any(path, config.exclude):
         return False
     return not _matches_any(path, SOFT_EXCLUDES)
+
+
+def is_hard_excluded(path: str) -> bool:
+    return _matches_any(path, HARD_EXCLUDES)
 
 
 def should_descend(path: str, config: ProvenanceConfig) -> bool:

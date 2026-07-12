@@ -16,6 +16,7 @@ from .provenance_capture import (
 from .provenance_delta import calculate_net_delta
 from .provenance_policy import (
     canonical_manifest_key,
+    is_hard_excluded,
     is_path_in_scope,
     load_provenance_config,
     normalize_relative_path,
@@ -169,7 +170,7 @@ def _visit_path(
         is_link,
     )
     if info.is_link:
-        if not is_path_in_scope(relative, context.config):
+        if not _in_scope(relative, context):
             return
         _append_capture(capture_symlink(_capture_request(info)), state)
         return
@@ -177,10 +178,10 @@ def _visit_path(
         _visit_reparse(info, context, state)
         return
     if stat.S_ISDIR(metadata.st_mode):
-        if should_descend(relative, context.config):
+        if should_descend(relative, context.config) or _has_forced_descendant(relative, context):
             state.directories.append(info.path)
         return
-    if not is_path_in_scope(relative, context.config):
+    if not _in_scope(relative, context):
         return
     if stat.S_ISREG(metadata.st_mode):
         previous = (
@@ -201,7 +202,7 @@ def _visit_reparse(
     if stat.S_ISDIR(info.metadata.st_mode):
         state.issues.append(ScanIssue(info.relative, "unstable_reparse"))
         return
-    if not is_path_in_scope(info.relative, context.config):
+    if not _in_scope(info.relative, context):
         return
     captured = capture_regular(_capture_request(info))
     if captured.entry is None:
@@ -230,6 +231,19 @@ def _capture_request(
     previous: ManifestEntry | None = None,
 ) -> CaptureRequest:
     return CaptureRequest(info.path, info.relative, info.key, previous)
+
+
+def _in_scope(relative: str, context: _ScanContext) -> bool:
+    return not is_hard_excluded(relative) and (
+        is_path_in_scope(relative, context.config) or relative in context.force_paths
+    )
+
+
+def _has_forced_descendant(relative: str, context: _ScanContext) -> bool:
+    prefix = f"{relative}/"
+    return not is_hard_excluded(relative) and any(
+        path.startswith(prefix) for path in context.force_paths
+    )
 
 
 def _previous_state(

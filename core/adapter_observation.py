@@ -98,6 +98,7 @@ def observe_post_tool(root: Path, invocation: CanonicalInvocation) -> Observatio
             invocation.turn_id,
             invocation.invocation_id,
             _stored_candidates(root, invocation),
+            False,
         )
         result = lifecycle.post_tool(started, _source(invocation))
     except (KeyError, OSError, SnapshotStoreError):
