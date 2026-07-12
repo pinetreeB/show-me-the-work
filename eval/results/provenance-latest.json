@@ -1,0 +1,35 @@
+{
+  "canonical_replay": {
+    "antigravity": "payload_injection_not_live_hook",
+    "cases": 200,
+    "failures": 0
+  },
+  "elapsed_seconds": 78.56426090000605,
+  "git_non_git": {
+    "mismatches": []
+  },
+  "golden": {
+    "cases": 200,
+    "false_negatives": 0,
+    "false_positives": 0,
+    "negative": 80,
+    "positive": 120
+  },
+  "hard_gate": {
+    "passed": true
+  },
+  "platform": "nt",
+  "randomized": {
+    "cases": 0,
+    "false_negatives": 0,
+    "false_positives": 0,
+    "seed": 20260712
+  },
+  "reference_metrics": {
+    "high_confidence_misattributions": 0,
+    "noncompetitive_external_unknown_rate": 0.0,
+    "parser_recall": 0.6166666666666667,
+    "source_accuracy": 1.0
+  },
+  "schema_version": 1
+}
