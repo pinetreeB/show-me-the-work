@@ -85,12 +85,17 @@ def measure(action: Callable[[], ObservationResult]) -> tuple[ObservationResult,
     read_bytes = 0
     hash_calls = 0
     counter_lock = Lock()
-    original: Callable[[BufferedReader], str] = capture._digest_stream
+    original: Callable[[BufferedReader, float | None], str | None] = (
+        capture._digest_stream
+    )
 
-    def counting_digest(handle: BufferedReader) -> str:
+    def counting_digest(
+        handle: BufferedReader,
+        deadline: float | None,
+    ) -> str | None:
         nonlocal read_bytes, hash_calls
         before = handle.tell()
-        digest = original(handle)
+        digest = original(handle, deadline)
         with counter_lock:
             read_bytes += handle.tell() - before
             hash_calls += 1
