@@ -72,6 +72,13 @@ def test_shell_chains_cannot_claim_atomic_verification_evidence() -> None:
         assert is_verification_command(command) is False, command
 
 
+def test_multiline_shell_commands_cannot_claim_atomic_verification_evidence() -> None:
+    commands = ("pytest -q\necho ok", "pytest -q\r\necho ok")
+
+    for command in commands:
+        assert is_verification_command(command) is False, repr(command)
+
+
 def test_real_test_runners_and_explicit_inline_assertions_remain_verification() -> None:
     commands = (
         "python -m pytest tests/",
