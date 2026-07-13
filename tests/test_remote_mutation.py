@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from core.shell_command import is_remote_only_mutation_command
+from core.shell_command import (
+    is_remote_mutation_command,
+    is_remote_only_mutation_command,
+)
 
 
 def test_direct_ssh_and_scp_upload_are_remote_only_mutations() -> None:
@@ -71,6 +74,41 @@ def test_read_only_ssh_config_options_do_not_hide_remote_mutations() -> None:
 
     for command in commands:
         assert is_remote_only_mutation_command(command) is True, command
+
+
+def test_remote_mutation_epoch_is_independent_of_local_effect_classification() -> None:
+    commands = (
+        'ssh -o KexAlgorithms=curve25519-sha256 host "touch remote-marker"',
+        'ssh -o TCPKeepAlive=yes host "touch remote-marker"',
+        'ssh -o PubkeyAuthentication=yes host "touch remote-marker"',
+        'ssh -o PasswordAuthentication=no host "touch remote-marker"',
+        'ssh -o AddressFamily=inet host "touch remote-marker"',
+        'ssh -o "RemoteCommand=touch /tmp/marker" host',
+        'ssh -E local.log host "touch remote-marker"',
+        'ssh -o ControlPath=local.sock host "touch remote-marker"',
+        "scp -F ssh-config artifact.tar host:/srv/app/",
+        "scp artifact.tar host:/srv/app/ > transfer.log",
+    )
+
+    for command in commands:
+        assert is_remote_mutation_command(command) is True, command
+
+
+def test_non_remote_ssh_and_scp_operations_do_not_create_remote_epochs() -> None:
+    commands = (
+        "echo ssh host touch /tmp/x",
+        "ssh -G host",
+        "ssh -N host",
+        "ssh -O check host",
+        "ssh -Q cipher",
+        "ssh -V",
+        "ssh -W target.example.com:22 host",
+        "ssh -o SessionType=none host",
+        "scp host:/tmp/a ./a",
+    )
+
+    for command in commands:
+        assert is_remote_mutation_command(command) is False, command
 
 
 def test_remote_commands_with_local_or_mixed_effects_are_not_remote_only() -> None:

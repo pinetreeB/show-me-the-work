@@ -78,6 +78,41 @@ _SCP_SAFE_FLAGS: Final = frozenset(
 _SCP_VALUE_OPTIONS: Final = frozenset(
     {"-J", "-P", "-X", "-c", "-i", "-l", "-o"}
 )
+_SSH_ALL_FLAGS: Final = frozenset(
+    f"-{flag}" for flag in "46AaCfGgKkMNnqsTtVvXxYy"
+)
+_SSH_ALL_VALUE_OPTIONS: Final = frozenset(
+    {
+        "-B",
+        "-D",
+        "-E",
+        "-F",
+        "-I",
+        "-J",
+        "-L",
+        "-O",
+        "-P",
+        "-Q",
+        "-R",
+        "-S",
+        "-W",
+        "-b",
+        "-c",
+        "-e",
+        "-i",
+        "-l",
+        "-m",
+        "-o",
+        "-p",
+        "-w",
+    }
+)
+_SSH_NO_REMOTE_FLAGS: Final = frozenset({"-G", "-N", "-V"})
+_SSH_NO_REMOTE_VALUE_OPTIONS: Final = frozenset({"-O", "-Q", "-W"})
+_SCP_ALL_FLAGS: Final = frozenset(f"-{flag}" for flag in "346ABCOpqRrsTv")
+_SCP_ALL_VALUE_OPTIONS: Final = frozenset(
+    {"-D", "-F", "-J", "-P", "-S", "-X", "-c", "-i", "-l", "-o"}
+)
 _ENV_ASSIGNMENT_RE: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
 _WINDOWS_DRIVE_RE: Final = re.compile(r"^[A-Za-z]:[\\/]")
 
@@ -153,6 +188,31 @@ def is_remote_only_mutation_command(command: str) -> bool:
     return False
 
 
+def is_remote_mutation_command(command: str) -> bool:
+    for segment in command_segments(command):
+        tokens = without_environment_assignments(segment)
+        if not tokens:
+            continue
+        name = command_name(tokens[0])
+        if name == "ssh" and _is_ssh_remote_mutation(tokens[1:]):
+            return True
+        if name == "scp" and _is_scp_upload_with_options(
+            _before_redirection(tokens[1:]),
+            _SCP_ALL_FLAGS,
+            _SCP_ALL_VALUE_OPTIONS,
+            validate_values=False,
+        ):
+            return True
+    return False
+
+
+def _before_redirection(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    for index, token in enumerate(tokens):
+        if token and set(token) <= {"<", ">"}:
+            return tokens[:index]
+    return tokens
+
+
 def remote_ssh_command(command: str) -> str | None:
     if not is_remote_only_mutation_command(command):
         return None
@@ -179,8 +239,37 @@ def _is_direct_ssh(arguments: tuple[str, ...]) -> bool:
     return operands is not None and bool(operands) and not operands[0].startswith("-")
 
 
+def _is_ssh_remote_mutation(arguments: tuple[str, ...]) -> bool:
+    if _ssh_options_disable_remote_command(arguments):
+        return False
+    operands = _operands(
+        arguments,
+        _SSH_ALL_FLAGS,
+        _SSH_ALL_VALUE_OPTIONS,
+        validate_values=False,
+    )
+    return operands is not None and bool(operands) and not operands[0].startswith("-")
+
+
 def _is_scp_upload(arguments: tuple[str, ...]) -> bool:
-    operands = _operands(arguments, _SCP_SAFE_FLAGS, _SCP_VALUE_OPTIONS)
+    return _is_scp_upload_with_options(
+        arguments, _SCP_SAFE_FLAGS, _SCP_VALUE_OPTIONS, validate_values=True
+    )
+
+
+def _is_scp_upload_with_options(
+    arguments: tuple[str, ...],
+    flags: frozenset[str],
+    value_options: frozenset[str],
+    *,
+    validate_values: bool,
+) -> bool:
+    operands = _operands(
+        arguments,
+        flags,
+        value_options,
+        validate_values=validate_values,
+    )
     if operands is None or len(operands) < 2:
         return False
     sources = operands[:-1]
@@ -194,6 +283,8 @@ def _operands(
     arguments: tuple[str, ...],
     safe_flags: frozenset[str],
     value_options: frozenset[str],
+    *,
+    validate_values: bool = True,
 ) -> tuple[str, ...] | None:
     operands: list[str] = []
     index = 0
@@ -210,7 +301,9 @@ def _operands(
         if argument in value_options:
             if index + 1 >= len(arguments):
                 return None
-            if not _is_safe_option_value(argument, arguments[index + 1]):
+            if validate_values and not _is_safe_option_value(
+                argument, arguments[index + 1]
+            ):
                 return None
             index += 2
             continue
@@ -224,7 +317,7 @@ def _operands(
         )
         if attached_option is not None:
             value = argument[len(attached_option) :]
-            if not _is_safe_option_value(attached_option, value):
+            if validate_values and not _is_safe_option_value(attached_option, value):
                 return None
             index += 1
             continue
@@ -239,6 +332,56 @@ def _operands(
         options_done = True
         index += 1
     return tuple(operands)
+
+
+def _ssh_options_disable_remote_command(arguments: tuple[str, ...]) -> bool:
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--" or not argument.startswith("-"):
+            return False
+        if argument in _SSH_ALL_VALUE_OPTIONS:
+            if index + 1 >= len(arguments):
+                return True
+            if argument in _SSH_NO_REMOTE_VALUE_OPTIONS:
+                return True
+            if argument == "-o" and _ssh_config_disables_remote_command(
+                arguments[index + 1]
+            ):
+                return True
+            index += 2
+            continue
+        attached_option = next(
+            (
+                option
+                for option in _SSH_ALL_VALUE_OPTIONS
+                if len(option) == 2 and argument.startswith(option)
+            ),
+            None,
+        )
+        if attached_option is not None:
+            value = argument[len(attached_option) :]
+            if attached_option in _SSH_NO_REMOTE_VALUE_OPTIONS:
+                return True
+            if attached_option == "-o" and _ssh_config_disables_remote_command(value):
+                return True
+            index += 1
+            continue
+        if argument in _SSH_NO_REMOTE_FLAGS or any(
+            f"-{flag}" in _SSH_NO_REMOTE_FLAGS for flag in argument[1:]
+        ):
+            return True
+        index += 1
+    return True
+
+
+def _ssh_config_disables_remote_command(value: str) -> bool:
+    cleaned = clean_token(value)
+    if "=" in cleaned:
+        name, raw_value = cleaned.split("=", 1)
+    else:
+        name, _, raw_value = cleaned.partition(" ")
+    return name.casefold() == "sessiontype" and raw_value.strip().casefold() == "none"
 
 
 def _is_safe_flag_bundle(argument: str, safe_flags: frozenset[str]) -> bool:
