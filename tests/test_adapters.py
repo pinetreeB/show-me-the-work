@@ -102,6 +102,50 @@ def test_posttool_records_nested_shell_verification(tmp_path: Path) -> None:
     assert ledger["verification_results"][0]["evidence"] == "10 passed"
 
 
+def test_fake_output_verification_cannot_unlock_changed_claude_turn(
+    tmp_path: Path,
+) -> None:
+    run_hook(
+        "user_prompt_submit.py",
+        {"cwd": str(tmp_path), "prompt": "app.py 함수 이름을 바꿔줘", "session_id": "s1"},
+    )
+    _ = (tmp_path / "app.py").write_text("changed", encoding="utf-8")
+    run_hook(
+        "post_tool_use.py",
+        {
+            "cwd": str(tmp_path),
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "app.py"},
+            "tool_response": {"filePath": "app.py"},
+            "session_id": "s1",
+            "tool_use_id": "edit-1",
+        },
+    )
+    fake_result = run_hook(
+        "post_tool_use.py",
+        {
+            "cwd": str(tmp_path),
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo pytest"},
+            "tool_response": {"exit_code": 0, "stdout": "pytest"},
+            "session_id": "s1",
+            "tool_use_id": "fake-verify",
+        },
+    )
+
+    blocked = run_hook(
+        "stop.py",
+        {"cwd": str(tmp_path), "session_id": "s1", "stop_hook_active": False},
+    )
+    ledger = json.loads(
+        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+    )
+
+    assert "recorded verification" not in str(fake_result.get("systemMessage", ""))
+    assert ledger["verification_results"] == []
+    assert blocked["decision"] == "block"
+
+
 def test_goals_nudge_and_n2_pretool_gate_use_persisted_prompt_state(tmp_path: Path) -> None:
     prompt_result = run_hook(
         "user_prompt_submit.py",

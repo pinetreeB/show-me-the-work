@@ -1,18 +1,29 @@
 from __future__ import annotations
 
+import ast
 import re
+import shlex
+from typing import Final
 
-# 검증 명령으로 인정하는 신호. claude_code·codex_cli·antigravity 3개 어댑터가 공유한다
-# (v1 릴리스 심사 H1/H2/H3 — 한쪽 어댑터에서만 고쳐지고 다른 쪽엔 이식 안 되는 회귀를
-# core로 이전해 구조적으로 막는다). python -c "assert ..." 한 줄 검증(E1b F4)·
-# 스크립트 재실행(E1c F1)·bash·PowerShell·컴파일 언어 빌드/테스트 러너(v1 릴리스 심사 H3)를 포함한다.
-TEST_TERMS = (
-    "pytest", "python -m pytest", "python -c", "python3 -c", "unittest",
-    "npm test", "npm run test", "yarn test", "pnpm test", "jest", "vitest",
-    "go test", "cargo test", "node --test", "node:test", "deno test", "rspec", "phpunit",
-    "make test", "make check", "ctest", "mvn test", "gradle test", "gradlew test",
-    "dotnet test", "tox", "rake test", "invoke-pester",
+COMMAND_SEPARATORS: Final = frozenset({"&&", "||", ";", "|", "&"})
+OUTPUT_ONLY_COMMANDS: Final = frozenset(
+    {"echo", "printf", "write-output", "write-host", "out-string"}
 )
+DIRECT_TEST_RUNNERS: Final = frozenset(
+    {
+        "pytest",
+        "unittest",
+        "jest",
+        "vitest",
+        "rspec",
+        "phpunit",
+        "ctest",
+        "tox",
+        "invoke-pester",
+        "node:test",
+    }
+)
+SHELL_WRAPPERS: Final = frozenset({"bash", "sh", "zsh", "pwsh", "powershell"})
 
 # 스크립트 재실행 패턴(E1c F1에서 관측: `python demo.py`로 수정 전후 검증했는데 미인식).
 # 인터프리터 + 스크립트파일. bash/sh/zsh 추가(H3 — 이 프로젝트가 직접 감시하는
@@ -39,12 +50,124 @@ OK_WORD_RE = re.compile(r"\bok\b", re.IGNORECASE)
 
 def is_verification_command(command: str) -> bool:
     """이 셸 명령이 검증(테스트/빌드확인) 명령으로 인정되는지 판정한다."""
-    lowered = command.lower()
-    if any(term in lowered for term in TEST_TERMS):
-        return True
-    if any(term in lowered for term in NON_VERIFY_TERMS):
+    return any(_is_verification_invocation(tokens) for tokens in _command_segments(command))
+
+
+def _command_segments(command: str) -> tuple[tuple[str, ...], ...]:
+    try:
+        lexer = shlex.shlex(command, posix=False, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        tokens = tuple(_clean_token(token) for token in lexer if token)
+    except ValueError:
+        return ()
+    segments: list[tuple[str, ...]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in COMMAND_SEPARATORS:
+            if current:
+                segments.append(tuple(current))
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(tuple(current))
+    return tuple(segments)
+
+
+def _is_verification_invocation(tokens: tuple[str, ...]) -> bool:
+    tokens = _without_environment_assignments(tokens)
+    if not tokens:
         return False
-    return bool(TEST_SCRIPT_RE.search(command))
+    command = _command_name(tokens[0])
+    arguments = tokens[1:]
+    if command in OUTPUT_ONLY_COMMANDS:
+        return False
+    if command in SHELL_WRAPPERS and arguments and arguments[0].casefold() in {"-c", "-command"}:
+        return len(arguments) > 1 and is_verification_command(arguments[1])
+    if command == "env":
+        return _is_verification_invocation(_without_environment_assignments(arguments))
+    if command == "uv" and arguments[:1] == ("run",):
+        return _is_verification_invocation(arguments[1:])
+    if command in {"python", "python3"}:
+        return _is_python_verification(arguments)
+    if command in DIRECT_TEST_RUNNERS:
+        return True
+    if command in {"npm", "yarn", "pnpm"}:
+        return _is_package_test(arguments)
+    if command in {"go", "cargo", "dotnet", "mvn", "gradle", "gradlew", "rake"}:
+        if bool(arguments) and arguments[0].casefold() == "test":
+            return True
+        return command == "go" and _is_script_reexecution(tokens)
+    if command == "make":
+        return bool(arguments) and arguments[0].casefold() in {"test", "check"}
+    if command == "node" and arguments and arguments[0].casefold() in {"--test", "node:test"}:
+        return True
+    if command == "deno" and arguments and arguments[0].casefold() == "test":
+        return True
+    return _is_script_reexecution(tokens)
+
+
+def _is_python_verification(arguments: tuple[str, ...]) -> bool:
+    if len(arguments) >= 2 and arguments[0] == "-m":
+        return arguments[1].casefold() in {"pytest", "unittest"}
+    if len(arguments) >= 2 and arguments[0] == "-c":
+        return _inline_python_has_assertion(arguments[1])
+    return _is_script_reexecution(("python", *arguments))
+
+
+def _inline_python_has_assertion(source: str) -> bool:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    return any(
+        isinstance(node, ast.Assert)
+        or isinstance(node, ast.Call)
+        and _call_name(node.func) in {"pytest.main", "unittest.main"}
+        for node in ast.walk(tree)
+    )
+
+
+def _call_name(node: ast.expr) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _call_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    return ""
+
+
+def _is_package_test(arguments: tuple[str, ...]) -> bool:
+    lowered = tuple(argument.casefold() for argument in arguments)
+    return lowered[:1] == ("test",) or lowered[:2] == ("run", "test")
+
+
+def _is_script_reexecution(tokens: tuple[str, ...]) -> bool:
+    command_text = " ".join(tokens)
+    if any(term in command_text.casefold() for term in NON_VERIFY_TERMS):
+        return False
+    return bool(TEST_SCRIPT_RE.search(command_text))
+
+
+def _command_name(token: str) -> str:
+    name = _clean_token(token).replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    for suffix in (".exe", ".cmd", ".bat"):
+        name = name.removesuffix(suffix)
+    return name
+
+
+def _clean_token(token: str) -> str:
+    return token.strip("\"'")
+
+
+def _without_environment_assignments(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    index = 0
+    while index < len(tokens) and re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[index]
+    ):
+        index += 1
+    return tokens[index:]
 
 
 def text_indicates_success(text: str) -> bool:
