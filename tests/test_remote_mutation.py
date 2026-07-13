@@ -32,6 +32,16 @@ def test_remote_commands_with_identity_and_attached_port_options_stay_remote_onl
     )
 
 
+def test_remote_commands_with_combined_safe_flags_stay_remote_only() -> None:
+    commands = (
+        'ssh -qT deploy@example.com "touch remote-marker"',
+        "scp -pr dist deploy@example.com:/srv/app/",
+    )
+
+    for command in commands:
+        assert is_remote_only_mutation_command(command) is True, command
+
+
 def test_remote_commands_with_local_or_mixed_effects_are_not_remote_only() -> None:
     commands = (
         "ssh deploy@example.com uptime > local.log",

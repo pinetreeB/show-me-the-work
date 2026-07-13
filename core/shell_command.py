@@ -176,7 +176,9 @@ def _operands(
             index += 1
             continue
         if argument.startswith("-"):
-            if argument not in safe_flags:
+            if argument not in safe_flags and not _is_safe_flag_bundle(
+                argument, safe_flags
+            ):
                 return None
             index += 1
             continue
@@ -184,6 +186,12 @@ def _operands(
         options_done = True
         index += 1
     return tuple(operands)
+
+
+def _is_safe_flag_bundle(argument: str, safe_flags: frozenset[str]) -> bool:
+    return len(argument) > 2 and all(
+        f"-{flag}" in safe_flags for flag in argument[1:]
+    )
 
 
 def _is_safe_ssh_config(value: str) -> bool:
