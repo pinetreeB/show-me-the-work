@@ -222,19 +222,37 @@ def test_first_new_change_invalidates_v1_seq_less_verification(tmp_path: Path) -
     assert result["decision"] == "block"
 
 
-def test_stop_gate_preserves_existing_verification_exemptions(
+def test_quick_mode_requires_verification_for_non_document_changes(
     tmp_path: Path,
 ) -> None:
-    cases = (("quick", "quick", "app.py", "code"), ("docs-only", "deep", "README.md", "docs"))
-    for case_name, mode, path, kind in cases:
-        # Given: an isolated unverified change covered by an existing exemption.
+    # Given: a quick turn made a code change without running verification.
+    _record_prompt(tmp_path, "quick")
+    _record_change(tmp_path, "app.py", "code")
+
+    # When: completion is evaluated.
+    result = evaluate_stop({"project_root": str(tmp_path)})
+
+    # Then: task mode cannot exempt a non-document change from verification.
+    assert result["decision"] == "block"
+
+
+def test_quick_mode_keeps_no_change_docs_only_and_fresh_verification_paths(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        ("no-change", None, None, False, "allow"),
+        ("docs-only", "README.md", "docs", False, "allow"),
+        ("verified-code", "app.py", "code", True, "allow"),
+    )
+    for case_name, path, kind, verified, expected in cases:
         case_root = tmp_path / case_name
         case_root.mkdir()
-        _record_prompt(case_root, mode)
-        _record_change(case_root, path, kind)
+        _record_prompt(case_root, "quick")
+        if path is not None and kind is not None:
+            _record_change(case_root, path, kind)
+        if verified:
+            _record_verification(case_root)
 
-        # When: completion is evaluated.
         result = evaluate_stop({"project_root": str(case_root)})
 
-        # Then: quick and docs-only behavior remains allowed.
-        assert result["decision"] == "allow", case_name
+        assert result["decision"] == expected, case_name

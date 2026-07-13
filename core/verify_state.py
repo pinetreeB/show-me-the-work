@@ -160,8 +160,6 @@ def evaluate_without_io(
 ) -> Decision:
     turn = active_turn(ledger, payload)
     state: Mapping[str, JsonValue] = turn if turn is not None else ledger
-    mode_value = payload.get("task_mode") or state.get("task_mode")
-    mode = mode_value if isinstance(mode_value, str) else "quick"
     changed = bool(_as_str_list(state.get("changed_files_seen")))
     verified = has_successful_verification(ledger, payload)
 
@@ -197,7 +195,7 @@ def evaluate_without_io(
                 ),
             }
 
-    if mode == "quick" or _docs_only(state) or not changed or verified:
+    if _docs_only(state) or not changed or verified:
         return {"decision": "allow", "message": "[smtw] Stop gate allow."}
 
     return {
