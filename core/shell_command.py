@@ -26,17 +26,14 @@ _SSH_SAFE_FLAGS: Final = frozenset(
         "-t",
         "-v",
         "-x",
-        "-y",
     }
 )
 _SSH_VALUE_OPTIONS: Final = frozenset(
     {
         "-B",
         "-D",
-        "-I",
         "-J",
         "-L",
-        "-P",
         "-R",
         "-b",
         "-c",
@@ -201,7 +198,7 @@ def _operands(
         if argument in value_options:
             if index + 1 >= len(arguments):
                 return None
-            if argument == "-o" and not _is_safe_ssh_config(arguments[index + 1]):
+            if not _is_safe_option_value(argument, arguments[index + 1]):
                 return None
             index += 2
             continue
@@ -215,7 +212,7 @@ def _operands(
         )
         if attached_option is not None:
             value = argument[len(attached_option) :]
-            if attached_option == "-o" and not _is_safe_ssh_config(value):
+            if not _is_safe_option_value(attached_option, value):
                 return None
             index += 1
             continue
@@ -235,6 +232,36 @@ def _operands(
 def _is_safe_flag_bundle(argument: str, safe_flags: frozenset[str]) -> bool:
     return len(argument) > 2 and all(
         f"-{flag}" in safe_flags for flag in argument[1:]
+    )
+
+
+def _is_safe_option_value(option: str, value: str) -> bool:
+    if option == "-o":
+        return _is_safe_ssh_config(value)
+    if option == "-L":
+        return _is_tcp_local_forward(value)
+    return True
+
+
+def _is_tcp_local_forward(value: str) -> bool:
+    cleaned = clean_token(value)
+    if cleaned.startswith("["):
+        closing = cleaned.find("]:")
+        if closing < 0:
+            return False
+        port, separator, _ = cleaned[closing + 2 :].partition(":")
+        return bool(separator and port.isdigit())
+    first, separator, remainder = cleaned.partition(":")
+    if not separator:
+        return False
+    if first.isdigit():
+        return True
+    second, separator, _ = remainder.partition(":")
+    return bool(
+        separator
+        and second.isdigit()
+        and "/" not in first
+        and "\\" not in first
     )
 
 
