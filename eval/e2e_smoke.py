@@ -128,6 +128,13 @@ def main() -> int:
         check(f"AC9 fail-open [{script}]", ok, f"(rc={proc.returncode})")
 
     # 발견A 회귀: Stop allow 경로는 additionalContext를 채우지 않는다 (반복 재호출 유발 방지)
+    _ = run_hook("pre_tool_use.py", {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": proj,
+                                     "tool_use_id": "allow-shape-verification",
+                                     "tool_input": {"command": "python -m pytest"}})
+    _ = run_hook("post_tool_use.py", {"hook_event_name": "PostToolUse", "tool_name": "Bash", "cwd": proj,
+                                      "tool_use_id": "allow-shape-verification",
+                                      "tool_input": {"command": "python -m pytest"},
+                                      "tool_response": {"stdout": "3 passed", "exit_code": 0}})
     tp_ok2 = make_transcript(proj, "가설 1: A\n가설 2: B\n가설 3: C\n증거: x.py:1 관측\n기각: 가설 2 — 반증됨")
     r = run_hook("stop.py", {"hook_event_name": "Stop", "cwd": proj, "transcript_path": tp_ok2, "stop_hook_active": True})
     hso = r.get("hookSpecificOutput", {})
