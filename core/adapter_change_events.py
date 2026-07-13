@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from .ledger import JsonObject, JsonValue, classify_change_kind, record_event
+from .ledger import JsonObject, classify_change_kind, record_event
 from .provenance_lifecycle_types import ObservedChange
 
 
