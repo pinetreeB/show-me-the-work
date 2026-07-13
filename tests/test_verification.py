@@ -72,10 +72,21 @@ def test_real_test_runners_and_explicit_inline_assertions_remain_verification() 
         "python verify_script.py",
         'python3 -c "assert True"',
         '"C:\\Python312\\python.exe" -m pytest "tests\\unit tests"',
+        'ssh deploy@example.com "python -m pytest tests/"',
     )
 
     for command in commands:
         assert is_verification_command(command) is True, command
+
+
+def test_remote_output_only_command_is_not_promoted_to_verification() -> None:
+    assert is_verification_command('ssh deploy@example.com "echo pytest"') is False
+    assert (
+        is_verification_command(
+            'ssh deploy@example.com "touch marker && python -m pytest"'
+        )
+        is False
+    )
 
 
 def test_text_indicates_success_conservative_fallback() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .provenance_types import ChangeOperation, NetDelta, Snapshot
+from .provenance_types import ChangeOperation, NetDelta, ProvenanceStatus, Snapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +55,8 @@ class ObservationResult:
     rebase_count: int
     clean_claim: bool
     stop_cap_reserved: bool
+    status: ProvenanceStatus = ProvenanceStatus.COMPLETE
+    status_reason: str = ""
 
 
 class LifecycleState:

@@ -9,7 +9,13 @@ import tempfile
 from typing import TypeAlias, override
 from uuid import uuid4
 
-from .provenance_types import EntryKind, ManifestEntry, ScanIssue, Snapshot
+from .provenance_types import (
+    EntryKind,
+    ManifestEntry,
+    ProvenanceStatus,
+    ScanIssue,
+    Snapshot,
+)
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -128,6 +134,8 @@ def _to_value(snapshot: Snapshot) -> dict[str, JsonValue]:
         "is_casefolded": snapshot.is_casefolded,
         "platform": snapshot.platform,
         "full_reconciled_at": snapshot.full_reconciled_at,
+        "status": snapshot.status.value,
+        "status_reason": snapshot.status_reason,
     }
 
 
@@ -161,6 +169,8 @@ def _from_value(path: Path, value: JsonValue) -> Snapshot:
         is_casefolded=_boolean(path, value.get("is_casefolded"), "is_casefolded"),
         platform=_string(path, value.get("platform"), "platform"),
         full_reconciled_at=_optional_string(path, value.get("full_reconciled_at"), "full_reconciled_at"),
+        status=_status(path, value.get("status"), issues),
+        status_reason=_optional_string(path, value.get("status_reason"), "status_reason") or "",
     )
 
 
@@ -236,3 +246,17 @@ def _boolean(path: Path, value: JsonValue | None, field: str) -> bool:
     if not isinstance(value, bool):
         raise SnapshotStoreError(path, f"{field} must be a boolean")
     return value
+
+
+def _status(
+    path: Path,
+    value: JsonValue | None,
+    issues: tuple[ScanIssue, ...],
+) -> ProvenanceStatus:
+    if value is None:
+        return ProvenanceStatus.INCOMPLETE if issues else ProvenanceStatus.COMPLETE
+    raw = _string(path, value, "status")
+    try:
+        return ProvenanceStatus(raw)
+    except ValueError as exc:
+        raise SnapshotStoreError(path, "status is invalid") from exc

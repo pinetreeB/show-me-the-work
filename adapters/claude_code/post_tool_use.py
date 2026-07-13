@@ -19,7 +19,6 @@ def main() -> int:
         from adapters.claude_code.common import (
             canonical_invocation,
             emit,
-            fail_open,
             project_root,
             read_payload,
             tool_command,
@@ -32,6 +31,7 @@ def main() -> int:
         from core.classify import classify_prompt
         from core.contract import EDIT_TOOLS, SHELL_TOOLS
         from core.ledger import JsonObject, load_ledger, record_event
+        from core.provenance_types import ProvenanceStatus
         from core.scope_guard import evaluate_scope
         from core.verification import is_verification_command
 
@@ -52,6 +52,26 @@ def main() -> int:
             invocation = resolve_active_invocation(Path(root), invocation)
             observation = observe_post_tool(Path(root), invocation)
             verification_command = family == "shell" and is_verification_command(command)
+            if verification_command:
+                covers = verification_covers(Path(root), invocation)
+                verification: JsonObject = {
+                    "project_root": root,
+                    "event": "verification",
+                    "host": invocation.host,
+                    "agent": invocation.agent,
+                    "session_id": invocation.session_id,
+                    "turn_id": invocation.turn_id,
+                    "invocation_id": invocation.invocation_id,
+                    "command": command,
+                    "success": invocation.success,
+                    "evidence": invocation.evidence,
+                }
+                if covers is not None:
+                    verification["covers"] = covers
+                record_event(verification)
+                return emit({"systemMessage": "[smtw] 원장: 검증 기록 / recorded verification."})
+            if observation.status is ProvenanceStatus.SCOPE_TOO_LARGE:
+                return emit({})
             if observation.incomplete and not verification_command:
                 return emit({"systemMessage": "[smtw] provenance incomplete; fail-open observation."})
             paths = list(observation.changed_paths)
@@ -90,26 +110,6 @@ def main() -> int:
                 )
             if family == "edit":
                 return emit({"systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
-            if verification_command:
-                covers = verification_covers(Path(root), invocation)
-                verification: JsonObject = {
-                    "project_root": root,
-                    "event": "verification",
-                    "host": invocation.host,
-                    "agent": invocation.agent,
-                    "session_id": invocation.session_id,
-                    "turn_id": invocation.turn_id,
-                    "invocation_id": invocation.invocation_id,
-                    "command": command,
-                    "success": invocation.success,
-                    "evidence": invocation.evidence,
-                }
-                if covers is not None:
-                    verification["covers"] = covers
-                record_event(
-                    verification
-                )
-                return emit({"systemMessage": "[smtw] 원장: 검증 기록 / recorded verification."})
             return emit({"systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
         return emit({})
     except Exception as exc:  # noqa: BLE001

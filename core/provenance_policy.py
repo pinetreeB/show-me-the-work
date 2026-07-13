@@ -77,7 +77,7 @@ def is_path_in_scope(path: str, config: ProvenanceConfig) -> bool:
         return True
     if _matches_any(path, config.exclude):
         return False
-    return _first_segment(path) not in SOFT_EXCLUDE_DIRS
+    return not _has_soft_excluded_segment(path)
 
 
 def is_hard_excluded(path: str) -> bool:
@@ -90,7 +90,7 @@ def should_descend(path: str, config: ProvenanceConfig) -> bool:
         return False
     if _matches_any(path, config.include):
         return True
-    if _matches_any(path, config.exclude) or _first_segment(path) in SOFT_EXCLUDE_DIRS:
+    if _matches_any(path, config.exclude) or _has_soft_excluded_segment(path):
         return _has_included_descendant(path, config.include)
     return True
 
@@ -117,6 +117,10 @@ def _matches_any(path: str, patterns: tuple[str, ...]) -> bool:
 
 def _first_segment(path: str) -> str:
     return path.partition("/")[0]
+
+
+def _has_soft_excluded_segment(path: str) -> bool:
+    return any(segment in SOFT_EXCLUDE_DIRS for segment in path.split("/"))
 
 
 def _matches(path: str, pattern: str) -> bool:

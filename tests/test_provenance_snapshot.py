@@ -17,7 +17,9 @@ from core.provenance import (
     Snapshot,
     calculate_net_delta,
     snapshot_workspace,
+    snapshot_workspace_with_options,
 )
+from core.provenance_types import ProvenanceStatus, ScanBudget, SnapshotScanOptions
 
 
 def _entries(snapshot: Snapshot) -> Mapping[str, ManifestEntry]:
@@ -167,6 +169,77 @@ def test_snapshot_hashes_large_file_in_chunks(tmp_path: Path) -> None:
     expected = hashlib.blake2b(payload, digest_size=32).hexdigest()
     assert entry.size == len(payload)
     assert entry.digest == f"blake2b-256:{expected}"
+
+
+def test_snapshot_entry_budget_returns_scope_too_large_before_hashing(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "one.txt", "1")
+    _write(tmp_path / "two.txt", "2")
+    options = SnapshotScanOptions(
+        budget=ScanBudget(max_entries=1, max_bytes=1024, max_seconds=8.0)
+    )
+
+    with patch("core.provenance.capture_regular_many") as capture_many:
+        snapshot = snapshot_workspace_with_options(tmp_path, options)
+
+    assert snapshot.status is ProvenanceStatus.SCOPE_TOO_LARGE
+    assert snapshot.status_reason == "entry_limit"
+    assert snapshot.incomplete is False
+    assert snapshot.entries == ()
+    capture_many.assert_not_called()
+
+
+def test_snapshot_byte_and_deadline_budgets_return_explicit_scope_status(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "payload.bin", "xx")
+    byte_limited = snapshot_workspace_with_options(
+        tmp_path,
+        SnapshotScanOptions(
+            budget=ScanBudget(max_entries=10, max_bytes=1, max_seconds=8.0)
+        ),
+    )
+    deadline_limited = snapshot_workspace_with_options(
+        tmp_path,
+        SnapshotScanOptions(
+            budget=ScanBudget(max_entries=10, max_bytes=1024, max_seconds=0.0)
+        ),
+    )
+
+    assert byte_limited.status is ProvenanceStatus.SCOPE_TOO_LARGE
+    assert byte_limited.status_reason == "byte_limit"
+    assert deadline_limited.status is ProvenanceStatus.SCOPE_TOO_LARGE
+    assert deadline_limited.status_reason == "deadline"
+
+
+def test_snapshot_budget_boundaries_are_inclusive(tmp_path: Path) -> None:
+    _write(tmp_path / "one.txt", "1")
+    _write(tmp_path / "two.txt", "2")
+
+    snapshot = snapshot_workspace_with_options(
+        tmp_path,
+        SnapshotScanOptions(
+            budget=ScanBudget(max_entries=2, max_bytes=2, max_seconds=8.0)
+        ),
+    )
+
+    assert snapshot.status is ProvenanceStatus.COMPLETE
+    assert {entry.path for entry in snapshot.entries} == {"one.txt", "two.txt"}
+
+
+def test_regular_capture_stops_hashing_when_deadline_expires(tmp_path: Path) -> None:
+    path = tmp_path / "large.bin"
+    path.write_bytes(b"x" * (HASH_CHUNK_BYTES + 1))
+    metadata = path.stat()
+    request = capture.CaptureRequest(path, "large.bin", "large.bin", metadata)
+
+    with patch("core.provenance_capture.time.monotonic", side_effect=(1.0, 6.0)):
+        captured = capture.capture_regular(request, deadline=5.0)
+
+    assert captured.entry is None
+    assert captured.issue is None
+    assert captured.status_reason == "deadline"
 
 
 def test_directory_symlink_loop_is_recorded_without_traversal(tmp_path: Path) -> None:

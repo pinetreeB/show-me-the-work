@@ -146,6 +146,177 @@ def test_fake_output_verification_cannot_unlock_changed_claude_turn(
     assert blocked["decision"] == "block"
 
 
+def test_verified_remote_only_turn_recovers_without_local_provenance_claim(
+    tmp_path: Path,
+) -> None:
+    run_hook(
+        "user_prompt_submit.py",
+        {"cwd": str(tmp_path), "prompt": "원격 서비스 설정을 갱신해줘", "session_id": "s1"},
+    )
+    remote_command = 'ssh deploy@example.com "touch remote-marker"'
+    remote_payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {"command": remote_command},
+        "session_id": "s1",
+        "tool_use_id": "remote-change",
+    }
+    run_hook("pre_tool_use.py", remote_payload)
+    run_hook(
+        "post_tool_use.py",
+        {
+            **remote_payload,
+            "tool_response": {"exit_code": 0, "stdout": "updated"},
+        },
+    )
+
+    unverified = run_hook(
+        "stop.py",
+        {"cwd": str(tmp_path), "session_id": "s1", "stop_hook_active": False},
+    )
+    assert unverified["decision"] == "block"
+
+    verify_command = 'ssh deploy@example.com "python -m pytest tests/"'
+    verify_payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {"command": verify_command},
+        "session_id": "s1",
+        "tool_use_id": "remote-verify",
+    }
+    run_hook("pre_tool_use.py", verify_payload)
+    run_hook(
+        "post_tool_use.py",
+        {
+            **verify_payload,
+            "tool_response": {"exit_code": 0, "stdout": "1 passed"},
+        },
+    )
+
+    verified = run_hook(
+        "stop.py",
+        {"cwd": str(tmp_path), "session_id": "s1", "stop_hook_active": False},
+    )
+
+    assert verified.get("decision") != "block"
+
+
+def test_scope_too_large_turn_still_tracks_and_verifies_remote_mutation(
+    tmp_path: Path,
+) -> None:
+    from core.provenance_types import DEFAULT_MAX_SCAN_BYTES
+
+    with (tmp_path / "oversized.bin").open("wb") as handle:
+        handle.truncate(DEFAULT_MAX_SCAN_BYTES + 1)
+    run_hook(
+        "user_prompt_submit.py",
+        {"cwd": str(tmp_path), "prompt": "원격 서비스를 갱신해줘", "session_id": "s1"},
+    )
+    remote_command = 'ssh deploy@example.com "touch remote-marker"'
+    remote_payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {"command": remote_command},
+        "session_id": "s1",
+        "tool_use_id": "remote-change",
+    }
+    run_hook("pre_tool_use.py", remote_payload)
+    remote_result_payload: HookPayload = {
+        **remote_payload,
+        "tool_response": {"exit_code": 0, "stdout": "updated"},
+    }
+    run_hook("post_tool_use.py", remote_result_payload)
+
+    ledger_path = tmp_path / ".fable-lite" / "ledger.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    turn = object_value(object_value(ledger["active_turns"])["claude_code:s1:claude"])
+    assert isinstance(turn.get("last_remote_mutation_seq"), int)
+
+    verify_command = 'ssh deploy@example.com "python -m pytest tests/"'
+    verify_payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {"command": verify_command},
+        "session_id": "s1",
+        "tool_use_id": "remote-verify",
+    }
+    run_hook("pre_tool_use.py", verify_payload)
+    verify_result_payload: HookPayload = {
+        **verify_payload,
+        "tool_response": {"exit_code": 0, "stdout": "1 passed"},
+    }
+    result = run_hook("post_tool_use.py", verify_result_payload)
+    stopped = run_hook(
+        "stop.py",
+        {"cwd": str(tmp_path), "session_id": "s1", "stop_hook_active": False},
+    )
+
+    assert "recorded verification" in str(result.get("systemMessage", ""))
+    assert stopped.get("decision") != "block"
+
+
+def test_scope_too_large_verification_freezes_remote_epoch_at_pretool(
+    tmp_path: Path,
+) -> None:
+    from core.provenance_types import DEFAULT_MAX_SCAN_BYTES
+
+    with (tmp_path / "oversized.bin").open("wb") as handle:
+        handle.truncate(DEFAULT_MAX_SCAN_BYTES + 1)
+    _ = run_hook(
+        "user_prompt_submit.py",
+        {"cwd": str(tmp_path), "prompt": "원격 서비스를 검증해줘", "session_id": "s1"},
+    )
+
+    first_remote: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {"command": 'ssh deploy@example.com "touch first"'},
+        "session_id": "s1",
+        "tool_use_id": "remote-first",
+    }
+    _ = run_hook("pre_tool_use.py", first_remote)
+    first_result: HookPayload = {
+        **first_remote,
+        "tool_response": {"exit_code": 0, "stdout": "updated"},
+    }
+    _ = run_hook("post_tool_use.py", first_result)
+
+    verify: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {"command": 'ssh deploy@example.com "python -m pytest tests/"'},
+        "session_id": "s1",
+        "tool_use_id": "remote-verify",
+    }
+    _ = run_hook("pre_tool_use.py", verify)
+
+    second_remote: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {"command": 'ssh deploy@example.com "touch second"'},
+        "session_id": "s1",
+        "tool_use_id": "remote-second",
+    }
+    _ = run_hook("pre_tool_use.py", second_remote)
+    second_result: HookPayload = {
+        **second_remote,
+        "tool_response": {"exit_code": 0, "stdout": "updated"},
+    }
+    _ = run_hook("post_tool_use.py", second_result)
+
+    verify_result: HookPayload = {
+        **verify,
+        "tool_response": {"exit_code": 0, "stdout": "1 passed"},
+    }
+    _ = run_hook("post_tool_use.py", verify_result)
+    stopped = run_hook(
+        "stop.py",
+        {"cwd": str(tmp_path), "session_id": "s1", "stop_hook_active": False},
+    )
+
+    assert stopped["decision"] == "block"
+
+
 def test_goals_nudge_and_n2_pretool_gate_use_persisted_prompt_state(tmp_path: Path) -> None:
     prompt_result = run_hook(
         "user_prompt_submit.py",
@@ -301,10 +472,12 @@ def test_tool_success_falls_back_to_stdout_when_exit_code_missing() -> None:
     # stdout 텍스트로 보수적 폴백해야 진짜 통과한 검증이 게이트에 보인다.
     from adapters.claude_code.common import tool_success
 
-    passed = {"tool_response": {"stdout": "3 passed in 0.02s"}}
-    failed = {"tool_response": {"stdout": "1 failed, 2 passed\nFAILED test_x"}}
-    empty = {"tool_response": {"stdout": ""}}
-    explicit_false = {"tool_response": {"success": False, "stdout": "3 passed"}}
+    passed: HookPayload = {"tool_response": {"stdout": "3 passed in 0.02s"}}
+    failed: HookPayload = {"tool_response": {"stdout": "1 failed, 2 passed\nFAILED test_x"}}
+    empty: HookPayload = {"tool_response": {"stdout": ""}}
+    explicit_false: HookPayload = {
+        "tool_response": {"success": False, "stdout": "3 passed"}
+    }
 
     assert tool_success(passed) is True
     assert tool_success(failed) is False       # 실패 신호 우선

@@ -7,9 +7,16 @@ import os
 from pathlib import Path
 
 from .provenance_policy import canonical_manifest_key
-from .provenance_types import ManifestEntry, ProvenanceConfig, ScanIssue, ScanResult, Snapshot
+from .provenance_types import (
+    ManifestEntry,
+    ProvenanceConfig,
+    ProvenanceStatus,
+    ScanIssue,
+    ScanResult,
+    Snapshot,
+)
 
-SCANNER_SCHEMA_VERSION = 1
+SCANNER_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +42,11 @@ def build_snapshot(context: SnapshotBuildContext, result: ScanResult) -> Snapsho
     issues = result.issues + tuple(
         ScanIssue(path, "casefold_collision") for path in sorted(collisions.values())
     )
+    status = (
+        ProvenanceStatus.INCOMPLETE
+        if issues and result.status is ProvenanceStatus.COMPLETE
+        else result.status
+    )
     observations = tuple(sorted(result.reparse_observations, key=lambda entry: entry.canonical_key))
     return Snapshot(
         root=context.root,
@@ -46,6 +58,8 @@ def build_snapshot(context: SnapshotBuildContext, result: ScanResult) -> Snapsho
         generated_patterns=context.config.generated,
         is_casefolded=context.windows,
         platform=context.platform,
+        status=status,
+        status_reason=result.status_reason,
     )
 
 
