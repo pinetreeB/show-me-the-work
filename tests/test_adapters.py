@@ -146,7 +146,7 @@ def test_fake_output_verification_cannot_unlock_changed_claude_turn(
     assert blocked["decision"] == "block"
 
 
-def test_verified_remote_only_turn_recovers_without_local_provenance_claim(
+def test_verified_remote_turn_recovers_after_fresh_remote_evidence(
     tmp_path: Path,
 ) -> None:
     run_hook(
@@ -245,6 +245,48 @@ def test_docs_only_local_change_does_not_exempt_unverified_remote_epoch(
     )
 
     # Then: docs-only local state cannot suppress the outstanding remote verification gate.
+    assert stopped.get("decision") == "block"
+
+
+def test_remote_possible_command_records_epoch_while_local_observation_stays_enabled(
+    tmp_path: Path,
+) -> None:
+    run_hook(
+        "user_prompt_submit.py",
+        {"cwd": str(tmp_path), "prompt": "원격 작업을 실행해줘", "session_id": "s1"},
+    )
+    remote_payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": (
+                "ssh -o KexAlgorithms=curve25519-sha256 "
+                'deploy@example.com "touch remote-marker"'
+            )
+        },
+        "session_id": "s1",
+        "tool_use_id": "remote-with-local-observation",
+    }
+    run_hook("pre_tool_use.py", remote_payload)
+    run_hook(
+        "post_tool_use.py",
+        {
+            **remote_payload,
+            "tool_response": {"exit_code": 0, "stdout": "updated"},
+        },
+    )
+    ledger = json.loads(
+        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+    )
+    turn = object_value(object_value(ledger["active_turns"])["claude_code:s1:claude"])
+
+    stopped = run_hook(
+        "stop.py",
+        {"cwd": str(tmp_path), "session_id": "s1", "stop_hook_active": False},
+    )
+
+    assert turn.get("provenance_mutation_capable") is True
+    assert isinstance(turn.get("last_remote_mutation_seq"), int)
     assert stopped.get("decision") == "block"
 
 

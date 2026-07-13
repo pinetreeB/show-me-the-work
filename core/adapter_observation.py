@@ -12,7 +12,7 @@ from .provenance_lifecycle_types import ObservationResult, ObservedChange
 from .provenance_store import SnapshotStoreError
 from .provenance_types import ProvenanceStatus
 from .shell_hints import shell_candidate_paths
-from .shell_command import is_remote_only_mutation_command
+from .shell_command import is_remote_mutation_command
 from .verification import is_verification_command
 from .verification_covers import active_turn
 
@@ -252,7 +252,7 @@ def _record_status(root: Path, invocation: CanonicalInvocation, report: Observat
         payload["provenance_mutation_capable"] = True
     if (
         invocation.success
-        and _remote_only_mutation(invocation)
+        and _remote_mutation(invocation)
         and not is_verification_command(invocation.command_hint)
     ):
         payload["provenance_remote_mutation"] = True
@@ -340,16 +340,13 @@ def _source(invocation: CanonicalInvocation) -> str:
 
 
 def _mutation_capable(invocation: CanonicalInvocation) -> bool:
-    return (
-        invocation.tool_family_hint in OBSERVABLE_FAMILIES
-        and not _remote_only_mutation(invocation)
-    )
+    return invocation.tool_family_hint in OBSERVABLE_FAMILIES
 
 
-def _remote_only_mutation(invocation: CanonicalInvocation) -> bool:
+def _remote_mutation(invocation: CanonicalInvocation) -> bool:
     return (
         invocation.tool_family_hint == "shell"
-        and is_remote_only_mutation_command(invocation.command_hint)
+        and is_remote_mutation_command(invocation.command_hint)
     )
 
 
