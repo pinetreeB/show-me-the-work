@@ -42,6 +42,42 @@ def test_is_verification_command_excludes_non_verify_commands() -> None:
     assert is_verification_command("npm run deploy") is False
 
 
+def test_output_only_and_quoted_runner_names_are_not_verification_commands() -> None:
+    commands = (
+        "echo pytest",
+        'printf "all tests passed"',
+        "Write-Output pytest",
+        'python -c "print(\'ok\')"',
+        "# pytest",
+        'sh -c "echo pytest"',
+    )
+
+    for command in commands:
+        assert is_verification_command(command) is False, command
+
+
+def test_real_test_runners_and_explicit_inline_assertions_remain_verification() -> None:
+    commands = (
+        "python -m pytest tests/",
+        "pytest -q",
+        "npm test",
+        "npm run test",
+        "pnpm test",
+        "go test ./...",
+        "cargo test",
+        "dotnet test",
+        'python -c "assert add(2, 3) == 5"',
+        'python -c "import pytest; raise SystemExit(pytest.main([\'-q\']))"',
+        'python -c "import unittest; unittest.main()"',
+        "python verify_script.py",
+        'python3 -c "assert True"',
+        '"C:\\Python312\\python.exe" -m pytest "tests\\unit tests"',
+    )
+
+    for command in commands:
+        assert is_verification_command(command) is True, command
+
+
 def test_text_indicates_success_conservative_fallback() -> None:
     assert text_indicates_success("3 passed in 0.02s") is True
     assert text_indicates_success("VERIFY_OK") is True
