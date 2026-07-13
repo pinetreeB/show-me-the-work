@@ -6,8 +6,14 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from core.provenance import ScanIssue, Snapshot
+from core.provenance import ScanIssue, Snapshot, snapshot_workspace_with_options
 from core.provenance_lifecycle import ProvenanceLifecycle
+from core.provenance_types import (
+    DEFAULT_MAX_SCAN_BYTES,
+    ProvenanceStatus,
+    ScanBudget,
+    SnapshotScanOptions,
+)
 
 
 def _write(path: Path, content: str) -> None:
@@ -187,3 +193,67 @@ def test_scope_policy_change_forces_turn_start_full_scan(tmp_path: Path) -> None
 
     # Then: metadata reuse is disabled for that turn.
     assert result.full_scan is True
+
+
+def test_scope_too_large_start_returns_explicit_status_without_committing_baseline(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "app.py", "value")
+    oversized = snapshot_workspace_with_options(
+        tmp_path,
+        SnapshotScanOptions(
+            budget=ScanBudget(max_entries=0, max_bytes=1024, max_seconds=8.0)
+        ),
+    )
+    lifecycle = ProvenanceLifecycle(tmp_path)
+
+    with patch.object(lifecycle, "_scan", return_value=oversized):
+        result = lifecycle.start_turn("codex", "turn-large")
+
+    assert result.status is ProvenanceStatus.SCOPE_TOO_LARGE
+    assert result.incomplete is False
+    assert lifecycle.workspace_current_path.exists() is False
+    assert lifecycle.turn_baseline_path("codex", "turn-large").exists() is False
+
+
+def test_scope_too_large_candidate_prime_preserves_current_and_turn_baseline(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "app.py", "stable")
+    lifecycle = ProvenanceLifecycle(tmp_path)
+    started = lifecycle.start_turn("codex", "turn-large")
+    current = lifecycle._state.current
+    assert current is not None
+
+    with (tmp_path / "oversized.bin").open("wb") as handle:
+        handle.truncate(DEFAULT_MAX_SCAN_BYTES + 1)
+    invocation = lifecycle.begin_invocation(
+        "codex",
+        "turn-large",
+        "invoke-large",
+        ("oversized.bin",),
+    )
+
+    assert started.snapshot is not None
+    assert invocation.snapshot_id == started.snapshot.snapshot_id
+    assert lifecycle._state.current == current
+    assert lifecycle._state.turns[("codex", "turn-large")].baseline == current
+
+
+def test_scope_too_large_finish_never_claims_clean(tmp_path: Path) -> None:
+    _write(tmp_path / "app.py", "stable")
+    lifecycle = ProvenanceLifecycle(tmp_path)
+    _ = lifecycle.start_turn("codex", "turn-large")
+    oversized = snapshot_workspace_with_options(
+        tmp_path,
+        SnapshotScanOptions(
+            budget=ScanBudget(max_entries=0, max_bytes=1024, max_seconds=8.0)
+        ),
+    )
+
+    with patch.object(lifecycle, "_scan", return_value=oversized):
+        result = lifecycle.finish_turn("codex", "turn-large")
+
+    assert result.status is ProvenanceStatus.SCOPE_TOO_LARGE
+    assert result.incomplete is False
+    assert result.clean_claim is False

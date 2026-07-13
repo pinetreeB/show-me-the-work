@@ -112,8 +112,17 @@ def _update_turn_after_event(turn: JsonObject, payload: Mapping[str, JsonValue])
     incomplete = payload.get("provenance_incomplete")
     if isinstance(incomplete, bool):
         turn["provenance_incomplete"] = incomplete
+    status = payload.get("provenance_status")
+    if isinstance(status, str) and status:
+        turn["provenance_status"] = status
+    status_reason = payload.get("provenance_status_reason")
+    if isinstance(status_reason, str):
+        turn["provenance_status_reason"] = status_reason
     if payload.get("provenance_mutation_capable") is True:
         turn["provenance_mutation_capable"] = True
+    if payload.get("provenance_remote_mutation") is True:
+        turn["provenance_remote_mutation"] = True
+        turn["last_remote_mutation_seq"] = sequence_value(payload.get("seq"))
     event = payload.get("event")
     if event == "invocation":
         _remember_invocation(turn, payload)

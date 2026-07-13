@@ -8,7 +8,13 @@ from .agent_log import ledger_transaction
 from .provenance import SnapshotScanOptions, snapshot_workspace_with_options
 from .provenance_policy import is_path_in_scope, load_provenance_config
 from .provenance_store import SnapshotStoreError, save_turn_baseline_from_current, save_workspace_current
-from .provenance_types import Snapshot
+from .provenance_types import (
+    DEFAULT_FULL_SCAN_SECONDS,
+    DEFAULT_INCREMENTAL_SCAN_SECONDS,
+    ScanBudget,
+    Snapshot,
+    ProvenanceStatus,
+)
 from .provenance_lifecycle_types import LifecycleState
 
 
@@ -21,7 +27,17 @@ def scan_snapshot(
     forced = forced_paths | persisted_force_paths(root, previous)
     return snapshot_workspace_with_options(
         root,
-        SnapshotScanOptions(previous=None if full_scan else previous, force_paths=forced),
+        SnapshotScanOptions(
+            previous=None if full_scan else previous,
+            force_paths=forced,
+            budget=ScanBudget(
+                max_seconds=(
+                    DEFAULT_FULL_SCAN_SECONDS
+                    if full_scan
+                    else DEFAULT_INCREMENTAL_SCAN_SECONDS
+                )
+            ),
+        ),
     )
 
 
@@ -37,7 +53,7 @@ def prime_candidate_scope(
         return True
     generation = state.generation
     snapshot = scan_snapshot(root, state.current, candidates, False)
-    if snapshot.incomplete:
+    if snapshot.status is not ProvenanceStatus.COMPLETE:
         return False
     with ledger_transaction(str(root)):
         if state.generation != generation:

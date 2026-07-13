@@ -29,7 +29,7 @@ from .provenance_store import (
 from .provenance_turn_resume import load_resumed_turn
 from .provenance_lifecycle_start import can_fast_start, candidate_paths as candidate_paths_for_root
 from .provenance_lifecycle_scope import prime_candidate_scope, scan_snapshot
-from .provenance_types import Snapshot
+from .provenance_types import ProvenanceStatus, Snapshot
 
 
 class ProvenanceLifecycle:
@@ -82,7 +82,7 @@ class ProvenanceLifecycle:
                 self._root,
             ),
         )
-        if result.incomplete or result.snapshot is None:
+        if result.status is not ProvenanceStatus.COMPLETE or result.snapshot is None:
             return result
         turn = TurnState(agent, turn_id, result.snapshot, self._state.event_seq, mutation_capable)
         try:
@@ -128,7 +128,7 @@ class ProvenanceLifecycle:
     def post_tool(self, invocation: Invocation, source: str = "external") -> ObservationResult:
         turn = self._state.turns[(invocation.agent, invocation.turn_id)]
         result = self._observe(invocation.agent, source, invocation.candidate_paths, False)
-        if not result.incomplete and self._state.current is not None:
+        if result.status is ProvenanceStatus.COMPLETE and self._state.current is not None:
             record_deltas(
                 self._state,
                 ObservationInput(
@@ -142,7 +142,7 @@ class ProvenanceLifecycle:
     def finish_turn(self, agent: str, turn_id: str) -> ObservationResult:
         turn = self._state.turns[(agent, turn_id)]
         result = self._observe(agent, "external", frozenset(), True)
-        if not result.incomplete and self._state.current is not None:
+        if result.status is ProvenanceStatus.COMPLETE and self._state.current is not None:
             finalized = replace(
                 self._state.current,
                 full_reconciled_at=datetime.now(UTC).isoformat(),
@@ -192,6 +192,8 @@ class ProvenanceLifecycle:
     ) -> ObservationResult:
         generation, previous = self._generation_current()
         first = self._scan(previous, forced_paths, full_scan)
+        if first.status is ProvenanceStatus.SCOPE_TOO_LARGE:
+            return self._mark_scope_too_large(self._result(first, (), full_scan, 0))
         if first.incomplete:
             return self._mark_incomplete(self._result(first, (), full_scan, 0))
         committed = self._commit_if_current(generation, first, agent, source, full_scan)
@@ -199,6 +201,8 @@ class ProvenanceLifecycle:
             return committed
         rebase_generation, rebase_previous = self._generation_current()
         rebased = self._scan(rebase_previous, forced_paths, full_scan)
+        if rebased.status is ProvenanceStatus.SCOPE_TOO_LARGE:
+            return self._mark_scope_too_large(self._result(rebased, (), full_scan, 1))
         if rebased.incomplete:
             return self._mark_incomplete(self._result(rebased, (), full_scan, 1))
         committed = self._commit_if_current(rebase_generation, rebased, agent, source, full_scan)
@@ -245,13 +249,30 @@ class ProvenanceLifecycle:
         return replace(
             result,
             pending_change_ids=pending,
-            clean_claim=not result.incomplete and not pending,
+            clean_claim=(
+                result.status is ProvenanceStatus.COMPLETE
+                and not result.incomplete
+                and not pending
+            ),
             stop_cap_reserved=stop_cap_reserved,
         )
 
     def _mark_incomplete(self, result: ObservationResult) -> ObservationResult:
         self._state.incomplete = True
-        return replace(result, incomplete=True, clean_claim=False)
+        return replace(
+            result,
+            incomplete=True,
+            clean_claim=False,
+            status=ProvenanceStatus.INCOMPLETE,
+        )
+
+    def _mark_scope_too_large(self, result: ObservationResult) -> ObservationResult:
+        return replace(
+            result,
+            incomplete=False,
+            clean_claim=False,
+            status=ProvenanceStatus.SCOPE_TOO_LARGE,
+        )
 
     @staticmethod
     def _result(
@@ -260,6 +281,8 @@ class ProvenanceLifecycle:
         full_scan: bool,
         rebase_count: int,
     ) -> ObservationResult:
+        status = snapshot.status if snapshot is not None else ProvenanceStatus.INCOMPLETE
+        reason = snapshot.status_reason if snapshot is not None else "snapshot_unavailable"
         return ObservationResult(
             snapshot,
             changes,
@@ -269,4 +292,6 @@ class ProvenanceLifecycle:
             rebase_count,
             False,
             False,
+            status,
+            reason,
         )

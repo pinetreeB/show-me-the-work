@@ -95,6 +95,7 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
     from core.classify import classify_prompt
     from core.contract import EDIT_TOOLS, SHELL_TOOLS
     from core.ledger import JsonObject, load_ledger, record_event
+    from core.provenance_types import ProvenanceStatus
     from core.scope_guard import evaluate_scope
     from core.verification import is_verification_command
 
@@ -114,6 +115,29 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
         invocation = resolve_active_invocation(Path(root), invocation)
         observation = observe_post_tool(Path(root), invocation)
         verification_command = family == "shell" and is_verification_command(command)
+        if verification_command:
+            covers = verification_covers(Path(root), invocation)
+            verification: JsonObject = {
+                "project_root": root,
+                "event": "verification",
+                "host": invocation.host,
+                "agent": invocation.agent,
+                "session_id": invocation.session_id,
+                "turn_id": invocation.turn_id,
+                "invocation_id": invocation.invocation_id,
+                "command": command,
+                "success": invocation.success,
+                "evidence": invocation.evidence,
+            }
+            if covers is not None:
+                verification["covers"] = covers
+            _ = record_event(verification)
+            return emit({
+                "decision": "allow",
+                "systemMessage": "[smtw] 원장: 검증 기록.",
+            })
+        if observation.status is ProvenanceStatus.SCOPE_TOO_LARGE:
+            return emit({"decision": "allow"})
         if observation.incomplete and not verification_command:
             return emit({"decision": "allow", "systemMessage": "[smtw] provenance incomplete; fail-open observation."})
         paths = list(observation.changed_paths)
@@ -146,26 +170,6 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
             })
         if family == "edit":
             return emit({"decision": "allow", "systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
-        if verification_command:
-            covers = verification_covers(Path(root), invocation)
-            verification: JsonObject = {
-                "project_root": root,
-                "event": "verification",
-                "host": invocation.host,
-                "agent": invocation.agent,
-                "session_id": invocation.session_id,
-                "turn_id": invocation.turn_id,
-                "invocation_id": invocation.invocation_id,
-                "command": command,
-                "success": invocation.success,
-                "evidence": invocation.evidence,
-            }
-            if covers is not None:
-                verification["covers"] = covers
-            _ = record_event({
-                **verification,
-            })
-            return emit({"decision": "allow", "systemMessage": "[smtw] 원장: 검증 기록."})
         return emit({"decision": "allow", "systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
     return emit({"decision": "allow"})
 
@@ -213,6 +217,8 @@ def handle_before_model(payload: Mapping[str, object]) -> int:
         "baseline_snapshot_id": observation.baseline_snapshot_id,
         "current_snapshot_id": observation.snapshot_id,
         "provenance_incomplete": observation.incomplete,
+        "provenance_status": observation.status.value,
+        "provenance_status_reason": observation.status_reason,
         "task_mode": result.get("mode", "quick"),
         "prompt": prompt_value,
         "packs": packs,

@@ -10,7 +10,9 @@ from .provenance_lifecycle import ProvenanceLifecycle
 from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
 from .provenance_store import SnapshotStoreError
+from .provenance_types import ProvenanceStatus
 from .shell_hints import shell_candidate_paths
+from .shell_command import is_remote_only_mutation_command
 from .verification import is_verification_command
 from .verification_covers import active_turn
 
@@ -64,6 +66,8 @@ class ObservationReport:
     changed_paths: tuple[str, ...]
     incomplete: bool
     full_reconcile: bool
+    status: ProvenanceStatus = ProvenanceStatus.COMPLETE
+    status_reason: str = ""
 
 
 def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
@@ -78,6 +82,9 @@ def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport
 
 def begin_invocation(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
     invocation = _with_shell_candidates(_active_invocation(root, invocation))
+    if report := _scope_too_large_report(root, invocation):
+        _record_invocation(root, invocation, _covers(root, invocation))
+        return report
     try:
         lifecycle = ProvenanceLifecycle(root)
         lifecycle.resume_turn(invocation.agent_key, invocation.turn_id, _mutation_capable(invocation))
@@ -99,6 +106,9 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
 
 def observe_post_tool(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
     invocation = _with_shell_candidates(_active_invocation(root, invocation))
+    if report := _scope_too_large_report(root, invocation):
+        _record_status(root, invocation, report)
+        return report
     try:
         lifecycle = ProvenanceLifecycle(root)
         lifecycle.resume_turn(invocation.agent_key, invocation.turn_id, _mutation_capable(invocation))
@@ -123,6 +133,8 @@ def observe_post_tool(root: Path, invocation: CanonicalInvocation) -> Observatio
 
 def finish_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
     invocation = _active_invocation(root, invocation)
+    if report := _scope_too_large_report(root, invocation):
+        return report
     try:
         lifecycle = ProvenanceLifecycle(root)
         lifecycle.resume_turn(invocation.agent_key, invocation.turn_id, _mutation_capable(invocation))
@@ -158,6 +170,16 @@ def restart_blocked_turn(root: Path, invocation: CanonicalInvocation) -> None:
 
 
 def _report(result: ObservationResult, baseline_snapshot_id: str) -> ObservationReport:
+    if result.status is ProvenanceStatus.SCOPE_TOO_LARGE:
+        return ObservationReport(
+            "",
+            "",
+            (),
+            False,
+            result.full_scan,
+            result.status,
+            result.status_reason,
+        )
     snapshot = result.snapshot
     snapshot_id = snapshot.snapshot_id if snapshot is not None else ""
     return ObservationReport(
@@ -166,11 +188,21 @@ def _report(result: ObservationResult, baseline_snapshot_id: str) -> Observation
         tuple(change.path for change in result.changes),
         result.incomplete,
         result.full_scan,
+        result.status,
+        result.status_reason,
     )
 
 
 def _incomplete_report(full_reconcile: bool = False) -> ObservationReport:
-    return ObservationReport("", "", (), True, full_reconcile)
+    return ObservationReport(
+        "",
+        "",
+        (),
+        True,
+        full_reconcile,
+        ProvenanceStatus.INCOMPLETE,
+        "observation_error",
+    )
 
 
 def _covers(root: Path, invocation: CanonicalInvocation) -> JsonObject | None:
@@ -213,9 +245,17 @@ def _record_status(root: Path, invocation: CanonicalInvocation, report: Observat
         "event": "observation",
         "current_snapshot_id": report.snapshot_id,
         "provenance_incomplete": report.incomplete,
+        "provenance_status": report.status.value,
+        "provenance_status_reason": report.status_reason,
     }
     if _mutation_capable(invocation):
         payload["provenance_mutation_capable"] = True
+    if (
+        invocation.success
+        and _remote_only_mutation(invocation)
+        and not is_verification_command(invocation.command_hint)
+    ):
+        payload["provenance_remote_mutation"] = True
     _ = record_event(payload)
 
 
@@ -300,4 +340,33 @@ def _source(invocation: CanonicalInvocation) -> str:
 
 
 def _mutation_capable(invocation: CanonicalInvocation) -> bool:
-    return invocation.tool_family_hint in OBSERVABLE_FAMILIES
+    return (
+        invocation.tool_family_hint in OBSERVABLE_FAMILIES
+        and not _remote_only_mutation(invocation)
+    )
+
+
+def _remote_only_mutation(invocation: CanonicalInvocation) -> bool:
+    return (
+        invocation.tool_family_hint == "shell"
+        and is_remote_only_mutation_command(invocation.command_hint)
+    )
+
+
+def _scope_too_large_report(
+    root: Path,
+    invocation: CanonicalInvocation,
+) -> ObservationReport | None:
+    turn = active_turn(load_ledger({"project_root": str(root)}), _ledger_payload(root, invocation))
+    if turn is None or turn.get("provenance_status") != ProvenanceStatus.SCOPE_TOO_LARGE.value:
+        return None
+    reason = turn.get("provenance_status_reason")
+    return ObservationReport(
+        "",
+        "",
+        (),
+        False,
+        False,
+        ProvenanceStatus.SCOPE_TOO_LARGE,
+        reason if isinstance(reason, str) else "",
+    )

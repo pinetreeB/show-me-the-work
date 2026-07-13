@@ -256,3 +256,31 @@ def test_quick_mode_keeps_no_change_docs_only_and_fresh_verification_paths(
         result = evaluate_stop({"project_root": str(case_root)})
 
         assert result["decision"] == expected, case_name
+
+
+def test_scope_too_large_is_advisory_unless_known_changes_need_verification(
+    tmp_path: Path,
+) -> None:
+    cases = (("no-known-change", False, "allow"), ("known-change", True, "block"))
+    for case_name, changed, expected in cases:
+        case_root = tmp_path / case_name
+        case_root.mkdir()
+        _ = record_event(
+            {
+                "project_root": str(case_root),
+                "event": "prompt",
+                "task_mode": "quick",
+                "prompt": "work",
+                "provenance_status": "scope_too_large",
+                "provenance_status_reason": "entry_limit",
+                "provenance_incomplete": False,
+            }
+        )
+        if changed:
+            _record_change(case_root)
+
+        result = evaluate_stop({"project_root": str(case_root)})
+
+        assert result["decision"] == expected
+        if not changed:
+            assert "scope too large" in str(result["message"])

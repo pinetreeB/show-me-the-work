@@ -24,6 +24,7 @@ from .scorecard_store import (
     unresolved_block_ids,
 )
 from .verification_covers import active_turn, covers_verified
+from .provenance_types import ProvenanceStatus
 
 Decision: TypeAlias = dict[str, JsonValue]
 
@@ -54,19 +55,39 @@ def has_successful_verification(
     payload: Mapping[str, JsonValue] | None = None,
 ) -> bool:
     turn = active_turn(ledger, payload)
-    if turn is not None and (covers_result := covers_verified(turn)) is not None:
-        return covers_result
     state: Mapping[str, JsonValue] = turn if turn is not None else ledger
     results = _as_result_list(state.get("verification_results"))
-    if _legacy_seq_less_verification(ledger, turn):
-        return any(result.get("success") is True for result in results)
-    last_change_seq = _positive_sequence(state.get("last_change_seq"))
-    if last_change_seq is None:
-        return any(result.get("success") is True for result in results)
+    covers_result = covers_verified(turn) if turn is not None else None
+    if covers_result is not None:
+        local_verified = covers_result
+    elif _legacy_seq_less_verification(ledger, turn):
+        local_verified = any(result.get("success") is True for result in results)
+    else:
+        last_change_seq = _positive_sequence(state.get("last_change_seq"))
+        if last_change_seq is None:
+            local_verified = any(
+                result.get("success") is True for result in results
+            )
+        else:
+            local_verified = any(
+                result.get("success") is True
+                and (verification_seq := _positive_sequence(result.get("seq")))
+                is not None
+                and verification_seq > last_change_seq
+                for result in results
+            )
+    remote_seq = _positive_sequence(state.get("last_remote_mutation_seq"))
+    return local_verified and (
+        remote_seq is None or _has_remote_verification(results, remote_seq)
+    )
+
+
+def _has_remote_verification(results: list[JsonObject], remote_seq: int) -> bool:
     return any(
         result.get("success") is True
-        and (verification_seq := _positive_sequence(result.get("seq"))) is not None
-        and verification_seq > last_change_seq
+        and isinstance(covers := result.get("covers"), dict)
+        and (through_seq := _positive_sequence(covers.get("through_seq"))) is not None
+        and through_seq >= remote_seq
         for result in results
     )
 
@@ -160,7 +181,9 @@ def evaluate_without_io(
 ) -> Decision:
     turn = active_turn(ledger, payload)
     state: Mapping[str, JsonValue] = turn if turn is not None else ledger
-    changed = bool(_as_str_list(state.get("changed_files_seen")))
+    changed = bool(_as_str_list(state.get("changed_files_seen"))) or (
+        _positive_sequence(state.get("last_remote_mutation_seq")) is not None
+    )
     verified = has_successful_verification(ledger, payload)
 
     if (
@@ -196,6 +219,15 @@ def evaluate_without_io(
             }
 
     if _docs_only(state) or not changed or verified:
+        if state.get("provenance_status") == ProvenanceStatus.SCOPE_TOO_LARGE.value:
+            return {
+                "decision": "allow",
+                "message": (
+                    "[smtw] provenance scope too large: 파일 관측 지원 범위를 초과해 "
+                    "이번 턴은 차단하지 않고 안내만 제공합니다. 프로젝트 루트를 더 좁게 설정하세요. "
+                    "/ Provenance scope too large; advisory only. Narrow the project root."
+                ),
+            }
         return {"decision": "allow", "message": "[smtw] Stop gate allow."}
 
     return {
@@ -252,6 +284,8 @@ def _record_stop_recoveries(
     if (
         state.get("provenance_incomplete") is not True
         and state.get("provenance_mutation_capable") is True
+        and state.get("provenance_status")
+        != ProvenanceStatus.SCOPE_TOO_LARGE.value
     ):
         recorded = _record_scorecard(
             ledger,

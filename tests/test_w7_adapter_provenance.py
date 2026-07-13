@@ -19,6 +19,7 @@ from adapters.codex_cli.common import tool_file_paths as codex_paths
 from adapters.codex_cli.common import tool_output as codex_output
 from adapters.codex_cli.common import tool_success as codex_success
 from core.ledger import JsonObject, JsonValue, load_ledger, record_event
+from core.provenance_types import DEFAULT_MAX_SCAN_BYTES, ProvenanceStatus
 from core.shell_hints import shell_candidate_paths
 
 
@@ -254,3 +255,37 @@ def test_observation_failure_is_incomplete_without_raising(tmp_path: Path) -> No
 
     # Then: callers receive incomplete state instead of a hook-crashing exception.
     assert result.incomplete is True
+
+
+def test_adapter_start_reports_scope_too_large_before_hashing_oversized_root(
+    tmp_path: Path,
+) -> None:
+    from core.adapter_observation import CanonicalInvocation, start_turn
+
+    oversized = tmp_path / "oversized.bin"
+    with oversized.open("wb") as handle:
+        handle.truncate(DEFAULT_MAX_SCAN_BYTES + 1)
+    invocation = CanonicalInvocation(
+        "claude_code",
+        "claude",
+        "session",
+        "turn-session",
+        "turn-start",
+        "turn_start",
+        "other",
+        (),
+        "",
+        True,
+        "",
+    )
+
+    report = start_turn(tmp_path, invocation)
+
+    assert report.status is ProvenanceStatus.SCOPE_TOO_LARGE
+    assert report.status_reason == "byte_limit"
+    assert report.incomplete is False
+    assert report.snapshot_id == ""
+    assert report.baseline_snapshot_id == ""
+    assert (
+        tmp_path / ".fable-lite" / "snapshots" / "workspace-current.json"
+    ).exists() is False

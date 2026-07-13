@@ -110,6 +110,8 @@ def main() -> int:
                 "baseline_snapshot_id": observation.baseline_snapshot_id,
                 "current_snapshot_id": observation.snapshot_id,
                 "provenance_incomplete": observation.incomplete,
+                "provenance_status": observation.status.value,
+                "provenance_status_reason": observation.status_reason,
                 "task_mode": result["mode"],
                 "prompt": prompt,
                 "packs": packs,

@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import ast
 import re
-import shlex
 from typing import Final
 
-COMMAND_SEPARATORS: Final = frozenset({"&&", "||", ";", "|", "&"})
+from .shell_command import (
+    command_name,
+    command_segments,
+    remote_ssh_command_tokens,
+    without_environment_assignments,
+)
+
+
 OUTPUT_ONLY_COMMANDS: Final = frozenset(
     {"echo", "printf", "write-output", "write-host", "out-string"}
 )
@@ -50,45 +56,29 @@ OK_WORD_RE = re.compile(r"\bok\b", re.IGNORECASE)
 
 def is_verification_command(command: str) -> bool:
     """이 셸 명령이 검증(테스트/빌드확인) 명령으로 인정되는지 판정한다."""
-    return any(_is_verification_invocation(tokens) for tokens in _command_segments(command))
-
-
-def _command_segments(command: str) -> tuple[tuple[str, ...], ...]:
-    try:
-        lexer = shlex.shlex(command, posix=False, punctuation_chars=";&|<>")
-        lexer.whitespace_split = True
-        lexer.commenters = "#"
-        tokens = tuple(_clean_token(token) for token in lexer if token)
-    except ValueError:
-        return ()
-    segments: list[tuple[str, ...]] = []
-    current: list[str] = []
-    for token in tokens:
-        if token in COMMAND_SEPARATORS:
-            if current:
-                segments.append(tuple(current))
-                current = []
-            continue
-        current.append(token)
-    if current:
-        segments.append(tuple(current))
-    return tuple(segments)
+    return any(_is_verification_invocation(tokens) for tokens in command_segments(command))
 
 
 def _is_verification_invocation(tokens: tuple[str, ...]) -> bool:
-    tokens = _without_environment_assignments(tokens)
+    tokens = without_environment_assignments(tokens)
     if not tokens:
         return False
-    command = _command_name(tokens[0])
+    command = command_name(tokens[0])
     arguments = tokens[1:]
     if command in OUTPUT_ONLY_COMMANDS:
         return False
     if command in SHELL_WRAPPERS and arguments and arguments[0].casefold() in {"-c", "-command"}:
         return len(arguments) > 1 and is_verification_command(arguments[1])
     if command == "env":
-        return _is_verification_invocation(_without_environment_assignments(arguments))
+        return _is_verification_invocation(without_environment_assignments(arguments))
     if command == "uv" and arguments[:1] == ("run",):
         return _is_verification_invocation(arguments[1:])
+    if command == "ssh":
+        nested = remote_ssh_command_tokens(tokens)
+        nested_segments = command_segments(nested) if nested else ()
+        return len(nested_segments) == 1 and _is_verification_invocation(
+            nested_segments[0]
+        )
     if command in {"python", "python3"}:
         return _is_python_verification(arguments)
     if command in DIRECT_TEST_RUNNERS:
@@ -148,26 +138,6 @@ def _is_script_reexecution(tokens: tuple[str, ...]) -> bool:
     if any(term in command_text.casefold() for term in NON_VERIFY_TERMS):
         return False
     return bool(TEST_SCRIPT_RE.search(command_text))
-
-
-def _command_name(token: str) -> str:
-    name = _clean_token(token).replace("\\", "/").rsplit("/", 1)[-1].casefold()
-    for suffix in (".exe", ".cmd", ".bat"):
-        name = name.removesuffix(suffix)
-    return name
-
-
-def _clean_token(token: str) -> str:
-    return token.strip("\"'")
-
-
-def _without_environment_assignments(tokens: tuple[str, ...]) -> tuple[str, ...]:
-    index = 0
-    while index < len(tokens) and re.fullmatch(
-        r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[index]
-    ):
-        index += 1
-    return tokens[index:]
 
 
 def text_indicates_success(text: str) -> bool:

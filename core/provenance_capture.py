@@ -7,6 +7,7 @@ from io import BufferedReader
 import os
 from pathlib import Path
 import stat
+import time
 from typing import Final
 
 from .provenance_types import EntryKind, ManifestEntry, ScanIssue
@@ -19,6 +20,7 @@ MAX_CAPTURE_WORKERS: Final = 32
 class CapturedPath:
     entry: ManifestEntry | None
     issue: ScanIssue | None
+    status_reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,8 +32,13 @@ class CaptureRequest:
     previous: ManifestEntry | None = None
 
 
-def capture_regular(request: CaptureRequest) -> CapturedPath:
+def capture_regular(
+    request: CaptureRequest,
+    deadline: float | None = None,
+) -> CapturedPath:
     for attempt in range(2):
+        if _deadline_exceeded(deadline):
+            return CapturedPath(None, None, "deadline")
         try:
             before = request.metadata if attempt == 0 else os.stat(request.path, follow_symlinks=False)
             if not stat.S_ISREG(before.st_mode):
@@ -43,7 +50,9 @@ def capture_regular(request: CaptureRequest) -> CapturedPath:
                 before_fd = os.fstat(handle.fileno())
                 if not _stats_match(before, before_fd):
                     continue
-                digest = _digest_stream(handle)
+                digest = _digest_stream(handle, deadline)
+                if digest is None:
+                    return CapturedPath(None, None, "deadline")
                 after_fd = os.fstat(handle.fileno())
             after = os.stat(request.path, follow_symlinks=False)
         except OSError:
@@ -53,7 +62,10 @@ def capture_regular(request: CaptureRequest) -> CapturedPath:
     return CapturedPath(None, ScanIssue(request.relative, "unstable_path"))
 
 
-def capture_regular_many(requests: tuple[CaptureRequest, ...]) -> tuple[CapturedPath, ...]:
+def capture_regular_many(
+    requests: tuple[CaptureRequest, ...],
+    deadline: float | None = None,
+) -> tuple[CapturedPath, ...]:
     results: list[CapturedPath | None] = [None] * len(requests)
     pending: list[tuple[int, CaptureRequest]] = []
     for index, request in enumerate(requests):
@@ -64,7 +76,10 @@ def capture_regular_many(requests: tuple[CaptureRequest, ...]) -> tuple[Captured
     if pending:
         workers = min(MAX_CAPTURE_WORKERS, len(pending))
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            captured = executor.map(capture_regular, (request for _, request in pending))
+            captured = executor.map(
+                _capture_regular_with_deadline,
+                ((request, deadline) for _, request in pending),
+            )
             for (index, _), result in zip(pending, captured, strict=True):
                 results[index] = result
     return tuple(result for result in results if result is not None)
@@ -126,9 +141,28 @@ def _stat_signature(metadata: os.stat_result) -> tuple[int, int, int, int]:
     )
 
 
-def _digest_stream(handle: BufferedReader) -> str:
-    digest = hashlib.file_digest(handle, lambda: hashlib.blake2b(digest_size=32))
-    return f"blake2b-256:{digest.hexdigest()}"
+def _capture_regular_with_deadline(
+    item: tuple[CaptureRequest, float | None],
+) -> CapturedPath:
+    request, deadline = item
+    return capture_regular(request, deadline)
+
+
+def _digest_stream(handle: BufferedReader, deadline: float | None) -> str | None:
+    digest = hashlib.blake2b(digest_size=32)
+    while True:
+        if _deadline_exceeded(deadline):
+            return None
+        chunk = handle.read(HASH_CHUNK_BYTES)
+        if _deadline_exceeded(deadline):
+            return None
+        if not chunk:
+            return f"blake2b-256:{digest.hexdigest()}"
+        digest.update(chunk)
+
+
+def _deadline_exceeded(deadline: float | None) -> bool:
+    return deadline is not None and time.monotonic() > deadline
 
 
 def _digest_text(value: str) -> str:

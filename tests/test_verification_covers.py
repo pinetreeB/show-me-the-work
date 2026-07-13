@@ -232,3 +232,61 @@ def test_agent_b_verification_does_not_cover_agent_a_posttool_revision(tmp_path:
 
     # Then: A's post-PreTool revision remains unverified.
     assert _stop(tmp_path, "alpha") == "block"
+
+
+def _remote_observation(
+    root: Path,
+    *,
+    incomplete: bool = True,
+    local_mutation_capable: bool = False,
+) -> JsonObject:
+    return record_event(
+        {
+            **_payload(root, "observation"),
+            "provenance_incomplete": incomplete,
+            "provenance_mutation_capable": local_mutation_capable,
+            "provenance_remote_mutation": True,
+        }
+    )
+
+
+def test_remote_only_mutation_requires_later_fresh_verification(tmp_path: Path) -> None:
+    _ = _start(tmp_path)
+    _ = _remote_observation(tmp_path)
+
+    assert _stop(tmp_path) == "block"
+
+
+def test_fresh_verification_resolves_incomplete_remote_only_turn(tmp_path: Path) -> None:
+    _ = _start(tmp_path)
+    remote = _remote_observation(tmp_path)
+    covers = _covers(tmp_path, "verify-remote")
+    verified = _verify(tmp_path, covers, "verify-remote")
+
+    active = verified["active_turns"]
+    assert isinstance(active, dict)
+    turn = active["host:session:alpha"]
+    assert isinstance(turn, dict)
+    assert turn["last_remote_mutation_seq"] == remote["event_seq"]
+    assert _stop(tmp_path) == "allow"
+
+
+def test_verification_before_remote_mutation_is_stale(tmp_path: Path) -> None:
+    _ = _start(tmp_path)
+    _ = _verify(tmp_path, _covers(tmp_path, "before-remote"), "before-remote")
+    _ = _remote_observation(tmp_path)
+
+    assert _stop(tmp_path) == "block"
+
+
+def test_local_mutation_capable_incomplete_turn_stays_blocked_after_verification(
+    tmp_path: Path,
+) -> None:
+    _ = _start(tmp_path)
+    _ = _remote_observation(tmp_path, local_mutation_capable=True)
+    _ = _verify(tmp_path, _covers(tmp_path, "mixed-verify"), "mixed-verify")
+
+    result = evaluate_stop({**_payload(tmp_path, "stop"), "task_mode": "deep"})
+
+    assert result["decision"] == "block"
+    assert result["reason_code"] == "stop.provenance_incomplete"

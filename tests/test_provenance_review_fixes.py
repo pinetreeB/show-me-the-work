@@ -69,6 +69,55 @@ def test_soft_excluded_directory_enters_only_include_descendant_path(tmp_path: P
     assert {entry.path for entry in snapshot.entries} == {"node_modules/pkg/file.js"}
 
 
+def test_nested_soft_excluded_directory_is_skipped_at_any_depth(tmp_path: Path) -> None:
+    dependency_root = tmp_path / "workspace" / "node_modules"
+    _write(dependency_root / "pkg" / "index.js", "ignored")
+    _write(tmp_path / "workspace" / "src" / "app.js", "tracked")
+    scanned: set[Path] = set()
+    original_scandir = provenance.os.scandir
+
+    def observe(path: str | os.PathLike[str]) -> Iterator[os.DirEntry[str]]:
+        scanned.add(Path(path))
+        return original_scandir(path)
+
+    with patch.object(provenance.os, "scandir", side_effect=observe):
+        snapshot = snapshot_workspace(tmp_path)
+
+    assert dependency_root not in scanned
+    assert {entry.path for entry in snapshot.entries} == {"workspace/src/app.js"}
+
+
+def test_nested_soft_exclude_allows_only_explicit_include_descendant(
+    tmp_path: Path,
+) -> None:
+    dependency_root = tmp_path / "workspace" / "node_modules"
+    included = dependency_root / "pkg"
+    skipped = dependency_root / "other"
+    _write(included / "index.js", "included")
+    _write(skipped / "index.js", "skipped")
+    _write(
+        tmp_path / ".fable-lite" / "provenance-config.json",
+        json.dumps(
+            {"version": 1, "include": ["workspace/node_modules/pkg/index.js"]}
+        ),
+    )
+    scanned: set[Path] = set()
+    original_scandir = provenance.os.scandir
+
+    def observe(path: str | os.PathLike[str]) -> Iterator[os.DirEntry[str]]:
+        scanned.add(Path(path))
+        return original_scandir(path)
+
+    with patch.object(provenance.os, "scandir", side_effect=observe):
+        snapshot = snapshot_workspace(tmp_path)
+
+    assert included in scanned
+    assert skipped not in scanned
+    assert {entry.path for entry in snapshot.entries} == {
+        "workspace/node_modules/pkg/index.js"
+    }
+
+
 def test_previous_matching_metadata_reuses_digest_without_opening_content(tmp_path: Path) -> None:
     # Given: a completed prior manifest for one unchanged regular file.
     target = tmp_path / "stable.txt"
