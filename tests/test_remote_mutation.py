@@ -48,6 +48,20 @@ def test_remote_commands_with_combined_safe_flags_stay_remote_only() -> None:
         assert is_remote_only_mutation_command(command) is True, command
 
 
+def test_supported_read_only_openssh_options_do_not_hide_remote_mutations() -> None:
+    commands = (
+        'ssh -ACfKksXxYy deploy@example.com "touch remote-marker"',
+        'ssh -B Ethernet -b 127.0.0.1 -c aes128-ctr deploy@example.com "touch remote-marker"',
+        'ssh -e none -I provider -m hmac-sha2-256 -P release deploy@example.com "touch remote-marker"',
+        'ssh -D 1080 -L 8080:localhost:80 -R 9090:localhost:90 deploy@example.com "touch remote-marker"',
+        "scp -3ABCOqT artifact.tar deploy@example.com:/srv/app/",
+        "scp -c aes128-ctr -l 1000 -X nrequests=64 artifact.tar deploy@example.com:/srv/app/",
+    )
+
+    for command in commands:
+        assert is_remote_only_mutation_command(command) is True, command
+
+
 def test_remote_commands_with_local_or_mixed_effects_are_not_remote_only() -> None:
     commands = (
         "ssh deploy@example.com uptime > local.log",
@@ -61,6 +75,11 @@ def test_remote_commands_with_local_or_mixed_effects_are_not_remote_only() -> No
         "ssh -S local.sock deploy@example.com uptime",
         "ssh -M deploy@example.com uptime",
         "ssh -O check deploy@example.com",
+        "ssh -G deploy@example.com",
+        "ssh -N deploy@example.com",
+        "ssh -Q cipher",
+        "ssh -V",
+        "ssh -W target.example.com:22 deploy@example.com",
         "ssh -o LocalCommand=touch-local deploy@example.com uptime",
         "ssh -o ProxyCommand=local-proxy deploy@example.com uptime",
         "ssh -o ControlPath=local.sock deploy@example.com uptime",
@@ -68,6 +87,9 @@ def test_remote_commands_with_local_or_mixed_effects_are_not_remote_only() -> No
             "ssh -o StrictHostKeyChecking=accept-new "
             "-o UserKnownHostsFile=./local-known-hosts deploy@example.com uptime"
         ),
+        "scp -D local-sftp artifact.tar deploy@example.com:/srv/app/",
+        "scp -F ssh-config artifact.tar deploy@example.com:/srv/app/",
+        "scp -S ssh-wrapper artifact.tar deploy@example.com:/srv/app/",
     )
 
     for command in commands:
