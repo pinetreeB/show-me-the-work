@@ -64,6 +64,7 @@ def test_shell_chains_cannot_claim_atomic_verification_evidence() -> None:
         "pytest && echo ok",
         "pytest ; echo ok",
         "pytest | cat",
+        "pytest |& echo 1 passed",
         "pytest & echo ok",
     )
 
