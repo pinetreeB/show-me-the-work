@@ -12,7 +12,12 @@ from eval.bench_provenance import (
     SCALE_TARGET_BYTES,
     synthetic_plan,
 )
-from eval.provenance_bench_metrics import PhaseMeasurement, evaluate_slo, summarize_phase
+from eval.provenance_bench_metrics import (
+    PhaseMeasurement,
+    evaluate_slo,
+    measure,
+    summarize_phase,
+)
 from core.provenance_lifecycle import ProvenanceLifecycle
 from core.provenance_progress import scan_progress
 from core.provenance_store import save_workspace_current
@@ -97,3 +102,14 @@ def test_clean_turn_baseline_atomically_links_workspace_current(tmp_path: Path) 
     assert result.full_scan is False
     assert save.call_count == 0
     assert os.path.samefile(lifecycle.workspace_current_path, baseline)
+
+
+def test_measure_wraps_deadline_aware_hashing(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("print('v2')\n", encoding="utf-8")
+    lifecycle = ProvenanceLifecycle(tmp_path)
+
+    result, measurement = measure(lambda: lifecycle.start_turn("bench", "deadline"))
+
+    assert result.incomplete is False
+    assert measurement.hash_calls == 1
+    assert measurement.content_read_bytes > 0

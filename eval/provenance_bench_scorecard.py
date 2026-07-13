@@ -158,7 +158,9 @@ def _measure_action(action: Callable[[], JsonObject]) -> PhaseMeasurement:
     original_rglob = Path.rglob
     original_read_text = Path.read_text
     original_open = Path.open
-    original_digest: Callable[[BufferedReader], str] = capture._digest_stream
+    original_digest: Callable[[BufferedReader, float | None], str | None] = (
+        capture._digest_stream
+    )
 
     def counting_stat(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
         nonlocal stat_count
@@ -199,10 +201,13 @@ def _measure_action(action: Callable[[], JsonObject]) -> PhaseMeasurement:
             original_open(path, mode, buffering, encoding, errors, newline),
         )
 
-    def counting_digest(handle: BufferedReader) -> str:
+    def counting_digest(
+        handle: BufferedReader,
+        deadline: float | None,
+    ) -> str | None:
         nonlocal hash_calls, read_bytes
         before = handle.tell()
-        digest = original_digest(handle)
+        digest = original_digest(handle, deadline)
         hash_calls += 1
         read_bytes += handle.tell() - before
         return digest
