@@ -1,0 +1,76 @@
+name: release-quality
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release-quality:
+    runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install quality and build tools
+        run: python -m pip install pytest ruff build
+      - name: Version synchronization
+        run: python scripts/sync_version.py --check
+      - name: Tag matches plugin version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = (Get-Content .claude-plugin/plugin.json | ConvertFrom-Json).version
+          if ("${{ github.ref_name }}" -ne "v$version") {
+            throw "tag ${{ github.ref_name }} does not match plugin version $version"
+          }
+      - name: Ruff
+        run: ruff check core adapters fable_lite goals tests eval contrib scripts --exclude eval/ab
+      - name: Unit tests
+        run: python -m pytest tests/ -q
+      - name: Deterministic probes
+        run: python eval/run_probes.py --strict --output "${{ runner.temp }}/smtw-probes.json"
+      - name: E2E smoke
+        run: python eval/e2e_smoke.py
+      - name: Python compile
+        run: python -m compileall -q core adapters fable_lite goals eval contrib scripts
+      - name: W9 golden plus randomized 1000
+        run: python -m eval.provenance.run --randomized 1000 --output "${{ runner.temp }}/smtw-provenance.json"
+      - name: W10 1k and 10k benchmark
+        run: python -m eval.bench_provenance --output "${{ runner.temp }}/smtw-bench.json"
+      - name: Eight-process Stop counter race
+        run: python -m pytest tests/test_block_counter_atomic.py::test_eight_subprocess_stops_increment_one_turn_counter_exactly_twice -q
+      - name: Build wheel
+        run: python -m build --wheel --outdir dist
+      - name: Clean wheel install and help outside checkout
+        shell: pwsh
+        run: |
+          python -m venv .release-venv
+          & .\.release-venv\Scripts\python.exe -m pip install --no-index --find-links dist fable-lite
+          $wheelPython = (Resolve-Path .release-venv\Scripts\python.exe).Path
+          Push-Location $env:RUNNER_TEMP
+          try {
+            & $wheelPython -I -m fable_lite --help
+          } finally {
+            Pop-Location
+          }
+      - name: Upload fresh receipts and wheel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-quality-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/smtw-probes.json
+            ${{ runner.temp }}/smtw-provenance.json
+            ${{ runner.temp }}/smtw-bench.json
+            dist/*.whl

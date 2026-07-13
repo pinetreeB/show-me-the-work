@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import core.ledger as ledger_module
 from core.agent_log import agent_log_path, load_agent_events
-from core.ledger import JsonObject, JsonValue, load_ledger, record_event
+from core.ledger import JsonObject, JsonValue, record_event
 from core.verify_state import has_successful_verification
 
 

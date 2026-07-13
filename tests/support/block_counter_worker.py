@@ -19,7 +19,7 @@ def main() -> int:
 
         actions = {"stop": evaluate_stop, "pretool": evaluate_pretool_contract}
         result = actions[sys.argv[5]](json.loads(sys.argv[6]))
-    except Exception as exc:  # noqa: BROAD_EXCEPT_OK
+    except Exception as exc:
         _send(channel, "error", error_type=type(exc).__name__, message=str(exc))
     else:
         _send(channel, "ok", decision=str(result["decision"]))

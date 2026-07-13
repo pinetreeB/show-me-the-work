@@ -1,8 +1,7 @@
 import json
-import sys
-import os
-import shutil
 import re
+import shutil
+import sys
 from pathlib import Path
 
 # Add project root to sys.path
@@ -10,10 +9,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # MONKEY-PATCH to bypass Codex's CP949 encoding bug in ambiguity.py
 import core.ambiguity
+
 # The original regex is corrupted. We rewrite the imperative suffix check:
 core.ambiguity._imperative_suffix = lambda prompt: bool(re.search(r"(해|해주세요|해라|고쳐|바꿔|만들어|추가|please|fix|make|add|update|edit)\b?", prompt, re.IGNORECASE))
-
-from core.ambiguity import evaluate_ambiguity
 
 def main():
     with open("eval/intent-corpus.json", "r", encoding="utf-8") as f:
@@ -49,7 +47,7 @@ def main():
         }
 
         try:
-            result_dict = evaluate_ambiguity(payload)
+            result_dict = core.ambiguity.evaluate_ambiguity(payload)
             result = result_dict["ambiguous"]
 
             if result == expected:
@@ -72,14 +70,14 @@ def main():
     fpr = len(false_positives) / actual_clear * 100 if actual_clear else 0
     fnr = len(false_negatives) / actual_ambiguous * 100 if actual_ambiguous else 0
 
-    report = f"# Intent Gate (모호성 판정기) 검증 리포트\n\n"
-    report += f"## 1. 요약 (Metrics)\n"
+    report = "# Intent Gate (모호성 판정기) 검증 리포트\n\n"
+    report += "## 1. 요약 (Metrics)\n"
     report += f"- **총 테스트 케이스**: {total}개\n"
     report += f"- **정확도 (Accuracy)**: {accuracy:.2f}%\n"
     report += f"- **오탐률 (False Positive Rate)**: {fpr:.2f}% (실제 Clear인데 Ambiguous로 판정)\n"
     report += f"- **미탐률 (False Negative Rate)**: {fnr:.2f}% (실제 Ambiguous인데 Clear로 판정)\n\n"
 
-    report += f"## 2. 오탐 (False Positives) - 절대 Flag 금지 위반\n"
+    report += "## 2. 오탐 (False Positives) - 절대 Flag 금지 위반\n"
     if false_positives:
         report += f"오탐이 {len(false_positives)}건 발생했습니다. (과탐 금지 원칙 위반)\n\n"
         for item, res in false_positives:
@@ -90,7 +88,7 @@ def main():
     else:
         report += "오탐 없음. (과탐 금지 원칙 완벽 준수)\n\n"
 
-    report += f"## 3. 미탐 (False Negatives)\n"
+    report += "## 3. 미탐 (False Negatives)\n"
     if false_negatives:
         report += f"미탐이 {len(false_negatives)}건 발생했습니다.\n\n"
         for item, res in false_negatives:

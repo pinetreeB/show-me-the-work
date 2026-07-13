@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from argparse import Namespace
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -116,7 +115,7 @@ def render(result: CheckResult) -> str:
     return "\n".join(lines)
 
 
-def changed_paths(root: Path, ledger: Mapping[str, object], since_file: Path | None) -> tuple[list[str], list[str]]:
+def changed_paths(root: Path, ledger: JsonObject, since_file: Path | None) -> tuple[list[str], list[str]]:
     paths = string_list(ledger.get("changed_files_seen"))
     warnings: list[str] = []
     git_result = git(root, "status", "--porcelain=v1", "-uall")
@@ -132,7 +131,7 @@ def changed_paths(root: Path, ledger: Mapping[str, object], since_file: Path | N
     return paths, warnings
 
 
-def unverified_changes(changed_files: list[str], ledger: Mapping[str, object], verified: bool | None = None) -> list[str]:
+def unverified_changes(changed_files: list[str], ledger: JsonObject, verified: bool | None = None) -> list[str]:
     if not changed_files or (verified if verified is not None else has_successful_verification(ledger)):
         return []
     return non_docs(changed_files)
@@ -186,7 +185,7 @@ def sentinel_findings(root: Path, prompt: str, card: TaskCard | None = None) -> 
     return missing
 
 
-def verify_findings(ledger: Mapping[str, object], card: TaskCard | None, verified: bool) -> list[str]:
+def verify_findings(ledger: JsonObject, card: TaskCard | None, verified: bool) -> list[str]:
     if card is None or verified:
         return []
     return [f"verify `{card.verify}` 성공 기록이 없습니다"]
