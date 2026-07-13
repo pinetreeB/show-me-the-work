@@ -95,6 +95,7 @@ def test_remote_mutation_epoch_is_independent_of_local_effect_classification() -
         "scp artifact.tar host:/srv/app/ 2>transfer.err",
         "scp artifact.tar host:/srv/app/ 2>>transfer.err",
         "scp artifact.tar host:/srv/app/ 2>&1",
+        "scp artifact.tar host:/srv/app/ |& tee transfer.log",
         "scp 2>transfer.err artifact.tar host:/srv/app/",
         "2>transfer.err scp artifact.tar host:/srv/app/",
         '2>ssh.err ssh host "touch remote-marker"',

@@ -5,7 +5,7 @@ import shlex
 from typing import Final
 
 
-COMMAND_SEPARATORS: Final = frozenset({"&&", "||", ";", "|", "&"})
+COMMAND_SEPARATORS: Final = frozenset({"&&", "||", ";", "|", "|&", "&"})
 _SSH_SAFE_FLAGS: Final = frozenset(
     {
         "-4",
