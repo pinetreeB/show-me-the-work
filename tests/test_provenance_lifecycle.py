@@ -6,8 +6,11 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from core.provenance import ScanIssue, Snapshot, snapshot_workspace_with_options
 from core.provenance_lifecycle import ProvenanceLifecycle
+from core.provenance_turn_resume import MissingTurnBaselineError
 from core.provenance_types import (
     DEFAULT_MAX_SCAN_BYTES,
     ProvenanceReason,
@@ -179,7 +182,7 @@ def test_finish_turn_deletes_persisted_baseline(tmp_path: Path) -> None:
     assert lifecycle.active_turns == ()
 
 
-def test_resume_rebuilds_missing_turn_baseline_from_persisted_current(
+def test_pretool_resume_rebuilds_missing_turn_baseline_from_persisted_current(
     tmp_path: Path,
 ) -> None:
     _write(tmp_path / "app.py", "stable")
@@ -190,11 +193,35 @@ def test_resume_rebuilds_missing_turn_baseline_from_persisted_current(
     baseline_path.unlink()
 
     resumed = ProvenanceLifecycle(tmp_path)
-    resumed.resume_turn("codex", "turn-recover", True)
+    resumed.resume_turn("codex", "turn-recover", True, allow_full_bootstrap=True)
 
     assert baseline_path.is_file()
+    assert result.snapshot is not None
     assert resumed.active_turns[0].baseline.snapshot_id == result.snapshot.snapshot_id
     assert resumed.active_turns[0].mutation_capable is True
+
+
+def test_post_mutation_resume_fails_closed_when_baseline_is_missing(
+    tmp_path: Path,
+) -> None:
+    # Given: agent A changed a file, agent B advanced shared current, and A's baseline vanished.
+    target = tmp_path / "app.py"
+    _write(target, "before")
+    agent_a = ProvenanceLifecycle(tmp_path)
+    _ = agent_a.start_turn("agent-a", "turn-a", mutation_capable=True)
+    baseline_path = agent_a.turn_baseline_path("agent-a", "turn-a")
+    _write(target, "after")
+    agent_b = ProvenanceLifecycle(tmp_path)
+    _ = agent_b.start_turn("agent-b", "turn-b")
+    baseline_path.unlink()
+
+    # When/Then: post-mutation resume cannot reconstruct a baseline from advanced current.
+    with pytest.raises(MissingTurnBaselineError):
+        ProvenanceLifecycle(tmp_path).resume_turn(
+            "agent-a",
+            "turn-a",
+            mutation_capable=True,
+        )
 
 
 def test_pretool_resume_full_bootstraps_after_workspace_store_failure(
