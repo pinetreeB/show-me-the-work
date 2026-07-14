@@ -506,6 +506,30 @@ def test_check_ignores_index_only_removal_of_excluded_tracked_file(
     assert "src/core.py" not in result.stdout
 
 
+def test_check_ignores_intent_to_add_for_preexisting_excluded_file(
+    tmp_path: Path,
+) -> None:
+    # Given: an excluded untracked file already exists before the observed turn.
+    init_repo(tmp_path)
+    write_project_file(tmp_path, "src/core.py", "stable\n")
+    write_project_file(
+        tmp_path,
+        ".fable-lite/provenance-config.json",
+        json.dumps({"version": 1, "exclude": ["src/**"]}),
+    )
+    _ = start_observed_turn(tmp_path, prompt="프로젝트 상태를 읽어줘")
+
+    # When: Git records only intent-to-add without changing the file bytes.
+    git(tmp_path, "add", "-N", "src/core.py")
+    result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    # Then: the index-only operation does not become a filesystem CREATE.
+    assert (tmp_path / "src/core.py").read_text(encoding="utf-8") == "stable\n"
+    assert result.returncode == 0, result.stdout
+    assert "changed: 0" in result.stdout
+    assert "src/core.py" not in result.stdout
+
+
 def test_check_reports_provenance_finding_for_ambiguous_active_turns(
     tmp_path: Path,
 ) -> None:
