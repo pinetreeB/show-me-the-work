@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 import re
 from typing import TypeAlias
 
+from .design_gate import design_domain, design_gate_enabled
 from .risk_terms import risk_flags
 
 JsonValue: TypeAlias = str | int | bool | list[str]
@@ -217,6 +219,10 @@ def classify_prompt(payload: Mapping[str, object]) -> JsonObject:
     ) and not is_briefing
     risks = risk_flags(prompt)
     packs: list[str] = []
+    root_value = payload.get("project_root")
+    root = Path(root_value) if isinstance(root_value, str) else Path.cwd()
+    domain = design_domain(prompt, requested_paths)
+    design_required = domain == "UI" and design_gate_enabled(root)
 
     if is_debug:
         packs.append("investigation")
@@ -224,6 +230,8 @@ def classify_prompt(payload: Mapping[str, object]) -> JsonObject:
         packs.append("verification-grounding")
     if is_multi:
         packs.append("completion")
+    if design_required:
+        packs.append("design-review")
 
     mode = "quick"
     if is_debug or risks:
@@ -246,5 +254,7 @@ def classify_prompt(payload: Mapping[str, object]) -> JsonObject:
         "needs_goals": needs_goals,
         "requested_paths": requested_paths,
         "briefing": is_briefing,
+        "domain": domain,
+        "design_required": design_required,
         "message": message,
     }

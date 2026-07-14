@@ -17,6 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--agent")
     check.add_argument("--since-file")
     check.add_argument("--card")
+    check.add_argument("--design", action="store_true")
     check.set_defaults(func=run_check)
 
     brief = subparsers.add_parser("brief", help="위임 프롬프트 규율 블록을 생성합니다.")

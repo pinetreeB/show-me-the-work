@@ -3,6 +3,7 @@ from __future__ import annotations
 from argparse import Namespace
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, cast
 
 from core.classify import classify_prompt
 from core.adapter_observation import CanonicalInvocation, reconcile_turn
@@ -58,11 +59,24 @@ class CheckResult:
         )
 
 
+class CheckArgs(Protocol):
+    design: bool
+    card: str | None
+    root: str | None
+    agent: str | None
+    since_file: str | None
+
+
 def run_check(args: Namespace) -> int:
-    card = load_task_card(Path(str(args.card))) if args.card else None
-    root = Path(str(args.root or Path.cwd())).resolve()
-    agent = str(args.agent or (card.owner if card else ""))
-    since_file = Path(str(args.since_file)).resolve() if args.since_file else (card.path if card else None)
+    values = cast(CheckArgs, cast(object, args))
+    if values.design:
+        from .design_check import run_design_check
+
+        return run_design_check(args)
+    card = load_task_card(Path(values.card)) if values.card else None
+    root = Path(values.root or Path.cwd()).resolve()
+    agent = values.agent or (card.owner if card else "")
+    since_file = Path(values.since_file).resolve() if values.since_file else (card.path if card else None)
     result = evaluate(root, agent, since_file, card)
     print(render(result))
     return 0 if result.is_green() else 1

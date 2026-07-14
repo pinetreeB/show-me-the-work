@@ -103,6 +103,7 @@ def record_event(payload: Mapping[str, JsonValue]) -> JsonObject:
             ledger = default_v2_ledger()
         event_payload: dict[str, JsonValue] = dict(payload)
         _ = event_payload.pop("event_seq", None)
+        _decorate_design_prompt(root, event_payload)
         event_payload["seq"] = sequence_value(ledger.get("event_seq")) + 1
         if ledger.get("schema_version") == 2:
             _ = apply_v2_event(ledger, event_payload)
@@ -111,6 +112,23 @@ def record_event(payload: Mapping[str, JsonValue]) -> JsonObject:
         save_ledger(payload, ledger)
         append_agent_event(root, _agent(payload), event_payload)
         return ledger
+
+
+def _decorate_design_prompt(root: str, payload: dict[str, JsonValue]) -> None:
+    if payload.get("event") != "prompt":
+        return
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str):
+        return
+    from .classify import classify_prompt
+    from .design_gate import dirty_ui_line_baseline, git_head
+
+    result = classify_prompt({"prompt": prompt, "project_root": root})
+    if result.get("design_required") is not True:
+        return
+    payload["design_required"] = True
+    payload["design_baseline_revision"] = git_head(Path(root))
+    payload["design_dirty_baseline"] = dirty_ui_line_baseline(Path(root))
 
 
 def _legacy_ledger_exists(destination: Path) -> bool:
