@@ -297,6 +297,80 @@ def test_adapter_start_reports_scope_too_large_before_hashing_oversized_root(
     ).exists() is False
 
 
+def test_incomplete_adapter_start_never_exposes_phantom_snapshot_ids(
+    tmp_path: Path,
+) -> None:
+    from core.adapter_observation import CanonicalInvocation, start_turn
+    from core.provenance_store import SnapshotStoreError, workspace_current_path
+
+    (tmp_path / "app.py").write_text("stable", encoding="utf-8")
+    invocation = CanonicalInvocation(
+        "codex_cli",
+        "codex",
+        "session",
+        "turn-session",
+        "turn-start",
+        "turn_start",
+        "other",
+        (),
+        "",
+        True,
+        "",
+    )
+    error = SnapshotStoreError(workspace_current_path(tmp_path), "injected")
+
+    with patch(
+        "core.provenance_lifecycle.save_turn_baseline_from_current",
+        side_effect=error,
+    ):
+        report = start_turn(tmp_path, invocation)
+
+    assert report.incomplete is True
+    assert report.status_reason is ProvenanceReason.STORE_WRITE_ERROR
+    assert report.snapshot_id == ""
+    assert report.baseline_snapshot_id == ""
+
+
+def test_pretool_edit_marks_scope_too_large_turn_mutation_capable(
+    tmp_path: Path,
+) -> None:
+    from core.adapter_observation import CanonicalInvocation, begin_invocation
+
+    payload = {
+        "project_root": str(tmp_path),
+        "event": "prompt",
+        "host": "codex_cli",
+        "agent": "codex",
+        "session_id": "session",
+        "turn_id": "turn-session",
+        "prompt": "app.py 수정",
+        "provenance_incomplete": False,
+        "provenance_status": ProvenanceStatus.SCOPE_TOO_LARGE.value,
+        "provenance_status_reason": ProvenanceReason.ENTRY_LIMIT.value,
+    }
+    _ = record_event(payload)
+    invocation = CanonicalInvocation(
+        "codex_cli",
+        "codex",
+        "session",
+        "turn-session",
+        "edit-pre",
+        "pre_tool",
+        "edit",
+        ("app.py",),
+        "",
+        True,
+        "",
+    )
+
+    report = begin_invocation(tmp_path, invocation)
+    turn = active_turn(load_ledger({"project_root": str(tmp_path)}), payload)
+
+    assert report.status is ProvenanceStatus.SCOPE_TOO_LARGE
+    assert turn is not None
+    assert turn["provenance_mutation_capable"] is True
+
+
 def test_adapter_records_shell_effect_and_remote_target_epochs(tmp_path: Path) -> None:
     from core.adapter_observation import (
         CanonicalInvocation,
@@ -331,7 +405,9 @@ def test_adapter_records_shell_effect_and_remote_target_epochs(tmp_path: Path) -
             "",
         )
 
-    _record_status(tmp_path, invocation("read", "shell", "git status --short"), report)
+    _record_status(
+        tmp_path, invocation("read", "shell", "rg --no-config provenance core"), report
+    )
     ledger = load_ledger({"project_root": str(tmp_path)})
     turn = active_turn(ledger, base)
     assert turn is not None
@@ -340,7 +416,11 @@ def test_adapter_records_shell_effect_and_remote_target_epochs(tmp_path: Path) -
 
     _record_status(
         tmp_path,
-        invocation("remote", "shell", 'ssh deploy@host "touch marker"'),
+        invocation(
+            "remote",
+            "shell",
+            'ssh -F none -o StrictHostKeyChecking=yes deploy@host "touch marker"',
+        ),
         report,
     )
     ledger = load_ledger({"project_root": str(tmp_path)})

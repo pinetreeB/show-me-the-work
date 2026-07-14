@@ -179,6 +179,24 @@ def test_finish_turn_deletes_persisted_baseline(tmp_path: Path) -> None:
     assert lifecycle.active_turns == ()
 
 
+def test_resume_rebuilds_missing_turn_baseline_from_persisted_current(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "app.py", "stable")
+    started = ProvenanceLifecycle(tmp_path)
+    result = started.start_turn("codex", "turn-recover")
+    baseline_path = started.turn_baseline_path("codex", "turn-recover")
+    assert result.status is ProvenanceStatus.COMPLETE
+    baseline_path.unlink()
+
+    resumed = ProvenanceLifecycle(tmp_path)
+    resumed.resume_turn("codex", "turn-recover", True)
+
+    assert baseline_path.is_file()
+    assert resumed.active_turns[0].baseline.snapshot_id == result.snapshot.snapshot_id
+    assert resumed.active_turns[0].mutation_capable is True
+
+
 def test_scope_policy_change_forces_turn_start_full_scan(tmp_path: Path) -> None:
     # Given: a reusable current from a successful Stop reconciliation.
     _write(tmp_path / "app.py", "stable")

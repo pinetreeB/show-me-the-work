@@ -26,7 +26,7 @@ from .provenance_store import (
     turn_baseline_path,
     workspace_current_path,
 )
-from .provenance_turn_resume import load_resumed_turn
+from .provenance_turn_resume import MissingTurnBaselineError, load_resumed_turn
 from .provenance_lifecycle_start import can_fast_start, candidate_paths as candidate_paths_for_root
 from .provenance_lifecycle_scope import prime_candidate_scope, scan_snapshot
 from .provenance_types import ProvenanceReason, ProvenanceStatus, Snapshot
@@ -127,9 +127,25 @@ class ProvenanceLifecycle:
     ) -> None:
         if (agent, turn_id) in self._state.turns:
             return
-        self._state.turns[(agent, turn_id)] = load_resumed_turn(
-            self._root, agent, turn_id, self._state.event_seq, mutation_capable
-        )
+        try:
+            turn = load_resumed_turn(
+                self._root, agent, turn_id, self._state.event_seq, mutation_capable
+            )
+        except MissingTurnBaselineError:
+            current = self._state.current
+            if current is None:
+                raise
+            _ = save_turn_baseline_from_current(
+                self._root, agent, turn_id, current
+            )
+            turn = TurnState(
+                agent,
+                turn_id,
+                current,
+                self._state.event_seq,
+                mutation_capable,
+            )
+        self._state.turns[(agent, turn_id)] = turn
 
     def post_tool(self, invocation: Invocation, source: str = "external") -> ObservationResult:
         turn = self._state.turns[(invocation.agent, invocation.turn_id)]

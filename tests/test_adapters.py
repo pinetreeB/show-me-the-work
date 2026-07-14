@@ -153,7 +153,10 @@ def test_verified_remote_turn_recovers_after_fresh_remote_evidence(
         "user_prompt_submit.py",
         {"cwd": str(tmp_path), "prompt": "원격 서비스 설정을 갱신해줘", "session_id": "s1"},
     )
-    remote_command = 'ssh deploy@example.com "touch remote-marker"'
+    remote_command = (
+        'ssh -F none -o StrictHostKeyChecking=yes '
+        'deploy@example.com "touch remote-marker"'
+    )
     remote_payload: HookPayload = {
         "cwd": str(tmp_path),
         "tool_name": "Bash",
@@ -176,7 +179,10 @@ def test_verified_remote_turn_recovers_after_fresh_remote_evidence(
     )
     assert unverified["decision"] == "block"
 
-    verify_command = 'ssh deploy@example.com "python -m pytest tests/"'
+    verify_command = (
+        'ssh -F none -o StrictHostKeyChecking=yes '
+        'deploy@example.com "python -m pytest tests/"'
+    )
     verify_payload: HookPayload = {
         "cwd": str(tmp_path),
         "tool_name": "Bash",
@@ -366,7 +372,10 @@ def test_scope_too_large_turn_still_tracks_and_verifies_remote_mutation(
         "user_prompt_submit.py",
         {"cwd": str(tmp_path), "prompt": "원격 서비스를 갱신해줘", "session_id": "s1"},
     )
-    remote_command = 'ssh deploy@example.com "touch remote-marker"'
+    remote_command = (
+        'ssh -F none -o StrictHostKeyChecking=yes '
+        'deploy@example.com "touch remote-marker"'
+    )
     remote_payload: HookPayload = {
         "cwd": str(tmp_path),
         "tool_name": "Bash",
@@ -386,7 +395,10 @@ def test_scope_too_large_turn_still_tracks_and_verifies_remote_mutation(
     turn = object_value(object_value(ledger["active_turns"])["claude_code:s1:claude"])
     assert isinstance(turn.get("last_remote_mutation_seq"), int)
 
-    verify_command = 'ssh deploy@example.com "python -m pytest tests/"'
+    verify_command = (
+        'ssh -F none -o StrictHostKeyChecking=yes '
+        'deploy@example.com "python -m pytest tests/"'
+    )
     verify_payload: HookPayload = {
         "cwd": str(tmp_path),
         "tool_name": "Bash",
