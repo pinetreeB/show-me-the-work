@@ -6,7 +6,16 @@ import subprocess
 
 from core.ledger import classify_change_kind
 from core.provenance import calculate_net_delta, snapshot_workspace_with_options
-from core.provenance_policy import CONFIG_RELATIVE_PATH, is_harness_state_path
+from core.provenance_lifecycle_scope import (
+    GitTrackedPathsError,
+    git_tracked_paths,
+    persisted_force_paths,
+)
+from core.provenance_policy import (
+    CONFIG_RELATIVE_PATH,
+    canonical_manifest_key,
+    is_harness_state_path,
+)
 from core.provenance_types import Snapshot, SnapshotScanOptions
 from core.verify_state import has_successful_verification as has_successful_verification
 
@@ -47,25 +56,32 @@ def git_changes_since_baseline(
 ) -> list[str]:
     if baseline is None or not paths:
         return paths
+    try:
+        tracked = git_tracked_paths(root)
+    except GitTrackedPathsError:
+        return paths
     current = snapshot_workspace_with_options(
         root,
         SnapshotScanOptions(
             previous=baseline,
-            force_paths=frozenset(paths),
+            force_paths=(frozenset(paths) & tracked)
+            | persisted_force_paths(root, baseline),
         ),
     )
     if current.incomplete:
         return paths
     changed = {delta.path for delta in calculate_net_delta(baseline, current)}
+    baseline_keys = {entry.canonical_key for entry in baseline.entries}
     missing = {
         path
         for path in paths
         if not (root / path).exists() and not (root / path).is_symlink()
+        and canonical_manifest_key(path, baseline.is_casefolded) in baseline_keys
     }
     return [
         path
         for path in paths
-        if path == CONFIG_RELATIVE_PATH or path in changed or path in missing
+        if path in changed or path in missing
     ]
 
 

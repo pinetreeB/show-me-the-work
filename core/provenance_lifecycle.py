@@ -242,7 +242,15 @@ class ProvenanceLifecycle:
         if first.status is ProvenanceStatus.SCOPE_TOO_LARGE:
             return self._mark_scope_too_large(self._result(first, (), full_scan, 0))
         if first.incomplete:
-            return self._mark_incomplete(self._result(first, (), full_scan, 0))
+            reason = (
+                first.status_reason
+                if first.status_reason is not ProvenanceReason.NONE
+                else ProvenanceReason.OBSERVATION_ERROR
+            )
+            return self._mark_incomplete(
+                self._result(first, (), full_scan, 0),
+                reason,
+            )
         committed = self._commit_if_current(generation, first, agent, source, full_scan)
         if committed is not None:
             return committed

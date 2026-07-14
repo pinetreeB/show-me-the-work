@@ -4,6 +4,7 @@ from dataclasses import replace
 import io
 import json
 from pathlib import Path
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -265,6 +266,32 @@ def test_scope_policy_change_forces_turn_start_full_scan(tmp_path: Path) -> None
 
     # Then: metadata reuse is disabled for that turn.
     assert result.full_scan is True
+
+
+def test_turn_start_fails_closed_when_git_tracked_discovery_fails(
+    tmp_path: Path,
+) -> None:
+    # Given: a Git workspace whose tracked-path query fails unexpectedly.
+    _write(tmp_path / "app.py", "stable")
+    (tmp_path / ".git").mkdir()
+    failed = subprocess.CompletedProcess[bytes](
+        args=["git", "ls-files"],
+        returncode=128,
+        stdout=b"",
+        stderr=b"fatal: corrupt index",
+    )
+
+    # When: provenance starts a turn without reliable tracked-path evidence.
+    with patch(
+        "core.provenance_lifecycle_scope.subprocess.run",
+        return_value=failed,
+    ):
+        result = ProvenanceLifecycle(tmp_path).start_turn("codex", "turn-git-failure")
+
+    # Then: the observation is incomplete rather than silently omitting tracked paths.
+    assert result.status is ProvenanceStatus.INCOMPLETE
+    assert result.status_reason is ProvenanceReason.SNAPSHOT_UNAVAILABLE
+    assert result.incomplete is True
 
 
 def test_scope_too_large_start_returns_explicit_status_without_committing_baseline(
