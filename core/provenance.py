@@ -249,10 +249,10 @@ def _visit_reparse(
     context: _ScanContext,
     state: _ScanState,
 ) -> None:
+    if not _in_scope(info.relative, context):
+        return
     if stat.S_ISDIR(info.metadata.st_mode):
         state.issues.append(ScanIssue(info.relative, "unstable_reparse"))
-        return
-    if not _in_scope(info.relative, context):
         return
     if not _reserve_entry(info.metadata.st_size, context, state):
         return

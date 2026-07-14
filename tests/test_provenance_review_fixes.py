@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
@@ -205,3 +206,35 @@ def test_root_fablize_is_harness_state_but_nested_and_similar_names_are_observed
     assert is_harness_state_path(".fablize/state.json") is True
     assert is_harness_state_path("nested/.fablize/user.json") is False
     assert is_harness_state_path(".fablize-user/data.json") is False
+
+
+def test_excluded_directory_reparse_is_skipped_but_forced_scope_stays_incomplete(
+    tmp_path: Path,
+) -> None:
+    junction = tmp_path / "junction"
+    _write(junction / "inside.txt", "data")
+    _write(
+        tmp_path / ".fable-lite" / "provenance-config.json",
+        json.dumps({"version": 1, "exclude": ["junction"]}),
+    )
+
+    def directory_reparse(metadata: os.stat_result, windows: bool) -> bool:
+        return windows and stat.S_ISDIR(metadata.st_mode)
+
+    with patch.object(provenance, "_is_non_symlink_reparse", side_effect=directory_reparse):
+        excluded = provenance.snapshot_workspace(tmp_path, windows=True)
+        forced = provenance.snapshot_workspace_with_options(
+            tmp_path,
+            provenance.SnapshotScanOptions(
+                windows=True,
+                force_paths=frozenset({"junction"}),
+            ),
+        )
+
+    assert excluded.incomplete is False
+    assert all(issue.path != "junction" for issue in excluded.issues)
+    assert forced.incomplete is True
+    assert (forced.issues[0].path, forced.issues[0].reason) == (
+        "junction",
+        "unstable_reparse",
+    )
