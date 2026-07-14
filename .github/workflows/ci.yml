@@ -45,7 +45,7 @@ jobs:
         run: |
           python -m venv .ci-venv
           ${{ matrix.venv_python }} -m pip install --no-index --find-links dist fable-lite
-          ${{ matrix.venv_python }} -I -m fable_lite --help
+          ${{ matrix.venv_python }} -P -m fable_lite --help
       - name: Upload fresh W9 receipt and wheel
         if: always()
         uses: actions/upload-artifact@v4
