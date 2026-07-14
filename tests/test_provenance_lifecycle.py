@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 from unittest.mock import patch
@@ -294,6 +295,10 @@ def test_turn_start_fails_closed_when_git_tracked_discovery_fails(
     assert result.incomplete is True
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="casefold tracked-path matching relies on a case-insensitive filesystem",
+)
 def test_turn_start_casefolds_tracked_paths_before_policy_selection(
     tmp_path: Path,
 ) -> None:
