@@ -125,9 +125,8 @@ _WINDOWS_DRIVE_RE: Final = re.compile(r"^[A-Za-z]:[\\/]")
 _READ_ONLY_COMMANDS: Final = frozenset(
     {"cat", "get-content", "git", "ls", "pwd", "rg", "test-path", "whoami"}
 )
-_READ_ONLY_GIT_SUBCOMMANDS: Final = frozenset(
-    {"diff", "log", "rev-parse", "show", "status"}
-)
+_READ_ONLY_GIT_SUBCOMMANDS: Final = frozenset({"rev-parse", "status"})
+_DIFFING_GIT_SUBCOMMANDS: Final = frozenset({"diff", "log", "show"})
 
 
 class ShellEffect(StrEnum):
@@ -250,12 +249,21 @@ def _is_proven_read_only(command: str) -> bool:
     segments = command_segments(command)
     if len(segments) != 1:
         return False
-    tokens = without_environment_assignments(segments[0])
+    raw_tokens = segments[0]
+    if raw_tokens and _ENV_ASSIGNMENT_RE.fullmatch(raw_tokens[0]):
+        return False
+    tokens = without_environment_assignments(raw_tokens)
     if not tokens:
         return False
     name = command_name(tokens[0])
     if name not in _READ_ONLY_COMMANDS:
         return False
+    arguments = tuple(clean_token(token).casefold() for token in tokens[1:])
+    if name == "rg":
+        return not any(
+            argument == "--pre" or argument.startswith("--pre=")
+            for argument in arguments
+        )
     if name != "git":
         return True
     if len(tokens) < 2:
@@ -263,6 +271,8 @@ def _is_proven_read_only(command: str) -> bool:
     subcommand = clean_token(tokens[1]).casefold()
     if subcommand in _READ_ONLY_GIT_SUBCOMMANDS:
         return True
+    if subcommand in _DIFFING_GIT_SUBCOMMANDS:
+        return "--no-ext-diff" in arguments and "--no-textconv" in arguments
     return subcommand == "branch" and tuple(tokens[2:]) == ("--show-current",)
 
 

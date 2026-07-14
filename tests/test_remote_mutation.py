@@ -254,3 +254,23 @@ def test_jump_host_and_localhost_do_not_gain_local_provenance_authority() -> Non
     assert jump.remote_target_ids == ("ssh://deploy@host:22",)
     assert localhost.effect is ShellEffect.PROVEN_REMOTE_ONLY
     assert localhost.remote_target_ids == ("ssh://localhost:22",)
+
+
+def test_read_only_allowlist_rejects_external_program_escape_hatches() -> None:
+    cases = (
+        ("git diff", ShellEffect.LOCAL_OR_UNKNOWN),
+        ("git diff --ext-diff", ShellEffect.LOCAL_OR_UNKNOWN),
+        ("git show --textconv HEAD:file.py", ShellEffect.LOCAL_OR_UNKNOWN),
+        (
+            "GIT_EXTERNAL_DIFF=opaque-writer git diff --no-ext-diff --no-textconv",
+            ShellEffect.LOCAL_OR_UNKNOWN,
+        ),
+        ("rg --pre opaque-writer needle .", ShellEffect.LOCAL_OR_UNKNOWN),
+        (
+            "git diff --no-ext-diff --no-textconv",
+            ShellEffect.PROVEN_READ_ONLY,
+        ),
+    )
+
+    for command, expected in cases:
+        assert classify_shell_effect(command).effect is expected, command
