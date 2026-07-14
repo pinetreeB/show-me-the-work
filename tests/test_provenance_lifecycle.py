@@ -294,6 +294,28 @@ def test_turn_start_fails_closed_when_git_tracked_discovery_fails(
     assert result.incomplete is True
 
 
+def test_turn_start_casefolds_tracked_paths_before_policy_selection(
+    tmp_path: Path,
+) -> None:
+    # Given: Git index casing differs from an excluded Windows filesystem path.
+    _write(tmp_path / "src" / "core.py", "tracked")
+    _write(
+        tmp_path / ".fable-lite" / "provenance-config.json",
+        json.dumps({"version": 1, "exclude": ["src/**"]}),
+    )
+
+    # When: lifecycle discovers the same tracked path with Git's different casing.
+    with patch(
+        "core.provenance_lifecycle_scope.git_tracked_paths",
+        return_value=frozenset({"SRC/CORE.PY"}),
+    ):
+        result = ProvenanceLifecycle(tmp_path).start_turn("codex", "turn-casefold")
+
+    # Then: policy selection and scanner matching both retain the source entry.
+    assert result.snapshot is not None
+    assert "src/core.py" in {entry.path for entry in result.snapshot.entries}
+
+
 def test_scope_too_large_start_returns_explicit_status_without_committing_baseline(
     tmp_path: Path,
 ) -> None:

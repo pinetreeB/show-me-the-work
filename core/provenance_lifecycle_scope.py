@@ -13,6 +13,7 @@ from .provenance_types import (
     DEFAULT_FULL_SCAN_SECONDS,
     DEFAULT_INCREMENTAL_SCAN_SECONDS,
     ProvenanceReason,
+    ProvenanceConfig,
     ProvenanceStatus,
     ScanBudget,
     Snapshot,
@@ -104,33 +105,83 @@ def persisted_force_paths(root: Path, previous: Snapshot | None) -> frozenset[st
 
 
 def git_tracked_paths(root: Path) -> frozenset[str]:
+    head = _run_git(
+        root,
+        "ls-tree",
+        "-r",
+        "--name-only",
+        "-z",
+        "HEAD",
+    )
+    if head is None:
+        return frozenset()
+    if head.returncode != 0:
+        if not _has_git_metadata(root):
+            return frozenset()
+        probe = _run_git(root, "rev-parse", "--verify", "HEAD")
+        if probe is not None and probe.returncode == 0:
+            raise GitTrackedPathsError("git HEAD tree discovery failed")
+        head_paths = frozenset[str]()
+    else:
+        head_paths = _decode_git_paths(head.stdout)
+    staged = _run_git(
+        root,
+        "diff",
+        "--cached",
+        "--name-only",
+        "-z",
+        "--diff-filter=ACMR",
+    )
+    if staged is None or staged.returncode != 0:
+        raise GitTrackedPathsError("git tracked-path discovery failed")
+    return head_paths | _decode_git_paths(staged.stdout)
+
+
+def _run_git(
+    root: Path,
+    *args: str,
+) -> subprocess.CompletedProcess[bytes] | None:
     try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z"],
+        return subprocess.run(
+            ["git", "-C", str(root), *args],
             check=False,
             capture_output=True,
         )
     except OSError as exc:
         if _has_git_metadata(root):
             raise GitTrackedPathsError(str(exc)) from exc
-        return frozenset()
-    if result.returncode != 0:
-        if _has_git_metadata(root):
-            raise GitTrackedPathsError("git ls-files failed")
-        return frozenset()
+        return None
+
+
+def _decode_git_paths(output: bytes) -> frozenset[str]:
     return frozenset(
         raw.decode("utf-8", errors="replace").replace("\\", "/")
-        for raw in result.stdout.split(b"\0")
+        for raw in output.split(b"\0")
         if raw
     )
 
 
 def tracked_force_paths(root: Path) -> frozenset[str]:
-    config = load_provenance_config(root)
+    config = _casefolded_config(load_provenance_config(root))
     return frozenset(
         path
         for path in git_tracked_paths(root)
-        if not is_hard_excluded(path) and not is_path_in_scope(path, config)
+        if not is_hard_excluded(_policy_path(path))
+        and not is_path_in_scope(_policy_path(path), config)
+    )
+
+
+def _policy_path(path: str) -> str:
+    return path.casefold() if os.name == "nt" else path
+
+
+def _casefolded_config(config: ProvenanceConfig) -> ProvenanceConfig:
+    if os.name != "nt":
+        return config
+    return ProvenanceConfig(
+        include=tuple(pattern.casefold() for pattern in config.include),
+        exclude=tuple(pattern.casefold() for pattern in config.exclude),
+        generated=tuple(pattern.casefold() for pattern in config.generated),
     )
 
 
