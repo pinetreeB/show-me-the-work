@@ -361,24 +361,34 @@ def test_check_git_backstop_observes_changes_excluded_at_turn_baseline(
     # Given: tracked files are excluded by user config or a soft-excluded directory at turn start.
     init_repo(tmp_path)
     write_project_file(tmp_path, "src/core.py", "safe\n")
+    write_project_file(tmp_path, "src/deleted.py", "delete me\n")
     write_project_file(tmp_path, "node_modules/dep/index.js", "safe dependency\n")
     write_project_file(
         tmp_path,
         ".fable-lite/provenance-config.json",
         json.dumps({"version": 1, "exclude": ["src/**"]}),
     )
-    git(tmp_path, "add", "-f", "src/core.py", "node_modules/dep/index.js")
+    git(
+        tmp_path,
+        "add",
+        "-f",
+        "src/core.py",
+        "src/deleted.py",
+        "node_modules/dep/index.js",
+    )
     git(tmp_path, "commit", "-m", "add excluded tracked files")
     _ = start_observed_turn(tmp_path, prompt="excluded files 수정해줘")
 
     # When: both baseline-excluded tracked files are changed during the active turn.
     write_project_file(tmp_path, "src/core.py", "backdoor\n")
+    (tmp_path / "src" / "deleted.py").unlink()
     write_project_file(tmp_path, "node_modules/dep/index.js", "backdoor dependency\n")
     result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
 
     # Then: the independent Git backstop keeps both current-turn changes visible.
     assert result.returncode == 1
     assert "src/core.py" in result.stdout
+    assert "src/deleted.py" in result.stdout
     assert "node_modules/dep/index.js" in result.stdout
 
 

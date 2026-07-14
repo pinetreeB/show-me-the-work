@@ -57,10 +57,15 @@ def git_changes_since_baseline(
     if current.incomplete:
         return paths
     changed = {delta.path for delta in calculate_net_delta(baseline, current)}
+    missing = {
+        path
+        for path in paths
+        if not (root / path).exists() and not (root / path).is_symlink()
+    }
     return [
         path
         for path in paths
-        if path == CONFIG_RELATIVE_PATH or path in changed
+        if path == CONFIG_RELATIVE_PATH or path in changed or path in missing
     ]
 
 
