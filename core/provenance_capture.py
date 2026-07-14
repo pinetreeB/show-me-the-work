@@ -10,7 +10,7 @@ import stat
 import time
 from typing import Final
 
-from .provenance_types import EntryKind, ManifestEntry, ScanIssue
+from .provenance_types import EntryKind, ManifestEntry, ProvenanceReason, ScanIssue
 
 HASH_CHUNK_BYTES: Final = 1024 * 1024
 MAX_CAPTURE_WORKERS: Final = 32
@@ -20,7 +20,7 @@ MAX_CAPTURE_WORKERS: Final = 32
 class CapturedPath:
     entry: ManifestEntry | None
     issue: ScanIssue | None
-    status_reason: str = ""
+    status_reason: ProvenanceReason = ProvenanceReason.NONE
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +38,7 @@ def capture_regular(
 ) -> CapturedPath:
     for attempt in range(2):
         if _deadline_exceeded(deadline):
-            return CapturedPath(None, None, "deadline")
+            return CapturedPath(None, None, ProvenanceReason.DEADLINE)
         try:
             before = request.metadata if attempt == 0 else os.stat(request.path, follow_symlinks=False)
             if not stat.S_ISREG(before.st_mode):
@@ -52,7 +52,7 @@ def capture_regular(
                     continue
                 digest = _digest_stream(handle, deadline)
                 if digest is None:
-                    return CapturedPath(None, None, "deadline")
+                    return CapturedPath(None, None, ProvenanceReason.DEADLINE)
                 after_fd = os.fstat(handle.fileno())
             after = os.stat(request.path, follow_symlinks=False)
         except OSError:

@@ -10,8 +10,16 @@ from typing import Final, TypeAlias
 
 from .provenance_types import ProvenanceConfig, ProvenanceConfigError, ProvenancePathError
 
-HARD_EXCLUDES: Final = (".git/**", ".fable-lite/**", ".hg/**", ".svn/**")
-HARD_EXCLUDE_DIRS: Final = frozenset((".git", ".fable-lite", ".hg", ".svn"))
+HARD_EXCLUDES: Final = (
+    ".git/**",
+    ".fable-lite/**",
+    ".fablize/**",
+    ".hg/**",
+    ".svn/**",
+)
+HARD_EXCLUDE_DIRS: Final = frozenset(
+    (".git", ".fable-lite", ".fablize", ".hg", ".svn")
+)
 SOFT_EXCLUDES: Final = (
     "node_modules/**",
     ".venv/**",
@@ -81,7 +89,11 @@ def is_path_in_scope(path: str, config: ProvenanceConfig) -> bool:
 
 
 def is_hard_excluded(path: str) -> bool:
-    return _first_segment(path) in HARD_EXCLUDE_DIRS
+    return is_harness_state_path(path) or _first_segment(path) in {".git", ".hg", ".svn"}
+
+
+def is_harness_state_path(path: str) -> bool:
+    return _first_segment(path) in {".fable-lite", ".fablize"}
 
 
 @lru_cache(maxsize=65_536)

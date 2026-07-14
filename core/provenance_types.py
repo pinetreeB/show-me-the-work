@@ -32,6 +32,17 @@ class ProvenanceStatus(StrEnum):
     SCOPE_TOO_LARGE = "scope_too_large"
 
 
+class ProvenanceReason(StrEnum):
+    NONE = ""
+    ENTRY_LIMIT = "entry_limit"
+    BYTE_LIMIT = "byte_limit"
+    DEADLINE = "deadline"
+    SNAPSHOT_UNAVAILABLE = "snapshot_unavailable"
+    STORE_READ_ERROR = "store_read_error"
+    STORE_WRITE_ERROR = "store_write_error"
+    OBSERVATION_ERROR = "observation_error"
+
+
 @dataclass(frozen=True, slots=True)
 class ProvenanceConfigError(ValueError):
     field: str
@@ -109,7 +120,7 @@ class ScanResult:
     reparse_observations: tuple[ManifestEntry, ...]
     issues: tuple[ScanIssue, ...]
     status: ProvenanceStatus = ProvenanceStatus.COMPLETE
-    status_reason: str = ""
+    status_reason: ProvenanceReason = ProvenanceReason.NONE
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +136,7 @@ class Snapshot:
     platform: str = ""
     full_reconciled_at: str | None = None
     status: ProvenanceStatus = ProvenanceStatus.COMPLETE
-    status_reason: str = ""
+    status_reason: ProvenanceReason = ProvenanceReason.NONE
 
     @property
     def incomplete(self) -> bool:

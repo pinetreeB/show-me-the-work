@@ -12,6 +12,7 @@ from uuid import uuid4
 from .provenance_types import (
     EntryKind,
     ManifestEntry,
+    ProvenanceReason,
     ProvenanceStatus,
     ScanIssue,
     Snapshot,
@@ -135,7 +136,7 @@ def _to_value(snapshot: Snapshot) -> dict[str, JsonValue]:
         "platform": snapshot.platform,
         "full_reconciled_at": snapshot.full_reconciled_at,
         "status": snapshot.status.value,
-        "status_reason": snapshot.status_reason,
+        "status_reason": snapshot.status_reason.value,
     }
 
 
@@ -170,7 +171,7 @@ def _from_value(path: Path, value: JsonValue) -> Snapshot:
         platform=_string(path, value.get("platform"), "platform"),
         full_reconciled_at=_optional_string(path, value.get("full_reconciled_at"), "full_reconciled_at"),
         status=_status(path, value.get("status"), issues),
-        status_reason=_optional_string(path, value.get("status_reason"), "status_reason") or "",
+        status_reason=_reason(path, value.get("status_reason")),
     )
 
 
@@ -234,6 +235,14 @@ def _optional_string(path: Path, value: JsonValue | None, field: str) -> str | N
     if value is None:
         return None
     return _string(path, value, field)
+
+
+def _reason(path: Path, value: JsonValue | None) -> ProvenanceReason:
+    raw = _optional_string(path, value, "status_reason") or ""
+    try:
+        return ProvenanceReason(raw)
+    except ValueError as exc:
+        raise SnapshotStoreError(path, "status_reason is invalid") from exc
 
 
 def _integer(path: Path, value: JsonValue | None, field: str) -> int:

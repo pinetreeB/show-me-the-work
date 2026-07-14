@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .provenance_types import ChangeOperation, NetDelta, ProvenanceStatus, Snapshot
+from .provenance_types import (
+    ChangeOperation,
+    NetDelta,
+    ProvenanceReason,
+    ProvenanceStatus,
+    Snapshot,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +62,7 @@ class ObservationResult:
     clean_claim: bool
     stop_cap_reserved: bool
     status: ProvenanceStatus = ProvenanceStatus.COMPLETE
-    status_reason: str = ""
+    status_reason: ProvenanceReason = ProvenanceReason.NONE
 
 
 class LifecycleState:
@@ -69,6 +75,7 @@ class LifecycleState:
     changes: dict[str, ObservedChange]
     turns: dict[tuple[str, str], TurnState]
     incomplete: bool
+    incomplete_reason: ProvenanceReason
     current_is_stop_full: bool
     stop_cap_reservations: set[tuple[str, str]]
 
@@ -80,5 +87,6 @@ class LifecycleState:
         self.changes = {}
         self.turns = {}
         self.incomplete = current.incomplete if current is not None else False
+        self.incomplete_reason = ProvenanceReason.NONE
         self.current_is_stop_full = current.full_reconciled_at is not None if current else False
         self.stop_cap_reservations = set()

@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.classify import classify_prompt
+from core.adapter_observation import CanonicalInvocation, reconcile_turn
 from core.contract import evaluate_r1_contract
 from core.ledger import JsonObject, load_agent_ledger, load_ledger
 from core.scope_guard import evaluate_scope
+from core.provenance_types import ProvenanceStatus
 from .card import TaskCard, card_changed_excludes, card_completion_findings, card_forbidden_findings, card_scope_findings, card_validation_findings, card_verify_success, load_task_card
 from .check_support import (
     changed_since,
@@ -37,6 +39,7 @@ class CheckResult:
     forbidden_messages: list[str]
     verify_messages: list[str]
     card_messages: list[str]
+    provenance_messages: list[str]
     git_warnings: list[str]
     card_path: str
 
@@ -49,6 +52,7 @@ class CheckResult:
             or self.forbidden_messages
             or self.verify_messages
             or self.card_messages
+            or self.provenance_messages
         )
 
 
@@ -65,7 +69,15 @@ def run_check(args: Namespace) -> int:
 def evaluate(root: Path, agent: str, since_file: Path | None, card: TaskCard | None = None) -> CheckResult:
     ledger_payload = {"project_root": str(root), "agent": agent} if agent else {"project_root": str(root)}
     ledger = load_agent_ledger(ledger_payload) if agent else load_ledger(ledger_payload)
-    changed_files, warnings = changed_paths(root, ledger, since_file)
+    ledger, turn_paths, provenance_messages = _reconcile_active_turn(
+        root, agent, ledger
+    )
+    changed_files, warnings = changed_paths(
+        root,
+        ledger,
+        since_file,
+        authoritative_paths=turn_paths,
+    )
     changed_files = [path for path in changed_files if path not in card_changed_excludes(root, card)]
     prompt = string(ledger.get("prompt"))
     verified = card_verify_success(root, agent, ledger, card, has_successful_verification(ledger))
@@ -87,6 +99,7 @@ def evaluate(root: Path, agent: str, since_file: Path | None, card: TaskCard | N
         forbidden_messages=forbidden_messages,
         verify_messages=verify_messages,
         card_messages=card_messages,
+        provenance_messages=provenance_messages,
         git_warnings=warnings,
         card_path=str(card.path) if card else "",
     )
@@ -111,24 +124,124 @@ def render(result: CheckResult) -> str:
     _section(lines, "작업카드 오류", result.card_messages)
     _section(lines, "R1 위반", result.r1_messages)
     _section(lines, "미이행 약속", result.promise_messages)
+    _section(lines, "provenance 관측", result.provenance_messages)
     _section(lines, "git 경고", result.git_warnings)
     return "\n".join(lines)
 
 
-def changed_paths(root: Path, ledger: JsonObject, since_file: Path | None) -> tuple[list[str], list[str]]:
-    paths = string_list(ledger.get("changed_files_seen"))
+def changed_paths(
+    root: Path,
+    ledger: JsonObject,
+    since_file: Path | None,
+    authoritative_paths: list[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    paths = (
+        list(authoritative_paths)
+        if authoritative_paths is not None
+        else string_list(ledger.get("changed_files_seen"))
+    )
     warnings: list[str] = []
-    git_result = git(root, "status", "--porcelain=v1", "-uall")
-    if git_result.returncode == 0:
-        paths = merge(paths, parse_porcelain(git_result.stdout))
-    else:
-        warnings.append("git status 실행 실패: ledger 기준으로만 판정")
+    if authoritative_paths is None:
+        git_result = git(root, "status", "--porcelain=v1", "-uall")
+        if git_result.returncode == 0:
+            paths = merge(paths, parse_porcelain(git_result.stdout))
+        else:
+            warnings.append("git status 실행 실패: ledger 기준으로만 판정")
     paths = [path for path in paths if not is_state_path(path)]
     if since_file is not None:
         marker = relative_to_root(root, since_file)
         paths = [path for path in paths if path != marker]
         paths = [path for path in paths if changed_since(root, path, since_file)]
     return paths, warnings
+
+
+def _reconcile_active_turn(
+    root: Path,
+    agent: str,
+    ledger: JsonObject,
+) -> tuple[JsonObject, list[str] | None, list[str]]:
+    if not agent:
+        return ledger, None, []
+    matches = _agent_turns(ledger, agent)
+    if not matches:
+        return ledger, None, []
+    if len(matches) != 1:
+        return (
+            ledger,
+            None,
+            ["ambiguous active turn; git fallback으로 보수 판정합니다"],
+        )
+    key, turn = matches[0]
+    identity = _turn_invocation(key, turn)
+    if identity is None:
+        return ledger, None, ["invalid active turn identity; git fallback으로 보수 판정합니다"]
+    report = reconcile_turn(root, identity)
+    refreshed = load_agent_ledger({"project_root": str(root), "agent": agent})
+    refreshed_matches = _agent_turns(refreshed, agent)
+    refreshed_turn = refreshed_matches[0][1] if len(refreshed_matches) == 1 else turn
+    if report.incomplete:
+        return (
+            refreshed,
+            None,
+            [f"incomplete active turn: {report.status_reason.value or 'unknown'}"],
+        )
+    if report.status is ProvenanceStatus.SCOPE_TOO_LARGE:
+        if refreshed_turn.get("provenance_mutation_capable") is True:
+            return (
+                refreshed,
+                None,
+                ["scope too large for local-or-unknown active turn"],
+            )
+        return refreshed, [], []
+    return refreshed, _turn_delta_paths(refreshed_turn), []
+
+
+def _agent_turns(ledger: JsonObject, agent: str) -> list[tuple[str, JsonObject]]:
+    turns = ledger.get("active_turns")
+    if not isinstance(turns, dict):
+        return []
+    return [
+        (key, turn)
+        for key, turn in turns.items()
+        if isinstance(key, str)
+        and isinstance(turn, dict)
+        and turn.get("agent") == agent
+    ]
+
+
+def _turn_invocation(key: str, turn: JsonObject) -> CanonicalInvocation | None:
+    parts = key.split(":", 2)
+    turn_id = turn.get("turn_id")
+    if len(parts) != 3 or not isinstance(turn_id, str) or not turn_id:
+        return None
+    return CanonicalInvocation(
+        parts[0],
+        parts[2],
+        parts[1],
+        turn_id,
+        "fable-lite-check",
+        "check",
+        "other",
+        (),
+        "",
+        True,
+        "",
+    )
+
+
+def _turn_delta_paths(turn: JsonObject) -> list[str]:
+    revisions = turn.get("path_revisions")
+    if not isinstance(revisions, dict):
+        return string_list(turn.get("changed_files_seen"))
+    return list(
+        dict.fromkeys(
+            path
+            for revision in revisions.values()
+            if isinstance(revision, dict)
+            and isinstance(path := revision.get("path"), str)
+            and path
+        )
+    )
 
 
 def unverified_changes(changed_files: list[str], ledger: JsonObject, verified: bool | None = None) -> list[str]:

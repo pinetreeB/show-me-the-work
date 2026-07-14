@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import StrEnum
 import re
 import shlex
 from typing import Final
@@ -120,6 +122,53 @@ _SCP_ALL_VALUE_OPTIONS: Final = frozenset(
 )
 _ENV_ASSIGNMENT_RE: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
 _WINDOWS_DRIVE_RE: Final = re.compile(r"^[A-Za-z]:[\\/]")
+_READ_ONLY_COMMANDS: Final = frozenset(
+    {"cat", "get-content", "git", "ls", "pwd", "rg", "test-path", "whoami"}
+)
+_READ_ONLY_GIT_SUBCOMMANDS: Final = frozenset(
+    {"diff", "log", "rev-parse", "show", "status"}
+)
+
+
+class ShellEffect(StrEnum):
+    PROVEN_READ_ONLY = "proven_read_only"
+    PROVEN_REMOTE_ONLY = "proven_remote_only"
+    LOCAL_OR_UNKNOWN = "local_or_unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteTargetHint:
+    host: str
+    port: int = 22
+    user: str = ""
+
+    @property
+    def target_id(self) -> str:
+        authority = f"{self.user}@{self.host}" if self.user else self.host
+        return f"ssh://{authority}:{self.port}"
+
+
+@dataclass(frozen=True, slots=True)
+class ShellClassification:
+    effect: ShellEffect
+    remote_targets: tuple[RemoteTargetHint, ...] = ()
+
+    @property
+    def remote_target_ids(self) -> tuple[str, ...]:
+        return tuple(target.target_id for target in self.remote_targets)
+
+
+def classify_shell_effect(command: str) -> ShellClassification:
+    targets = _remote_targets(command)
+    if _is_proven_read_only(command):
+        return ShellClassification(ShellEffect.PROVEN_READ_ONLY)
+    if (
+        targets
+        and is_remote_only_mutation_command(command)
+        and not _has_ambiguous_remote_options(command)
+    ):
+        return ShellClassification(ShellEffect.PROVEN_REMOTE_ONLY, targets)
+    return ShellClassification(ShellEffect.LOCAL_OR_UNKNOWN, targets)
 
 
 def command_segments(command: str) -> tuple[tuple[str, ...], ...]:
@@ -191,6 +240,147 @@ def is_remote_only_mutation_command(command: str) -> bool:
     if name == "scp":
         return _is_scp_upload(tokens[1:])
     return False
+
+
+def _is_proven_read_only(command: str) -> bool:
+    if any(marker in command for marker in ("\n", "\r", "`", "$(", ">", "<")):
+        return False
+    if command_operators(command):
+        return False
+    segments = command_segments(command)
+    if len(segments) != 1:
+        return False
+    tokens = without_environment_assignments(segments[0])
+    if not tokens:
+        return False
+    name = command_name(tokens[0])
+    if name not in _READ_ONLY_COMMANDS:
+        return False
+    if name != "git":
+        return True
+    if len(tokens) < 2:
+        return False
+    subcommand = clean_token(tokens[1]).casefold()
+    if subcommand in _READ_ONLY_GIT_SUBCOMMANDS:
+        return True
+    return subcommand == "branch" and tuple(tokens[2:]) == ("--show-current",)
+
+
+def _remote_targets(command: str) -> tuple[RemoteTargetHint, ...]:
+    found: list[RemoteTargetHint] = []
+    for segment in command_segments(command):
+        tokens, nested = unwrap_command_wrapper(segment)
+        candidates = _remote_targets(nested) if nested else _targets_from_tokens(tokens)
+        for candidate in candidates:
+            if candidate not in found:
+                found.append(candidate)
+    return tuple(found)
+
+
+def _targets_from_tokens(tokens: tuple[str, ...]) -> tuple[RemoteTargetHint, ...]:
+    if not tokens:
+        return ()
+    name = command_name(tokens[0])
+    arguments = tokens[1:]
+    if name == "ssh":
+        operands = _operands(
+            arguments,
+            _SSH_ALL_FLAGS,
+            _SSH_ALL_VALUE_OPTIONS,
+            validate_values=False,
+        )
+        if operands is None or not operands:
+            return ()
+        target = _target_from_authority(
+            operands[0],
+            _option_value(arguments, "-p", "port"),
+            _option_value(arguments, "-l", "user"),
+        )
+        return (target,) if target is not None else ()
+    if name == "scp":
+        operands = _operands(
+            arguments,
+            _SCP_ALL_FLAGS,
+            _SCP_ALL_VALUE_OPTIONS,
+            validate_values=False,
+        )
+        if operands is None or len(operands) < 2:
+            return ()
+        authority, separator, path = operands[-1].partition(":")
+        if not separator or not authority or not path or _WINDOWS_DRIVE_RE.match(operands[-1]):
+            return ()
+        target = _target_from_authority(
+            authority,
+            _option_value(arguments, "-P", "port"),
+            _option_value(arguments, "-l", "user"),
+        )
+        return (target,) if target is not None else ()
+    return ()
+
+
+def _target_from_authority(
+    authority: str,
+    port_value: str,
+    user_override: str,
+) -> RemoteTargetHint | None:
+    cleaned = clean_token(authority)
+    if not cleaned or any(marker in cleaned for marker in ("/", "\\", "[", "]")):
+        return None
+    user, separator, host = cleaned.rpartition("@")
+    if not separator:
+        host = cleaned
+        user = user_override
+    elif user_override:
+        user = user_override
+    if not host or any(character.isspace() for character in host):
+        return None
+    port = int(port_value) if port_value.isdigit() else 22
+    if not 1 <= port <= 65535:
+        return None
+    return RemoteTargetHint(host.casefold(), port, user)
+
+
+def _option_value(
+    arguments: tuple[str, ...],
+    short_option: str,
+    config_name: str,
+) -> str:
+    value = ""
+    index = 0
+    while index < len(arguments):
+        argument = clean_token(arguments[index])
+        if argument == short_option and index + 1 < len(arguments):
+            value = clean_token(arguments[index + 1])
+            index += 2
+            continue
+        if argument.startswith(short_option) and len(argument) > len(short_option):
+            value = argument[len(short_option) :]
+        if argument == "-o" and index + 1 < len(arguments):
+            option = clean_token(arguments[index + 1])
+            name, separator, raw_value = option.partition("=")
+            if not separator:
+                name, separator, raw_value = option.partition(" ")
+            if separator and name.casefold() == config_name.casefold():
+                value = raw_value.strip()
+            index += 2
+            continue
+        index += 1
+    return value
+
+
+def _has_ambiguous_remote_options(command: str) -> bool:
+    lowered = command.casefold()
+    return any(
+        marker in lowered
+        for marker in (
+            " -j ",
+            " -j",
+            "proxyjump=",
+            "proxycommand=",
+            "hostname=",
+            "remotecommand=",
+        )
+    )
 
 
 def is_remote_mutation_command(command: str) -> bool:

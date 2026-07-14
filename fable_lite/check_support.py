@@ -5,6 +5,7 @@ import re
 import subprocess
 
 from core.ledger import classify_change_kind
+from core.provenance_policy import is_harness_state_path
 from core.verify_state import has_successful_verification as has_successful_verification
 
 SENTINEL_RE = re.compile(r"(?P<path>(?:[\w./\\-]+/)?\.done[\w_.-]*|tmp[/\\]\.done[\w_.-]*)", re.IGNORECASE)
@@ -34,10 +35,7 @@ def parse_porcelain(output: str) -> list[str]:
 
 
 def is_state_path(path: str) -> bool:
-    normalized = path.replace("\\", "/")
-    while normalized.startswith("./"):
-        normalized = normalized[2:]
-    return normalized == ".fable-lite" or normalized.startswith(".fable-lite/")
+    return is_harness_state_path(path)
 
 
 def changed_since(root: Path, path: str, since_file: Path) -> bool:
