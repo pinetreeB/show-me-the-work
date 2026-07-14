@@ -26,7 +26,11 @@ from .provenance_store import (
     turn_baseline_path,
     workspace_current_path,
 )
-from .provenance_turn_resume import MissingTurnBaselineError, load_resumed_turn
+from .provenance_turn_resume import (
+    MissingTurnBaselineError,
+    TurnBootstrapError,
+    load_resumed_turn,
+)
 from .provenance_lifecycle_start import can_fast_start, candidate_paths as candidate_paths_for_root
 from .provenance_lifecycle_scope import prime_candidate_scope, scan_snapshot
 from .provenance_types import ProvenanceReason, ProvenanceStatus, Snapshot
@@ -124,6 +128,8 @@ class ProvenanceLifecycle:
         agent: str,
         turn_id: str,
         mutation_capable: bool = False,
+        *,
+        allow_full_bootstrap: bool = False,
     ) -> None:
         if (agent, turn_id) in self._state.turns:
             return
@@ -134,7 +140,19 @@ class ProvenanceLifecycle:
         except MissingTurnBaselineError:
             current = self._state.current
             if current is None:
-                raise
+                if not allow_full_bootstrap:
+                    raise
+                result = self.start_turn(agent, turn_id, mutation_capable)
+                if (
+                    result.status is ProvenanceStatus.COMPLETE
+                    and not result.incomplete
+                ):
+                    return
+                raise TurnBootstrapError(
+                    result.status,
+                    result.status_reason,
+                    result.incomplete,
+                )
             _ = save_turn_baseline_from_current(
                 self._root, agent, turn_id, current
             )

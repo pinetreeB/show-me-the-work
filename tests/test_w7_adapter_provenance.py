@@ -438,6 +438,76 @@ def test_adapter_records_shell_effect_and_remote_target_epochs(tmp_path: Path) -
     assert turn["provenance_mutation_capable"] is True
 
 
+def test_plain_git_status_is_contextually_read_only_only_without_exec_config(
+    tmp_path: Path,
+) -> None:
+    from core.adapter_observation import (
+        CanonicalInvocation,
+        ObservationReport,
+        _record_status,
+    )
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    report = ObservationReport("snapshot", "baseline", (), False, False)
+
+    def observe(session_id: str) -> JsonObject:
+        payload: JsonObject = {
+            "project_root": str(tmp_path),
+            "event": "prompt",
+            "host": "codex_cli",
+            "agent": "codex",
+            "session_id": session_id,
+            "turn_id": f"turn-{session_id}",
+            "prompt": "boot",
+        }
+        _ = record_event(payload)
+        invocation = CanonicalInvocation(
+            "codex_cli",
+            "codex",
+            session_id,
+            f"turn-{session_id}",
+            f"status-{session_id}",
+            "post_tool",
+            "shell",
+            (),
+            "git status --short",
+            True,
+            "",
+        )
+        _record_status(tmp_path, invocation, report)
+        turn = active_turn(load_ledger({"project_root": str(tmp_path)}), payload)
+        assert turn is not None
+        return turn
+
+    safe_turn = observe("safe")
+    assert safe_turn.get("provenance_mutation_capable") is not True
+
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "core.fsmonitor", "opaque-writer"],
+        check=True,
+        capture_output=True,
+    )
+    unsafe_turn = observe("unsafe")
+    assert unsafe_turn["provenance_mutation_capable"] is True
+
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "--unset", "core.fsmonitor"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "pager.status", "true"],
+        check=True,
+        capture_output=True,
+    )
+    pager_turn = observe("pager")
+    assert pager_turn["provenance_mutation_capable"] is True
+
+    (tmp_path / "git.cmd").write_text("opaque-writer", encoding="utf-8")
+    shadowed_turn = observe("shadowed")
+    assert shadowed_turn["provenance_mutation_capable"] is True
+
+
 def test_edit_family_always_remains_local_mutation_capable(tmp_path: Path) -> None:
     from core.adapter_observation import (
         CanonicalInvocation,

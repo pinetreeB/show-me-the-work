@@ -197,6 +197,31 @@ def test_resume_rebuilds_missing_turn_baseline_from_persisted_current(
     assert resumed.active_turns[0].mutation_capable is True
 
 
+def test_pretool_resume_full_bootstraps_after_workspace_store_failure(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "app.py", "stable")
+    error = SnapshotStoreError(workspace_current_path(tmp_path), "injected")
+    with patch("core.provenance_lifecycle.save_workspace_current", side_effect=error):
+        failed = ProvenanceLifecycle(tmp_path).start_turn(
+            "codex", "turn-bootstrap"
+        )
+    assert failed.status_reason is ProvenanceReason.STORE_WRITE_ERROR
+    assert workspace_current_path(tmp_path).exists() is False
+
+    recovered = ProvenanceLifecycle(tmp_path)
+    recovered.resume_turn(
+        "codex",
+        "turn-bootstrap",
+        True,
+        allow_full_bootstrap=True,
+    )
+
+    assert workspace_current_path(tmp_path).is_file()
+    assert recovered.turn_baseline_path("codex", "turn-bootstrap").is_file()
+    assert recovered.active_turns[0].mutation_capable is True
+
+
 def test_scope_policy_change_forces_turn_start_full_scan(tmp_path: Path) -> None:
     # Given: a reusable current from a successful Stop reconciliation.
     _write(tmp_path / "app.py", "stable")

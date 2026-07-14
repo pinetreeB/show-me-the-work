@@ -188,6 +188,14 @@ def test_remote_commands_with_local_or_mixed_effects_are_not_remote_only() -> No
         'ssh -y deploy@example.com "touch remote-marker"',
         "ssh -o LocalCommand=touch-local deploy@example.com uptime",
         "ssh -o ProxyCommand=local-proxy deploy@example.com uptime",
+        (
+            'ssh -F none -o StrictHostKeyChecking=yes '
+            '-o "Hostname localhost" remotealias "touch marker"'
+        ),
+        (
+            'ssh -F none -o StrictHostKeyChecking=yes '
+            '-o "ProxyJump localhost" remotealias "touch marker"'
+        ),
         "ssh -o ControlPath=local.sock deploy@example.com uptime",
         'ssh -o StrictHostKeyChecking=accept-new host "touch remote-marker"',
         'ssh -o StrictHostKeyChecking=ask host "touch remote-marker"',
