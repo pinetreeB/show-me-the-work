@@ -80,6 +80,8 @@ def load_provenance_config(root: Path) -> ProvenanceConfig:
 
 @lru_cache(maxsize=262_144)
 def is_path_in_scope(path: str, config: ProvenanceConfig) -> bool:
+    if path == CONFIG_RELATIVE_PATH:
+        return True
     if is_hard_excluded(path):
         return False
     if _matches_any(path, config.include):
@@ -99,6 +101,8 @@ def is_harness_state_path(path: str) -> bool:
 
 @lru_cache(maxsize=65_536)
 def should_descend(path: str, config: ProvenanceConfig) -> bool:
+    if path == CONFIG_RELATIVE_PATH.partition("/")[0]:
+        return True
     if is_hard_excluded(path):
         return False
     if _matches_any(path, config.include):

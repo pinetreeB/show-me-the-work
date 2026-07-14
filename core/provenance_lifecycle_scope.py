@@ -3,19 +3,25 @@ from __future__ import annotations
 from dataclasses import replace
 import os
 from pathlib import Path
+import subprocess
 
 from .agent_log import ledger_transaction
 from .provenance import SnapshotScanOptions, snapshot_workspace_with_options
-from .provenance_policy import is_path_in_scope, load_provenance_config
+from .provenance_policy import is_hard_excluded, is_path_in_scope, load_provenance_config
 from .provenance_store import SnapshotStoreError, save_turn_baseline_from_current, save_workspace_current
 from .provenance_types import (
     DEFAULT_FULL_SCAN_SECONDS,
     DEFAULT_INCREMENTAL_SCAN_SECONDS,
+    ProvenanceReason,
+    ProvenanceStatus,
     ScanBudget,
     Snapshot,
-    ProvenanceStatus,
 )
 from .provenance_lifecycle_types import LifecycleState
+
+
+class GitTrackedPathsError(RuntimeError):
+    pass
 
 
 def scan_snapshot(
@@ -25,6 +31,21 @@ def scan_snapshot(
     full_scan: bool,
 ) -> Snapshot:
     forced = forced_paths | persisted_force_paths(root, previous)
+    try:
+        forced |= tracked_force_paths(root)
+    except GitTrackedPathsError:
+        snapshot = snapshot_workspace_with_options(
+            root,
+            SnapshotScanOptions(
+                previous=None if full_scan else previous,
+                force_paths=forced,
+            ),
+        )
+        return replace(
+            snapshot,
+            status=ProvenanceStatus.INCOMPLETE,
+            status_reason=ProvenanceReason.SNAPSHOT_UNAVAILABLE,
+        )
     return snapshot_workspace_with_options(
         root,
         SnapshotScanOptions(
@@ -80,6 +101,42 @@ def persisted_force_paths(root: Path, previous: Snapshot | None) -> frozenset[st
         return frozenset()
     config = load_provenance_config(root)
     return frozenset(entry.path for entry in previous.entries if not is_path_in_scope(entry.path, config))
+
+
+def git_tracked_paths(root: Path) -> frozenset[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            check=False,
+            capture_output=True,
+        )
+    except OSError as exc:
+        if _has_git_metadata(root):
+            raise GitTrackedPathsError(str(exc)) from exc
+        return frozenset()
+    if result.returncode != 0:
+        if _has_git_metadata(root):
+            raise GitTrackedPathsError("git ls-files failed")
+        return frozenset()
+    return frozenset(
+        raw.decode("utf-8", errors="replace").replace("\\", "/")
+        for raw in result.stdout.split(b"\0")
+        if raw
+    )
+
+
+def tracked_force_paths(root: Path) -> frozenset[str]:
+    config = load_provenance_config(root)
+    return frozenset(
+        path
+        for path in git_tracked_paths(root)
+        if not is_hard_excluded(path) and not is_path_in_scope(path, config)
+    )
+
+
+def _has_git_metadata(root: Path) -> bool:
+    absolute = root.resolve()
+    return any((candidate / ".git").exists() for candidate in (absolute, *absolute.parents))
 
 
 def _new_existing_candidates(

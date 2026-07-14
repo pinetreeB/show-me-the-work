@@ -67,7 +67,7 @@ class _ScanContext:
     root: Path
     config: ProvenanceConfig
     windows: bool
-    force_paths: frozenset[str]
+    force_keys: frozenset[str]
     previous_entries: dict[str, ManifestEntry]
     previous_reparse_observations: dict[str, ManifestEntry]
     budget: ScanBudget
@@ -122,6 +122,7 @@ def snapshot_workspace(
 def snapshot_workspace_with_options(root: Path, options: SnapshotScanOptions) -> Snapshot:
     absolute_root = Path(os.path.abspath(root))
     budget = options.budget or ScanBudget()
+    casefolded = os.name == "nt" if options.windows is None else options.windows
     previous_entries, previous_reparse_observations = _previous_state(
         options.previous,
         options.windows,
@@ -129,8 +130,11 @@ def snapshot_workspace_with_options(root: Path, options: SnapshotScanOptions) ->
     context = _ScanContext(
         root=absolute_root,
         config=load_provenance_config(absolute_root),
-        windows=os.name == "nt" if options.windows is None else options.windows,
-        force_paths=options.force_paths,
+        windows=casefolded,
+        force_keys=frozenset(
+            canonical_manifest_key(path, casefolded)
+            for path in options.force_paths
+        ),
         previous_entries=previous_entries,
         previous_reparse_observations=previous_reparse_observations,
         budget=budget,
@@ -221,7 +225,7 @@ def _visit_path(
             if not _reserve_entry(metadata.st_size, context, state):
                 return
             key = relative.casefold() if context.windows else relative
-            previous = None if relative in context.force_paths else context.previous_entries.get(key)
+            previous = None if key in context.force_keys else context.previous_entries.get(key)
             state.regular_requests.append(CaptureRequest(Path(child.path), relative, key, metadata, previous))
             return
     info = _PathInfo(
@@ -312,13 +316,16 @@ def _capture_request(
 
 
 def _in_scope(relative: str, context: _ScanContext) -> bool:
-    return is_path_in_scope(relative, context.config) or relative in context.force_paths
+    return (
+        is_path_in_scope(relative, context.config)
+        or canonical_manifest_key(relative, context.windows) in context.force_keys
+    )
 
 
 def _has_forced_descendant(relative: str, context: _ScanContext) -> bool:
-    prefix = f"{relative}/"
+    prefix = f"{canonical_manifest_key(relative, context.windows)}/"
     return not is_hard_excluded(relative) and any(
-        path.startswith(prefix) for path in context.force_paths
+        key.startswith(prefix) for key in context.force_keys
     )
 
 

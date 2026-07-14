@@ -392,6 +392,120 @@ def test_check_git_backstop_observes_changes_excluded_at_turn_baseline(
     assert "node_modules/dep/index.js" in result.stdout
 
 
+def test_check_blocks_committed_config_exclusion_of_tracked_source(
+    tmp_path: Path,
+) -> None:
+    # Given: config excludes a tracked source before the observed turn begins.
+    init_repo(tmp_path)
+    write_project_file(tmp_path, "src/core.py", "safe\n")
+    write_project_file(
+        tmp_path,
+        ".fable-lite/provenance-config.json",
+        json.dumps({"version": 1, "exclude": ["src/**"]}),
+    )
+    git(
+        tmp_path,
+        "add",
+        "-f",
+        "src/core.py",
+        ".fable-lite/provenance-config.json",
+    )
+    git(tmp_path, "commit", "-m", "add excluded tracked source")
+    _ = start_observed_turn(tmp_path, prompt="src/core.py 수정해줘")
+
+    # When: the agent changes both config and source, then launders Git status by committing.
+    write_project_file(
+        tmp_path,
+        ".fable-lite/provenance-config.json",
+        json.dumps({"version": 1, "exclude": ["src/**", "vendor/**"]}),
+    )
+    write_project_file(tmp_path, "src/core.py", "backdoor\n")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "commit", "-m", "launder config and source changes")
+    result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    # Then: snapshot evidence blocks the turn even though Git status is clean.
+    assert result.returncode == 1, result.stdout
+    assert "src/core.py" in result.stdout
+    assert ".fable-lite/provenance-config.json" in result.stdout
+
+
+def test_check_ignores_untracked_config_and_soft_exclusion_noise(
+    tmp_path: Path,
+) -> None:
+    # Given: an observed turn whose config suppresses vendored and dependency noise.
+    init_repo(tmp_path)
+    write_project_file(
+        tmp_path,
+        ".fable-lite/provenance-config.json",
+        json.dumps({"version": 1, "exclude": ["vendor/**"]}),
+    )
+    _ = start_observed_turn(tmp_path, prompt="프로젝트 상태를 읽어줘")
+
+    # When: only untracked files under config and soft exclusions appear.
+    write_project_file(tmp_path, "vendor/cache.bin", "untracked config noise\n")
+    write_project_file(tmp_path, "node_modules/pkg/index.js", "untracked soft noise\n")
+    result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    # Then: the read-only turn remains clean and excludes both noise paths.
+    assert result.returncode == 0, result.stdout
+    assert "changed: 0" in result.stdout
+    assert "vendor/cache.bin" not in result.stdout
+    assert "node_modules/pkg/index.js" not in result.stdout
+
+
+def test_check_ignores_tracked_file_deleted_before_read_only_turn(
+    tmp_path: Path,
+) -> None:
+    # Given: a tracked file was already deleted before the observed turn starts.
+    init_repo(tmp_path)
+    write_project_file(tmp_path, "src/gone.py", "old\n")
+    git(tmp_path, "add", "src/gone.py")
+    git(tmp_path, "commit", "-m", "add file deleted before turn")
+    (tmp_path / "src/gone.py").unlink()
+    _ = start_observed_turn(tmp_path, prompt="프로젝트 상태를 읽어줘")
+
+    # When: the agent performs no mutation and check reconciles the read-only turn.
+    result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    # Then: the pre-turn deletion is not attributed to this turn.
+    assert result.returncode == 0, result.stdout
+    assert "changed: 0" in result.stdout
+    assert "src/gone.py" not in result.stdout
+
+
+def test_check_ignores_index_only_removal_of_excluded_tracked_file(
+    tmp_path: Path,
+) -> None:
+    # Given: an excluded tracked file is present in the observed turn baseline.
+    init_repo(tmp_path)
+    write_project_file(tmp_path, "src/core.py", "stable\n")
+    write_project_file(
+        tmp_path,
+        ".fable-lite/provenance-config.json",
+        json.dumps({"version": 1, "exclude": ["src/**"]}),
+    )
+    git(
+        tmp_path,
+        "add",
+        "-f",
+        "src/core.py",
+        ".fable-lite/provenance-config.json",
+    )
+    git(tmp_path, "commit", "-m", "add excluded tracked file")
+    _ = start_observed_turn(tmp_path, prompt="프로젝트 상태를 읽어줘")
+
+    # When: only the Git index changes while the working-tree bytes remain identical.
+    git(tmp_path, "rm", "--cached", "src/core.py")
+    result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    # Then: provenance does not report a filesystem deletion that never occurred.
+    assert (tmp_path / "src/core.py").read_text(encoding="utf-8") == "stable\n"
+    assert result.returncode == 0, result.stdout
+    assert "changed: 0" in result.stdout
+    assert "src/core.py" not in result.stdout
+
+
 def test_check_reports_provenance_finding_for_ambiguous_active_turns(
     tmp_path: Path,
 ) -> None:

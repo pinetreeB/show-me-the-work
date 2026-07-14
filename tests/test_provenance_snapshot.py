@@ -44,6 +44,7 @@ def test_snapshot_normalizes_unicode_paths_applies_policy_and_hashes_manifest(tm
     _write(tmp_path / "node_modules" / "kept.js", "kept")
     _write(tmp_path / "vendor" / "hidden.txt", "config")
     _write(tmp_path / "dist" / "bundle.js", "generated")
+    _write(tmp_path / ".fable-lite" / "ledger.json", "harness state")
     config = {
         "version": 1,
         "include": ["node_modules/kept.js"],
@@ -57,7 +58,12 @@ def test_snapshot_normalizes_unicode_paths_applies_policy_and_hashes_manifest(tm
     entries = _entries(snapshot)
 
     # Then: displayed paths, policy IDs, and BLAKE2b-256 entry hashes are deterministic.
-    assert set(entries) == {"dist/bundle.js", "node_modules/kept.js", "한글 폴더/é space.txt"}
+    assert set(entries) == {
+        ".fable-lite/provenance-config.json",
+        "dist/bundle.js",
+        "node_modules/kept.js",
+        "한글 폴더/é space.txt",
+    }
     assert all("\\" not in path for path in entries)
     assert entries["한글 폴더/é space.txt"].digest.startswith("blake2b-256:")
     assert snapshot.snapshot_id.startswith("blake2b-256:")
@@ -73,6 +79,29 @@ def test_snapshot_normalizes_unicode_paths_applies_policy_and_hashes_manifest(tm
     generated_changed = snapshot_workspace(tmp_path)
     assert generated_changed.scope_policy_id == snapshot.scope_policy_id
     assert generated_changed.is_generated("out/bundle.js") is True
+
+
+def test_windows_force_paths_match_filesystem_paths_case_insensitively(
+    tmp_path: Path,
+) -> None:
+    # Given: Git-style force casing differs from the Windows filesystem casing.
+    _write(tmp_path / "src" / "core.py", "tracked")
+    _write(
+        tmp_path / ".fable-lite" / "provenance-config.json",
+        json.dumps({"version": 1, "exclude": ["src/**"]}),
+    )
+
+    # When: the Windows scanner receives the tracked path with different casing.
+    snapshot = snapshot_workspace_with_options(
+        tmp_path,
+        SnapshotScanOptions(
+            windows=True,
+            force_paths=frozenset({"SRC/CORE.PY"}),
+        ),
+    )
+
+    # Then: canonical force matching still observes the excluded tracked file.
+    assert "src/core.py" in _entries(snapshot)
 
 
 def test_net_delta_reports_create_modify_delete_type_mode_and_revert(tmp_path: Path) -> None:

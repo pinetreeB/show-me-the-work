@@ -68,7 +68,10 @@ def test_soft_excluded_directory_enters_only_include_descendant_path(tmp_path: P
     assert node_modules in scanned
     assert included in scanned
     assert skipped not in scanned
-    assert {entry.path for entry in snapshot.entries} == {"node_modules/pkg/file.js"}
+    assert {entry.path for entry in snapshot.entries} == {
+        ".fable-lite/provenance-config.json",
+        "node_modules/pkg/file.js",
+    }
 
 
 def test_nested_soft_excluded_directory_is_skipped_at_any_depth(tmp_path: Path) -> None:
@@ -116,6 +119,7 @@ def test_nested_soft_exclude_allows_only_explicit_include_descendant(
     assert included in scanned
     assert skipped not in scanned
     assert {entry.path for entry in snapshot.entries} == {
+        ".fable-lite/provenance-config.json",
         "workspace/node_modules/pkg/index.js"
     }
 
