@@ -3,7 +3,10 @@ from __future__ import annotations
 import errno
 import os
 from pathlib import Path
+import subprocess
+import sys
 import time
+from unittest import skipIf
 from unittest.mock import patch
 
 import core.agent_log as agent_log
@@ -133,6 +136,30 @@ def test_stale_recovery_does_not_steal_lock_from_live_pid(tmp_path: Path) -> Non
         except TimeoutError:
             timed_out = True
     assert timed_out is True
+
+
+@skipIf(os.name != "nt", "Windows foreign-process liveness contract")
+def test_stale_recovery_does_not_steal_lock_from_live_foreign_pid(
+    tmp_path: Path,
+) -> None:
+    # Given: an old-looking owner lock names another live Windows process.
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+    try:
+        state = tmp_path / ".fable-lite"
+        state.mkdir()
+        lock = state / "ledger.lock"
+        owner = f"{process.pid}:live-foreign-owner"
+        lock.write_text(owner, encoding="ascii")
+        os.utime(lock, (0, 0))
+
+        # When: stale recovery checks the foreign owner.
+        stale = agent_log._stale_record(lock)
+
+        # Then: process liveness prevents a live transaction from being stolen.
+        assert stale is None
+    finally:
+        process.terminate()
+        _ = process.wait(timeout=10)
 
 
 def test_transaction_release_preserves_replaced_owner_lock(tmp_path: Path) -> None:

@@ -68,7 +68,7 @@ def _pid_is_alive(pid: int) -> bool:
     if pid == os.getpid():
         return True
     if os.name != "posix":
-        return False
+        return _windows_pid_is_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -78,6 +78,19 @@ def _pid_is_alive(pid: int) -> bool:
     except OverflowError:
         return False
     return True
+
+
+def _windows_pid_is_alive(pid: int) -> bool:
+    import _winapi
+
+    try:
+        handle = _winapi.OpenProcess(0x1000, False, pid)
+    except OSError as exc:
+        return exc.winerror != 87
+    try:
+        return _winapi.GetExitCodeProcess(handle) == _winapi.STILL_ACTIVE
+    finally:
+        _winapi.CloseHandle(handle)
 
 
 def _stale_record(path: Path) -> str | None:
