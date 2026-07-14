@@ -5,7 +5,9 @@ import re
 import subprocess
 
 from core.ledger import classify_change_kind
-from core.provenance_policy import is_harness_state_path
+from core.provenance import calculate_net_delta, snapshot_workspace_with_options
+from core.provenance_policy import CONFIG_RELATIVE_PATH, is_harness_state_path
+from core.provenance_types import Snapshot, SnapshotScanOptions
 from core.verify_state import has_successful_verification as has_successful_verification
 
 SENTINEL_RE = re.compile(r"(?P<path>(?:[\w./\\-]+/)?\.done[\w_.-]*|tmp[/\\]\.done[\w_.-]*)", re.IGNORECASE)
@@ -35,7 +37,31 @@ def parse_porcelain(output: str) -> list[str]:
 
 
 def is_state_path(path: str) -> bool:
-    return is_harness_state_path(path)
+    return path != CONFIG_RELATIVE_PATH and is_harness_state_path(path)
+
+
+def git_changes_since_baseline(
+    root: Path,
+    paths: list[str],
+    baseline: Snapshot | None,
+) -> list[str]:
+    if baseline is None or not paths:
+        return paths
+    current = snapshot_workspace_with_options(
+        root,
+        SnapshotScanOptions(
+            previous=baseline,
+            force_paths=frozenset(paths),
+        ),
+    )
+    if current.incomplete:
+        return paths
+    changed = {delta.path for delta in calculate_net_delta(baseline, current)}
+    return [
+        path
+        for path in paths
+        if path == CONFIG_RELATIVE_PATH or path in changed
+    ]
 
 
 def changed_since(root: Path, path: str, since_file: Path) -> bool:
