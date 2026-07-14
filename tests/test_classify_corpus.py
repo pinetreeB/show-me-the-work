@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from core.classify import classify_prompt
+from core.ledger import record_event
+from core.verify_state import evaluate_stop
 
 
 def _paths(prompt: str) -> list[str]:
@@ -173,6 +175,38 @@ def test_actual_wmux_boot_templates_are_briefings_without_provenance_authority()
 
     assert all(result["briefing"] is True for result in results)
     assert all(result["needs_goals"] is False for result in results)
+
+
+def test_briefing_classification_never_exempts_unverified_edit(tmp_path) -> None:
+    # Given: a real boot prompt classifies as briefing and the same turn records a code edit.
+    prompt = (
+        "[부팅] MEMORY.md와 project.md를 읽고 상태를 파악한 뒤 "
+        "READY-CODEX만 보고하고 대기하라."
+    )
+    classification = classify_prompt({"prompt": prompt})
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "prompt",
+            "task_mode": "normal",
+            "prompt": prompt,
+        }
+    )
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "change",
+            "path": "app.py",
+            "kind": "code",
+        }
+    )
+
+    # When: Stop evaluates the unverified edit.
+    decision = evaluate_stop({"project_root": str(tmp_path)})
+
+    # Then: briefing remains classification-only and Stop blocks.
+    assert classification["briefing"] is True
+    assert decision["decision"] == "block"
 
 
 def test_boot_marker_cannot_disguise_real_write_instruction() -> None:

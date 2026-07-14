@@ -8,12 +8,14 @@ from core.classify import classify_prompt
 from core.adapter_observation import CanonicalInvocation, reconcile_turn
 from core.contract import evaluate_r1_contract
 from core.ledger import JsonObject, load_agent_ledger, load_ledger
+from core.provenance_store import SnapshotStoreError, load_turn_baseline
 from core.scope_guard import evaluate_scope
-from core.provenance_types import ProvenanceStatus
+from core.provenance_types import ProvenanceStatus, Snapshot
 from .card import TaskCard, card_changed_excludes, card_completion_findings, card_forbidden_findings, card_scope_findings, card_validation_findings, card_verify_success, load_task_card
 from .check_support import (
     changed_since,
     git,
+    git_changes_since_baseline,
     has_successful_verification,
     is_state_path,
     merge,
@@ -77,6 +79,7 @@ def evaluate(root: Path, agent: str, since_file: Path | None, card: TaskCard | N
         ledger,
         since_file,
         authoritative_paths=turn_paths,
+        agent=agent,
     )
     changed_files = [path for path in changed_files if path not in card_changed_excludes(root, card)]
     prompt = string(ledger.get("prompt"))
@@ -134,6 +137,7 @@ def changed_paths(
     ledger: JsonObject,
     since_file: Path | None,
     authoritative_paths: list[str] | None = None,
+    agent: str = "",
 ) -> tuple[list[str], list[str]]:
     paths = (
         list(authoritative_paths)
@@ -141,12 +145,18 @@ def changed_paths(
         else string_list(ledger.get("changed_files_seen"))
     )
     warnings: list[str] = []
-    if authoritative_paths is None:
-        git_result = git(root, "status", "--porcelain=v1", "-uall")
-        if git_result.returncode == 0:
-            paths = merge(paths, parse_porcelain(git_result.stdout))
-        else:
-            warnings.append("git status 실행 실패: ledger 기준으로만 판정")
+    git_result = git(root, "status", "--porcelain=v1", "-uall")
+    if git_result.returncode == 0:
+        git_paths = parse_porcelain(git_result.stdout)
+        if authoritative_paths is not None:
+            git_paths = git_changes_since_baseline(
+                root,
+                git_paths,
+                _active_turn_baseline(root, ledger, agent),
+            )
+        paths = merge(paths, git_paths)
+    else:
+        warnings.append("git status 실행 실패: ledger 기준으로만 판정")
     paths = [path for path in paths if not is_state_path(path)]
     if since_file is not None:
         marker = relative_to_root(root, since_file)
@@ -239,6 +249,24 @@ def _agent_turns(ledger: JsonObject, agent: str) -> list[tuple[str, JsonObject]]
         and isinstance(turn, dict)
         and turn.get("agent") == agent
     ]
+
+
+def _active_turn_baseline(
+    root: Path,
+    ledger: JsonObject,
+    agent: str,
+) -> Snapshot | None:
+    matches = _agent_turns(ledger, agent)
+    if len(matches) != 1:
+        return None
+    key, turn = matches[0]
+    identity = _turn_invocation(key, turn)
+    if identity is None:
+        return None
+    try:
+        return load_turn_baseline(root, identity.agent_key, identity.turn_id)
+    except SnapshotStoreError:
+        return None
 
 
 def _turn_invocation(key: str, turn: JsonObject) -> CanonicalInvocation | None:

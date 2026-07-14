@@ -5,11 +5,12 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TypeAlias
+from typing import TypeAlias, cast
 from unittest.mock import patch
 
 from core.adapter_observation import CanonicalInvocation, ObservationReport, start_turn
 from core.ledger import record_event
+from core.ledger_schema import JsonObject as LedgerJsonObject
 from core.provenance_types import ProvenanceReason, ProvenanceStatus
 import fable_lite.check as check_module
 
@@ -322,6 +323,21 @@ def test_check_uses_active_turn_delta_instead_of_preexisting_repo_dirty(
     assert "uv.lock" not in after.stdout
 
 
+def test_check_observes_rewrite_of_path_dirty_before_turn(tmp_path: Path) -> None:
+    # Given: a generated path is already dirty before the active turn begins.
+    init_repo(tmp_path)
+    write_project_file(tmp_path, "dist/preexisting.js", "before\n")
+    _ = start_observed_turn(tmp_path)
+
+    # When: the same pre-existing dirty path is rewritten during the turn.
+    write_project_file(tmp_path, "dist/preexisting.js", "rewritten during turn\n")
+    result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    # Then: pre-turn dirtiness cannot hide the new revision.
+    assert result.returncode == 1
+    assert "dist/preexisting.js" in result.stdout
+
+
 def test_check_fresh_reconciliation_observes_change_after_last_tool_event(
     tmp_path: Path,
 ) -> None:
@@ -337,6 +353,33 @@ def test_check_fresh_reconciliation_observes_change_after_last_tool_event(
     assert result.returncode == 1
     assert "changed: 1" in result.stdout
     assert "app.py" in result.stdout
+
+
+def test_check_git_backstop_observes_changes_excluded_at_turn_baseline(
+    tmp_path: Path,
+) -> None:
+    # Given: tracked files are excluded by user config or a soft-excluded directory at turn start.
+    init_repo(tmp_path)
+    write_project_file(tmp_path, "src/core.py", "safe\n")
+    write_project_file(tmp_path, "node_modules/dep/index.js", "safe dependency\n")
+    write_project_file(
+        tmp_path,
+        ".fable-lite/provenance-config.json",
+        json.dumps({"version": 1, "exclude": ["src/**"]}),
+    )
+    git(tmp_path, "add", "-f", "src/core.py", "node_modules/dep/index.js")
+    git(tmp_path, "commit", "-m", "add excluded tracked files")
+    _ = start_observed_turn(tmp_path, prompt="excluded files 수정해줘")
+
+    # When: both baseline-excluded tracked files are changed during the active turn.
+    write_project_file(tmp_path, "src/core.py", "backdoor\n")
+    write_project_file(tmp_path, "node_modules/dep/index.js", "backdoor dependency\n")
+    result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    # Then: the independent Git backstop keeps both current-turn changes visible.
+    assert result.returncode == 1
+    assert "src/core.py" in result.stdout
+    assert "node_modules/dep/index.js" in result.stdout
 
 
 def test_check_reports_provenance_finding_for_ambiguous_active_turns(
@@ -456,7 +499,7 @@ def test_check_scope_too_large_blocks_unverified_remote_only_turn(
         patch.object(check_module, "load_agent_ledger", return_value=ledger),
     ):
         _, paths, messages = check_module._reconcile_active_turn(
-            tmp_path, "codex", ledger
+            tmp_path, "codex", cast(LedgerJsonObject, ledger)
         )
 
     assert paths is None
@@ -482,7 +525,7 @@ def test_check_scope_too_large_allows_fresh_same_target_remote_verification(
         patch.object(check_module, "load_agent_ledger", return_value=ledger),
     ):
         _, paths, messages = check_module._reconcile_active_turn(
-            tmp_path, "codex", ledger
+            tmp_path, "codex", cast(LedgerJsonObject, ledger)
         )
 
     assert paths == []
