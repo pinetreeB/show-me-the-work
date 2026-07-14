@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-import os
 from pathlib import Path
-import shutil
-import subprocess
 from typing import Final
 
 from .adapter_change_events import record_observed_changes
@@ -20,7 +17,6 @@ from .shell_command import (
     ShellClassification,
     ShellEffect,
     classify_shell_effect,
-    is_git_status_command,
     is_remote_mutation_command,
 )
 from .verification import is_verification_command
@@ -284,7 +280,7 @@ def _record_invocation(
     root: Path, invocation: CanonicalInvocation, covers: JsonObject | None
 ) -> None:
     payload = _ledger_payload(root, invocation) | {"event": "invocation"}
-    classification = _shell_classification(root, invocation)
+    classification = _shell_classification(invocation)
     if _mutation_capable(invocation, classification):
         payload["provenance_mutation_capable"] = True
     target_ids = _remote_target_ids(invocation, classification)
@@ -314,7 +310,7 @@ def _record_changes(
 
 
 def _record_status(root: Path, invocation: CanonicalInvocation, report: ObservationReport) -> None:
-    classification = _shell_classification(root, invocation)
+    classification = _shell_classification(invocation)
     payload = _ledger_payload(root, invocation) | {
         "event": "observation",
         "current_snapshot_id": report.snapshot_id,
@@ -430,54 +426,10 @@ def _remote_mutation(invocation: CanonicalInvocation) -> bool:
     )
 
 
-def _shell_classification(
-    root: Path, invocation: CanonicalInvocation
-) -> ShellClassification | None:
+def _shell_classification(invocation: CanonicalInvocation) -> ShellClassification | None:
     if invocation.tool_family_hint != "shell":
         return None
-    classification = classify_shell_effect(invocation.command_hint)
-    if (
-        classification.effect is ShellEffect.LOCAL_OR_UNKNOWN
-        and is_git_status_command(invocation.command_hint)
-        and _git_status_context_is_read_only(root)
-    ):
-        return ShellClassification(ShellEffect.PROVEN_READ_ONLY)
-    return classification
-
-
-def _git_status_context_is_read_only(root: Path) -> bool:
-    if any(
-        (root / executable).exists()
-        for executable in ("git", "git.exe", "git.cmd", "git.bat", "git.com")
-    ):
-        return False
-    git_path = shutil.which("git")
-    if not git_path:
-        return False
-    path_entries = os.environ.get("PATH", "").split(os.pathsep)
-    if any(not entry or not Path(entry).is_absolute() for entry in path_entries):
-        return False
-    return _git_config_is_disabled(git_path, root, "core.fsmonitor") and _git_config_is_disabled(
-        git_path, root, "pager.status"
-    )
-
-
-def _git_config_is_disabled(git_path: str, root: Path, key: str) -> bool:
-    result = subprocess.run(
-        [git_path, "-C", str(root), "config", "--get-all", key],
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode == 1:
-        return True
-    if result.returncode != 0:
-        return False
-    disabled = {"", "0", "false", "no", "off"}
-    values = result.stdout.splitlines()
-    return bool(values) and all(value.strip().casefold() in disabled for value in values)
+    return classify_shell_effect(invocation.command_hint)
 
 
 def _remote_target_ids(

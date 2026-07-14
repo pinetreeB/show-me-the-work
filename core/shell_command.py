@@ -186,9 +186,6 @@ _REV_PARSE_SAFE_FLAGS: Final = frozenset(
         "--show-toplevel",
     }
 )
-_GIT_STATUS_SAFE_FLAGS: Final = frozenset(
-    {"--porcelain", "--porcelain=v1", "--porcelain=v2", "--short", "-s"}
-)
 
 
 class ShellEffect(StrEnum):
@@ -340,26 +337,6 @@ def _is_proven_read_only(command: str) -> bool:
             for argument in arguments[1:]
         )
     return subcommand == "branch" and arguments[1:] == ("--show-current",)
-
-
-def is_git_status_command(command: str) -> bool:
-    if any(marker in command for marker in ("\n", "\r", "`", "$(", ">", "<")):
-        return False
-    if command_operators(command):
-        return False
-    segments = command_segments(command)
-    if len(segments) != 1:
-        return False
-    tokens = segments[0]
-    if (
-        len(tokens) < 2
-        or _ENV_ASSIGNMENT_RE.fullmatch(tokens[0])
-        or not _is_bare_command_token(tokens[0])
-        or command_name(tokens[0]) != "git"
-        or clean_token(tokens[1]).casefold() != "status"
-    ):
-        return False
-    return all(clean_token(argument) in _GIT_STATUS_SAFE_FLAGS for argument in tokens[2:])
 
 
 def _is_proven_read_only_rg(arguments: tuple[str, ...]) -> bool:
