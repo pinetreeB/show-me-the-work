@@ -29,6 +29,15 @@ Execute the artifact in its real renderer:
 
 **A screenshot that was captured but never examined is not observation** — you must actually inspect its contents.
 
+**If it is a UI/design artifact,** observe design-rule compliance alongside layout integrity (the authoritative rules live in the `design-review` pack and DESIGN-OPS §1·§4):
+- Is the hero / largest heading within the ceiling (≤ 2.7rem, or the project token)? — confirm via computed style after render (static CSS misses `clamp()`, inheritance, responsive)
+- Do any lines break in the middle of a word? — confirm `word-break: keep-all` actually applies, via line boxes
+- Is contrast WCAG AA (body 4.5:1, large text 3:1) or better? Accessibility is not contrast alone — also check keyboard nav, `focus-visible`, `prefers-reduced-motion`, touch targets ≥44px, and semantic markup, per state via axe
+- In both light and dark themes, does dark mode actually resolve through tokens with intact contrast/color? (whether raw hex/px is hardcoded is invisible in a screenshot — that is static-lint layer A, exception boundary per DESIGN-OPS §2)
+- Is there any overflow or breakage at the mobile 375 · desktop 1280 viewports?
+- Are the per-state renders (hover·focus·disabled·loading·empty·error) all intact?
+- (First-pass filter) Any AI-smell signals — more than one gradient per hero, decorative emoji, sole purple brand color, generic stock? Not an automatic verdict but a first-pass filter; the final call is a human (intervention ③)
+
 ### 3. FIX what observation reveals
 
 Fix defects revealed by observation. Runtime-only defects (an overlay covering the board, a console error, a broken layout) are exactly what this loop exists to catch — static checks pass right over them.
