@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import ipaddress
 import re
 import shlex
 from typing import Final
@@ -24,7 +25,6 @@ _SSH_SAFE_FLAGS: Final = frozenset(
         "-X",
         "-Y",
         "-a",
-        "-f",
         "-g",
         "-k",
         "-n",
@@ -39,6 +39,7 @@ _SSH_VALUE_OPTIONS: Final = frozenset(
     {
         "-B",
         "-D",
+        "-F",
         "-J",
         "-L",
         "-R",
@@ -83,7 +84,7 @@ _SCP_SAFE_FLAGS: Final = frozenset(
     {"-3", "-4", "-6", "-A", "-B", "-C", "-O", "-R", "-T", "-p", "-q", "-r", "-v"}
 )
 _SCP_VALUE_OPTIONS: Final = frozenset(
-    {"-J", "-P", "-X", "-c", "-i", "-l", "-o"}
+    {"-F", "-J", "-P", "-X", "-c", "-i", "-l", "-o"}
 )
 _SSH_ALL_FLAGS: Final = frozenset(
     f"-{flag}" for flag in "46AaCfGgKkMNnqsTtVvXxYy"
@@ -125,8 +126,68 @@ _WINDOWS_DRIVE_RE: Final = re.compile(r"^[A-Za-z]:[\\/]")
 _READ_ONLY_COMMANDS: Final = frozenset(
     {"cat", "get-content", "git", "ls", "pwd", "rg", "test-path", "whoami"}
 )
-_READ_ONLY_GIT_SUBCOMMANDS: Final = frozenset({"rev-parse", "status"})
-_DIFFING_GIT_SUBCOMMANDS: Final = frozenset({"diff", "log", "show"})
+_READ_ONLY_GIT_SUBCOMMANDS: Final = frozenset({"rev-parse"})
+_RG_SAFE_FLAGS: Final = frozenset(
+    {
+        "--case-sensitive",
+        "--count",
+        "--count-matches",
+        "--files",
+        "--fixed-strings",
+        "--hidden",
+        "--ignore-case",
+        "--json",
+        "--line-number",
+        "--no-config",
+        "--no-heading",
+        "--smart-case",
+        "--stats",
+        "--word-regexp",
+        "-F",
+        "-S",
+        "-i",
+        "-l",
+        "-n",
+        "-w",
+    }
+)
+_RG_SAFE_VALUE_OPTIONS: Final = frozenset(
+    {
+        "--after-context",
+        "--before-context",
+        "--context",
+        "--glob",
+        "--max-count",
+        "--max-depth",
+        "--regexp",
+        "--threads",
+        "--type",
+        "--type-not",
+        "-A",
+        "-B",
+        "-C",
+        "-T",
+        "-e",
+        "-g",
+        "-j",
+        "-m",
+        "-t",
+    }
+)
+_REV_PARSE_SAFE_FLAGS: Final = frozenset(
+    {
+        "--absolute-git-dir",
+        "--git-common-dir",
+        "--git-dir",
+        "--is-bare-repository",
+        "--is-inside-git-dir",
+        "--is-inside-work-tree",
+        "--show-cdup",
+        "--show-prefix",
+        "--show-superproject-working-tree",
+        "--show-toplevel",
+    }
+)
 
 
 class ShellEffect(StrEnum):
@@ -161,6 +222,8 @@ def classify_shell_effect(command: str) -> ShellClassification:
     targets = _remote_targets(command)
     if _is_proven_read_only(command):
         return ShellClassification(ShellEffect.PROVEN_READ_ONLY)
+    if any(_is_loopback_host(target.host) for target in targets):
+        return ShellClassification(ShellEffect.LOCAL_OR_UNKNOWN, targets)
     if (
         targets
         and is_remote_only_mutation_command(command)
@@ -233,11 +296,13 @@ def is_remote_only_mutation_command(command: str) -> bool:
     tokens = without_environment_assignments(segments[0])
     if not tokens or any(token and set(token) <= {"<", ">"} for token in tokens):
         return False
+    if not _is_bare_command_token(tokens[0]):
+        return False
     name = command_name(tokens[0])
     if name == "ssh":
-        return _is_direct_ssh(tokens[1:])
+        return _has_isolated_ssh_config(tokens[1:]) and _is_direct_ssh(tokens[1:])
     if name == "scp":
-        return _is_scp_upload(tokens[1:])
+        return _has_isolated_ssh_config(tokens[1:]) and _is_scp_upload(tokens[1:])
     return False
 
 
@@ -255,25 +320,97 @@ def _is_proven_read_only(command: str) -> bool:
     tokens = without_environment_assignments(raw_tokens)
     if not tokens:
         return False
+    if not _is_bare_command_token(tokens[0]):
+        return False
     name = command_name(tokens[0])
     if name not in _READ_ONLY_COMMANDS:
         return False
-    arguments = tuple(clean_token(token).casefold() for token in tokens[1:])
+    arguments = tuple(clean_token(token) for token in tokens[1:])
     if name == "rg":
-        return not any(
-            argument == "--pre" or argument.startswith("--pre=")
-            for argument in arguments
-        )
+        return _is_proven_read_only_rg(arguments)
     if name != "git":
-        return True
+        return not any(argument.startswith("-") for argument in arguments)
     if len(tokens) < 2:
         return False
-    subcommand = clean_token(tokens[1]).casefold()
+    subcommand = arguments[0].casefold()
     if subcommand in _READ_ONLY_GIT_SUBCOMMANDS:
+        return all(
+            not argument.startswith("-") or argument in _REV_PARSE_SAFE_FLAGS
+            for argument in arguments[1:]
+        )
+    return subcommand == "branch" and arguments[1:] == ("--show-current",)
+
+
+def _is_proven_read_only_rg(arguments: tuple[str, ...]) -> bool:
+    saw_no_config = False
+    index = 0
+    options_done = False
+    while index < len(arguments):
+        argument = arguments[index]
+        if options_done or not argument.startswith("-") or argument == "-":
+            index += 1
+            continue
+        if argument == "--":
+            options_done = True
+            index += 1
+            continue
+        if argument in _RG_SAFE_FLAGS:
+            saw_no_config = saw_no_config or argument == "--no-config"
+            index += 1
+            continue
+        name, separator, _ = argument.partition("=")
+        if separator and name in _RG_SAFE_VALUE_OPTIONS:
+            index += 1
+            continue
+        if argument in _RG_SAFE_VALUE_OPTIONS and index + 1 < len(arguments):
+            index += 2
+            continue
+        return False
+    return saw_no_config
+
+
+def _is_bare_command_token(token: str) -> bool:
+    cleaned = clean_token(token)
+    return cleaned.casefold() == command_name(cleaned)
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host.casefold() == "localhost":
         return True
-    if subcommand in _DIFFING_GIT_SUBCOMMANDS:
-        return "--no-ext-diff" in arguments and "--no-textconv" in arguments
-    return subcommand == "branch" and tuple(tokens[2:]) == ("--show-current",)
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _has_isolated_ssh_config(arguments: tuple[str, ...]) -> bool:
+    return (
+        _option_value(arguments, "-F", "").casefold() == "none"
+        and _ssh_config_value(arguments, "stricthostkeychecking").casefold()
+        == "yes"
+    )
+
+
+def _ssh_config_value(arguments: tuple[str, ...], config_name: str) -> str:
+    value = ""
+    index = 0
+    while index < len(arguments):
+        argument = clean_token(arguments[index])
+        if argument == "-o" and index + 1 < len(arguments):
+            option = clean_token(arguments[index + 1])
+            index += 2
+        elif argument.startswith("-o") and len(argument) > 2:
+            option = argument[2:]
+            index += 1
+        else:
+            index += 1
+            continue
+        name, separator, raw_value = option.partition("=")
+        if not separator:
+            name, separator, raw_value = option.partition(" ")
+        if separator and name.casefold() == config_name.casefold():
+            value = raw_value.strip()
+    return value
 
 
 def _remote_targets(command: str) -> tuple[RemoteTargetHint, ...]:
@@ -288,7 +425,7 @@ def _remote_targets(command: str) -> tuple[RemoteTargetHint, ...]:
 
 
 def _targets_from_tokens(tokens: tuple[str, ...]) -> tuple[RemoteTargetHint, ...]:
-    if not tokens:
+    if not tokens or not _is_bare_command_token(tokens[0]):
         return ()
     name = command_name(tokens[0])
     arguments = tokens[1:]
@@ -402,6 +539,8 @@ def is_remote_mutation_command(command: str) -> bool:
             continue
         if not tokens:
             continue
+        if not _is_bare_command_token(tokens[0]):
+            continue
         name = command_name(tokens[0])
         if name == "ssh" and _is_ssh_remote_mutation(tokens[1:]):
             return True
@@ -481,7 +620,11 @@ def remote_ssh_command(command: str) -> str | None:
 
 def remote_ssh_command_tokens(tokens: tuple[str, ...]) -> str | None:
     tokens = without_shell_redirections(tokens)
-    if not tokens or command_name(tokens[0]) != "ssh":
+    if (
+        not tokens
+        or not _is_bare_command_token(tokens[0])
+        or command_name(tokens[0]) != "ssh"
+    ):
         return None
     arguments = tokens[1:]
     if _ssh_options_disable_remote_command(arguments):
@@ -662,6 +805,8 @@ def _ssh_option_cluster_disables_remote(argument: str) -> bool:
 
 
 def _is_safe_option_value(option: str, value: str) -> bool:
+    if option == "-F":
+        return clean_token(value).casefold() == "none"
     if option == "-o":
         return _is_safe_ssh_config(value)
     if option == "-L":

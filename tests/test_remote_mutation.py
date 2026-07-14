@@ -8,6 +8,14 @@ from core.shell_command import (
 )
 
 
+def _isolated_remote(command: str) -> str:
+    executable, separator, arguments = command.partition(" ")
+    assert separator
+    return (
+        f"{executable} -F none -o StrictHostKeyChecking=yes {arguments}"
+    )
+
+
 def test_direct_ssh_and_scp_upload_are_remote_only_mutations() -> None:
     commands = (
         'ssh deploy@example.com "sudo systemctl restart app"',
@@ -17,7 +25,8 @@ def test_direct_ssh_and_scp_upload_are_remote_only_mutations() -> None:
     )
 
     for command in commands:
-        assert is_remote_only_mutation_command(command) is True, command
+        isolated = _isolated_remote(command)
+        assert is_remote_only_mutation_command(isolated) is True, isolated
 
 
 def test_remote_commands_with_identity_and_attached_port_options_stay_remote_only() -> None:
@@ -32,7 +41,10 @@ def test_remote_commands_with_identity_and_attached_port_options_stay_remote_onl
     )
 
     # Given/When/Then: safe option values are consumed before remote operands are classified.
-    assert tuple(is_remote_only_mutation_command(command) for command in commands) == (
+    assert tuple(
+        is_remote_only_mutation_command(_isolated_remote(command))
+        for command in commands
+    ) == (
         True,
         True,
         True,
@@ -50,12 +62,13 @@ def test_remote_commands_with_combined_safe_flags_stay_remote_only() -> None:
     )
 
     for command in commands:
-        assert is_remote_only_mutation_command(command) is True, command
+        isolated = _isolated_remote(command)
+        assert is_remote_only_mutation_command(isolated) is True, isolated
 
 
 def test_supported_read_only_openssh_options_do_not_hide_remote_mutations() -> None:
     commands = (
-        'ssh -ACfKksXxY deploy@example.com "touch remote-marker"',
+        'ssh -ACKksXxY deploy@example.com "touch remote-marker"',
         'ssh -B Ethernet -b 127.0.0.1 -c aes128-ctr deploy@example.com "touch remote-marker"',
         'ssh -e none -m hmac-sha2-256 deploy@example.com "touch remote-marker"',
         'ssh -D 1080 -L 8080:localhost:80 -R 9090:localhost:90 deploy@example.com "touch remote-marker"',
@@ -64,7 +77,8 @@ def test_supported_read_only_openssh_options_do_not_hide_remote_mutations() -> N
     )
 
     for command in commands:
-        assert is_remote_only_mutation_command(command) is True, command
+        isolated = _isolated_remote(command)
+        assert is_remote_only_mutation_command(isolated) is True, isolated
 
 
 def test_read_only_ssh_config_options_do_not_hide_remote_mutations() -> None:
@@ -75,11 +89,13 @@ def test_read_only_ssh_config_options_do_not_hide_remote_mutations() -> None:
     )
 
     for command in commands:
-        assert is_remote_only_mutation_command(command) is True, command
+        isolated = _isolated_remote(command)
+        assert is_remote_only_mutation_command(isolated) is True, isolated
 
 
 def test_remote_mutation_epoch_is_independent_of_local_effect_classification() -> None:
     commands = (
+        'ssh -F none -o StrictHostKeyChecking=yes -f deploy@example.com "touch marker"',
         'ssh -o KexAlgorithms=curve25519-sha256 host "touch remote-marker"',
         'ssh -o TCPKeepAlive=yes host "touch remote-marker"',
         'ssh -o PubkeyAuthentication=yes host "touch remote-marker"',
@@ -192,15 +208,16 @@ def test_remote_commands_with_local_or_mixed_effects_are_not_remote_only() -> No
 
 def test_shell_effect_defaults_conservatively_and_preserves_proven_remote_targets() -> None:
     cases = (
-        ("git status --short", ShellEffect.PROVEN_READ_ONLY, ()),
-        ("rg provenance core", ShellEffect.PROVEN_READ_ONLY, ()),
+        ("git status --short", ShellEffect.LOCAL_OR_UNKNOWN, ()),
+        ("git rev-parse --show-toplevel", ShellEffect.PROVEN_READ_ONLY, ()),
+        ("rg --no-config provenance core", ShellEffect.PROVEN_READ_ONLY, ()),
         (
-            'ssh deploy@example.com "touch /srv/marker"',
+            'ssh -F none -o StrictHostKeyChecking=yes deploy@example.com "touch /srv/marker"',
             ShellEffect.PROVEN_REMOTE_ONLY,
             ("ssh://deploy@example.com:22",),
         ),
         (
-            "scp -P 2222 artifact.tar deploy@example.com:/srv/app/",
+            "scp -F none -o StrictHostKeyChecking=yes -P 2222 artifact.tar deploy@example.com:/srv/app/",
             ShellEffect.PROVEN_REMOTE_ONLY,
             ("ssh://deploy@example.com:2222",),
         ),
@@ -217,6 +234,7 @@ def test_shell_effect_defaults_conservatively_and_preserves_proven_remote_target
             ("ssh://deploy@example.com:22",),
         ),
         ("opaque-shell-writer", ShellEffect.LOCAL_OR_UNKNOWN, ()),
+        ('ssh deploy@example.com "touch marker"', ShellEffect.LOCAL_OR_UNKNOWN, ("ssh://deploy@example.com:22",)),
     )
 
     for command, effect, target_ids in cases:
@@ -249,28 +267,81 @@ def test_remote_target_identity_distinguishes_user_host_and_port() -> None:
 def test_jump_host_and_localhost_do_not_gain_local_provenance_authority() -> None:
     jump = classify_shell_effect('ssh -J bastion deploy@host "touch marker"')
     localhost = classify_shell_effect('ssh localhost "echo hi"')
+    ipv4_loopback = classify_shell_effect('ssh 127.0.0.1 "touch marker"')
+    ipv6_loopback = classify_shell_effect('ssh ::1 "touch marker"')
 
     assert jump.effect is ShellEffect.LOCAL_OR_UNKNOWN
     assert jump.remote_target_ids == ("ssh://deploy@host:22",)
-    assert localhost.effect is ShellEffect.PROVEN_REMOTE_ONLY
+    assert localhost.effect is ShellEffect.LOCAL_OR_UNKNOWN
     assert localhost.remote_target_ids == ("ssh://localhost:22",)
+    assert ipv4_loopback.effect is ShellEffect.LOCAL_OR_UNKNOWN
+    assert ipv6_loopback.effect is ShellEffect.LOCAL_OR_UNKNOWN
 
 
 def test_read_only_allowlist_rejects_external_program_escape_hatches() -> None:
     cases = (
+        ("./rg --no-config needle .", ShellEffect.LOCAL_OR_UNKNOWN),
+        ("C:/tmp/rg.exe --no-config needle .", ShellEffect.LOCAL_OR_UNKNOWN),
+        ("./git status --short", ShellEffect.LOCAL_OR_UNKNOWN),
+        (
+            "C:/tmp/git.exe diff --no-ext-diff --no-textconv",
+            ShellEffect.LOCAL_OR_UNKNOWN,
+        ),
         ("git diff", ShellEffect.LOCAL_OR_UNKNOWN),
         ("git diff --ext-diff", ShellEffect.LOCAL_OR_UNKNOWN),
+        (
+            "git diff --no-ext-diff --no-textconv --ext-diff",
+            ShellEffect.LOCAL_OR_UNKNOWN,
+        ),
+        (
+            "git show --no-ext-diff --no-textconv --textconv HEAD:file.py",
+            ShellEffect.LOCAL_OR_UNKNOWN,
+        ),
+        (
+            "git log --no-ext-diff --no-textconv --output=owned.txt",
+            ShellEffect.LOCAL_OR_UNKNOWN,
+        ),
         ("git show --textconv HEAD:file.py", ShellEffect.LOCAL_OR_UNKNOWN),
         (
             "GIT_EXTERNAL_DIFF=opaque-writer git diff --no-ext-diff --no-textconv",
             ShellEffect.LOCAL_OR_UNKNOWN,
         ),
+        ("rg needle .", ShellEffect.LOCAL_OR_UNKNOWN),
         ("rg --pre opaque-writer needle .", ShellEffect.LOCAL_OR_UNKNOWN),
+        ("rg --no-config -z needle .", ShellEffect.LOCAL_OR_UNKNOWN),
+        ("rg --no-config -zU needle .", ShellEffect.LOCAL_OR_UNKNOWN),
+        ("rg --no-config -Uz needle .", ShellEffect.LOCAL_OR_UNKNOWN),
+        ("rg --no-config -zz needle .", ShellEffect.LOCAL_OR_UNKNOWN),
+        ("rg --no-config --search-zip needle .", ShellEffect.LOCAL_OR_UNKNOWN),
+        (
+            "rg --no-config --hostname-bin opaque-writer "
+            "--hyperlink-format=file://{host}{path} needle .",
+            ShellEffect.LOCAL_OR_UNKNOWN,
+        ),
+        (
+            "rg --no-config --hostname-bin=opaque-writer needle .",
+            ShellEffect.LOCAL_OR_UNKNOWN,
+        ),
+        ("rg --no-config needle .", ShellEffect.PROVEN_READ_ONLY),
         (
             "git diff --no-ext-diff --no-textconv",
-            ShellEffect.PROVEN_READ_ONLY,
+            ShellEffect.LOCAL_OR_UNKNOWN,
         ),
     )
 
     for command, expected in cases:
         assert classify_shell_effect(command).effect is expected, command
+
+
+def test_path_qualified_remote_executables_never_gain_remote_only_authority() -> None:
+    commands = (
+        './ssh deploy@host "touch marker"',
+        'C:/tmp/ssh.exe deploy@host "touch marker"',
+        "./scp artifact.tar deploy@host:/srv/app/",
+        "C:/tmp/scp.exe artifact.tar deploy@host:/srv/app/",
+    )
+
+    for command in commands:
+        classification = classify_shell_effect(command)
+        assert classification.effect is ShellEffect.LOCAL_OR_UNKNOWN, command
+        assert classification.remote_target_ids == (), command

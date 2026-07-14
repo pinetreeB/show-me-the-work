@@ -6,9 +6,12 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import TypeAlias
+from unittest.mock import patch
 
-from core.adapter_observation import CanonicalInvocation, start_turn
+from core.adapter_observation import CanonicalInvocation, ObservationReport, start_turn
 from core.ledger import record_event
+from core.provenance_types import ProvenanceReason, ProvenanceStatus
+import fable_lite.check as check_module
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -377,3 +380,110 @@ def test_check_reports_provenance_finding_for_ambiguous_active_turns(
     assert result.returncode == 1
     assert "provenance" in result.stdout.casefold()
     assert "ambiguous" in result.stdout.casefold()
+
+
+def test_check_without_agent_reports_ambiguous_active_turns(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    for agent in ("alpha", "beta"):
+        _ = record_event(
+            {
+                "project_root": str(tmp_path),
+                "event": "prompt",
+                "host": "codex_cli",
+                "agent": agent,
+                "session_id": agent,
+                "turn_id": f"turn-{agent}",
+                "prompt": "read only",
+            }
+        )
+
+    result = run_cli(["check", "--root", str(tmp_path)])
+
+    assert result.returncode == 1
+    assert "provenance" in result.stdout.casefold()
+    assert "ambiguous" in result.stdout.casefold()
+
+
+def _scope_too_large_remote_ledger(*, verified: bool) -> dict[str, JsonValue]:
+    target_id = "ssh://deploy@host:22"
+    results: list[JsonValue] = []
+    if verified:
+        results.append(
+            {
+                "success": True,
+                "seq": 5,
+                "covers": {
+                    "through_seq": 4,
+                    "remote_target_ids": [target_id],
+                },
+            }
+        )
+    return {
+        "agent": "codex",
+        "active_turns": {
+            "codex_cli:session:codex": {
+                "agent": "codex",
+                "turn_id": "turn-session",
+                "path_revisions": {},
+                "provenance_mutation_capable": False,
+                "provenance_remote_mutation": True,
+                "last_remote_mutation_seq": 4,
+                "remote_mutation_epochs": {target_id: 4},
+                "verification_results": results,
+            }
+        },
+    }
+
+
+def test_check_scope_too_large_blocks_unverified_remote_only_turn(
+    tmp_path: Path,
+) -> None:
+    ledger = _scope_too_large_remote_ledger(verified=False)
+    report = ObservationReport(
+        "snapshot:large",
+        "snapshot:base",
+        (),
+        False,
+        True,
+        ProvenanceStatus.SCOPE_TOO_LARGE,
+        ProvenanceReason.ENTRY_LIMIT,
+    )
+
+    with (
+        patch.object(check_module, "reconcile_turn", return_value=report),
+        patch.object(check_module, "load_agent_ledger", return_value=ledger),
+    ):
+        _, paths, messages = check_module._reconcile_active_turn(
+            tmp_path, "codex", ledger
+        )
+
+    assert paths is None
+    assert any("remote" in message for message in messages)
+
+
+def test_check_scope_too_large_allows_fresh_same_target_remote_verification(
+    tmp_path: Path,
+) -> None:
+    ledger = _scope_too_large_remote_ledger(verified=True)
+    report = ObservationReport(
+        "snapshot:large",
+        "snapshot:base",
+        (),
+        False,
+        True,
+        ProvenanceStatus.SCOPE_TOO_LARGE,
+        ProvenanceReason.ENTRY_LIMIT,
+    )
+
+    with (
+        patch.object(check_module, "reconcile_turn", return_value=report),
+        patch.object(check_module, "load_agent_ledger", return_value=ledger),
+    ):
+        _, paths, messages = check_module._reconcile_active_turn(
+            tmp_path, "codex", ledger
+        )
+
+    assert paths == []
+    assert messages == []

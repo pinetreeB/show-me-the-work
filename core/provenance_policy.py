@@ -128,7 +128,10 @@ def _matches_any(path: str, patterns: tuple[str, ...]) -> bool:
 
 
 def _first_segment(path: str) -> str:
-    return path.partition("/")[0]
+    normalized = path.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized.partition("/")[0]
 
 
 def _has_soft_excluded_segment(path: str) -> bool:

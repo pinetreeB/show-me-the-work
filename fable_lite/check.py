@@ -161,6 +161,18 @@ def _reconcile_active_turn(
     ledger: JsonObject,
 ) -> tuple[JsonObject, list[str] | None, list[str]]:
     if not agent:
+        turns = ledger.get("active_turns")
+        active_count = (
+            sum(isinstance(turn, dict) for turn in turns.values())
+            if isinstance(turns, dict)
+            else 0
+        )
+        if active_count > 1:
+            return (
+                ledger,
+                None,
+                ["ambiguous active turns without agent; git fallback으로 보수 판정합니다"],
+            )
         return ledger, None, []
     matches = _agent_turns(ledger, agent)
     if not matches:
@@ -191,6 +203,26 @@ def _reconcile_active_turn(
                 refreshed,
                 None,
                 ["scope too large for local-or-unknown active turn"],
+            )
+        remote_epochs = refreshed_turn.get("remote_mutation_epochs")
+        remote_sequence = refreshed_turn.get("last_remote_mutation_seq")
+        has_remote_mutation = (
+            isinstance(remote_epochs, dict)
+            and bool(remote_epochs)
+            or refreshed_turn.get("provenance_remote_mutation") is True
+            or (
+                isinstance(remote_sequence, int)
+                and not isinstance(remote_sequence, bool)
+                and remote_sequence > 0
+            )
+        )
+        if has_remote_mutation and not has_successful_verification(
+            refreshed, identity.as_dict()
+        ):
+            return (
+                refreshed,
+                None,
+                ["scope too large for unverified remote active turn"],
             )
         return refreshed, [], []
     return refreshed, _turn_delta_paths(refreshed_turn), []

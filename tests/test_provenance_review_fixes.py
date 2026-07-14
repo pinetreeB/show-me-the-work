@@ -204,6 +204,10 @@ def test_root_fablize_is_harness_state_but_nested_and_similar_names_are_observed
     assert "nested/.fablize/user.json" in paths
     assert ".fablize-user/data.json" in paths
     assert is_harness_state_path(".fablize/state.json") is True
+    assert is_harness_state_path(r".fablize\state.json") is True
+    assert is_harness_state_path("./.fablize/state.json") is True
+    assert is_harness_state_path(r".fable-lite\state.json") is True
+    assert is_harness_state_path("./.fable-lite/state.json") is True
     assert is_harness_state_path("nested/.fablize/user.json") is False
     assert is_harness_state_path(".fablize-user/data.json") is False
 

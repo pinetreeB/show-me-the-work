@@ -201,6 +201,16 @@ def restart_blocked_turn(root: Path, invocation: CanonicalInvocation) -> None:
 
 
 def _report(result: ObservationResult, baseline_snapshot_id: str) -> ObservationReport:
+    if result.incomplete:
+        return ObservationReport(
+            "",
+            "",
+            (),
+            True,
+            result.full_scan,
+            result.status,
+            result.status_reason,
+        )
     if result.status is ProvenanceStatus.SCOPE_TOO_LARGE:
         return ObservationReport(
             "",
@@ -252,6 +262,13 @@ def _record_invocation(
     root: Path, invocation: CanonicalInvocation, covers: JsonObject | None
 ) -> None:
     payload = _ledger_payload(root, invocation) | {"event": "invocation"}
+    classification = _shell_classification(invocation)
+    if _mutation_capable(invocation, classification):
+        payload["provenance_mutation_capable"] = True
+    target_ids = _remote_target_ids(invocation, classification)
+    if target_ids and not is_verification_command(invocation.command_hint):
+        payload["provenance_remote_mutation"] = True
+        payload["remote_target_ids"] = list(target_ids)
     if covers is not None:
         payload["covers"] = covers
     _ = record_event(payload)
