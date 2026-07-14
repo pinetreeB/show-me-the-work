@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .provenance_lifecycle_types import TurnState
 from .provenance_store import load_turn_baseline
+from .provenance_types import ProvenanceReason, ProvenanceStatus
 
 
 class MissingTurnBaselineError(KeyError):
@@ -14,6 +15,23 @@ class MissingTurnBaselineError(KeyError):
         super().__init__((agent, turn_id))
         self.agent = agent
         self.turn_id = turn_id
+
+
+class TurnBootstrapError(RuntimeError):
+    status: ProvenanceStatus
+    reason: ProvenanceReason
+    incomplete: bool
+
+    def __init__(
+        self,
+        status: ProvenanceStatus,
+        reason: ProvenanceReason,
+        incomplete: bool,
+    ) -> None:
+        super().__init__((status.value, reason.value))
+        self.status = status
+        self.reason = reason
+        self.incomplete = incomplete
 
 
 def load_resumed_turn(
