@@ -11,6 +11,7 @@ from typing import Final, TypeAlias
 from .provenance_types import ProvenanceConfig, ProvenanceConfigError, ProvenancePathError
 
 HARD_EXCLUDES: Final = (
+    ".codegraph/**",
     ".git/**",
     ".fable-lite/**",
     ".fablize/**",
@@ -18,7 +19,7 @@ HARD_EXCLUDES: Final = (
     ".svn/**",
 )
 HARD_EXCLUDE_DIRS: Final = frozenset(
-    (".git", ".fable-lite", ".fablize", ".hg", ".svn")
+    (".codegraph", ".git", ".fable-lite", ".fablize", ".hg", ".svn")
 )
 SOFT_EXCLUDES: Final = (
     "node_modules/**",
@@ -93,7 +94,7 @@ def is_hard_excluded(path: str) -> bool:
 
 
 def is_harness_state_path(path: str) -> bool:
-    return _first_segment(path) in {".fable-lite", ".fablize"}
+    return _first_segment(path) in {".codegraph", ".fable-lite", ".fablize"}
 
 
 @lru_cache(maxsize=65_536)

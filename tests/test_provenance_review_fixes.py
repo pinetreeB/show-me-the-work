@@ -194,21 +194,27 @@ def test_root_fablize_is_harness_state_but_nested_and_similar_names_are_observed
     tmp_path: Path,
 ) -> None:
     _write(tmp_path / ".fablize" / "state.json", "root state")
+    _write(tmp_path / ".codegraph" / "state.json", "root tool state")
     _write(tmp_path / "nested" / ".fablize" / "user.json", "user data")
+    _write(tmp_path / "nested" / ".codegraph" / "user.json", "user data")
     _write(tmp_path / ".fablize-user" / "data.json", "similar name")
 
     snapshot = snapshot_workspace(tmp_path)
     paths = {entry.path for entry in snapshot.entries}
 
     assert ".fablize/state.json" not in paths
+    assert ".codegraph/state.json" not in paths
     assert "nested/.fablize/user.json" in paths
+    assert "nested/.codegraph/user.json" in paths
     assert ".fablize-user/data.json" in paths
     assert is_harness_state_path(".fablize/state.json") is True
     assert is_harness_state_path(r".fablize\state.json") is True
     assert is_harness_state_path("./.fablize/state.json") is True
     assert is_harness_state_path(r".fable-lite\state.json") is True
     assert is_harness_state_path("./.fable-lite/state.json") is True
+    assert is_harness_state_path(".codegraph/state.json") is True
     assert is_harness_state_path("nested/.fablize/user.json") is False
+    assert is_harness_state_path("nested/.codegraph/user.json") is False
     assert is_harness_state_path(".fablize-user/data.json") is False
 
 
