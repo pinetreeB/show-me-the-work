@@ -19,7 +19,12 @@ from adapters.codex_cli.common import tool_file_paths as codex_paths
 from adapters.codex_cli.common import tool_output as codex_output
 from adapters.codex_cli.common import tool_success as codex_success
 from core.ledger import JsonObject, JsonValue, load_ledger, record_event
-from core.provenance_types import DEFAULT_MAX_SCAN_BYTES, ProvenanceStatus
+from core.verification_covers import active_turn
+from core.provenance_types import (
+    DEFAULT_MAX_SCAN_BYTES,
+    ProvenanceReason,
+    ProvenanceStatus,
+)
 from core.shell_hints import shell_candidate_paths
 
 
@@ -255,6 +260,7 @@ def test_observation_failure_is_incomplete_without_raising(tmp_path: Path) -> No
 
     # Then: callers receive incomplete state instead of a hook-crashing exception.
     assert result.incomplete is True
+    assert result.status_reason is ProvenanceReason.OBSERVATION_ERROR
 
 
 def test_adapter_start_reports_scope_too_large_before_hashing_oversized_root(
@@ -289,3 +295,106 @@ def test_adapter_start_reports_scope_too_large_before_hashing_oversized_root(
     assert (
         tmp_path / ".fable-lite" / "snapshots" / "workspace-current.json"
     ).exists() is False
+
+
+def test_adapter_records_shell_effect_and_remote_target_epochs(tmp_path: Path) -> None:
+    from core.adapter_observation import (
+        CanonicalInvocation,
+        ObservationReport,
+        _record_status,
+    )
+
+    base = {
+        "project_root": str(tmp_path),
+        "event": "prompt",
+        "host": "codex_cli",
+        "agent": "codex",
+        "session_id": "session",
+        "turn_id": "turn-session",
+        "prompt": "work",
+    }
+    _ = record_event(base)
+    report = ObservationReport("snapshot", "baseline", (), False, False)
+
+    def invocation(invocation_id: str, family: str, command: str) -> CanonicalInvocation:
+        return CanonicalInvocation(
+            "codex_cli",
+            "codex",
+            "session",
+            "turn-session",
+            invocation_id,
+            "post_tool",
+            family,
+            (),
+            command,
+            True,
+            "",
+        )
+
+    _record_status(tmp_path, invocation("read", "shell", "git status --short"), report)
+    ledger = load_ledger({"project_root": str(tmp_path)})
+    turn = active_turn(ledger, base)
+    assert turn is not None
+    assert turn.get("provenance_mutation_capable") is not True
+    assert turn.get("remote_mutation_epochs") in (None, {})
+
+    _record_status(
+        tmp_path,
+        invocation("remote", "shell", 'ssh deploy@host "touch marker"'),
+        report,
+    )
+    ledger = load_ledger({"project_root": str(tmp_path)})
+    turn = active_turn(ledger, base)
+    assert turn is not None
+    assert turn.get("provenance_mutation_capable") is not True
+    assert turn["remote_mutation_epochs"] == {
+        "ssh://deploy@host:22": ledger["event_seq"]
+    }
+
+    _record_status(tmp_path, invocation("unknown", "shell", "opaque-writer"), report)
+    ledger = load_ledger({"project_root": str(tmp_path)})
+    turn = active_turn(ledger, base)
+    assert turn is not None
+    assert turn["provenance_mutation_capable"] is True
+
+
+def test_edit_family_always_remains_local_mutation_capable(tmp_path: Path) -> None:
+    from core.adapter_observation import (
+        CanonicalInvocation,
+        ObservationReport,
+        _record_status,
+    )
+
+    payload = {
+        "project_root": str(tmp_path),
+        "event": "prompt",
+        "host": "codex_cli",
+        "agent": "codex",
+        "session_id": "session",
+        "turn_id": "turn-session",
+        "prompt": "work",
+    }
+    _ = record_event(payload)
+    invocation = CanonicalInvocation(
+        "codex_cli",
+        "codex",
+        "session",
+        "turn-session",
+        "edit",
+        "post_tool",
+        "edit",
+        ("app.py",),
+        "",
+        True,
+        "",
+    )
+
+    _record_status(
+        tmp_path,
+        invocation,
+        ObservationReport("snapshot", "baseline", (), False, False),
+    )
+
+    turn = active_turn(load_ledger({"project_root": str(tmp_path)}), payload)
+    assert turn is not None
+    assert turn["provenance_mutation_capable"] is True

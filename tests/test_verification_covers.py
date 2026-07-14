@@ -61,9 +61,18 @@ def _change(
     )
 
 
-def _covers(root: Path, invocation_id: str, agent: str = "alpha") -> JsonObject:
+def _covers(
+    root: Path,
+    invocation_id: str,
+    agent: str = "alpha",
+    remote_target_ids: tuple[str, ...] = (),
+) -> JsonObject:
     return ledger_module.capture_verification_covers(
-        {**_payload(root, "verification", agent), "invocation_id": invocation_id}
+        {
+            **_payload(root, "verification", agent),
+            "invocation_id": invocation_id,
+            "remote_target_ids": list(remote_target_ids),
+        }
     )
 
 
@@ -239,6 +248,7 @@ def _remote_observation(
     *,
     incomplete: bool = True,
     local_mutation_capable: bool = False,
+    remote_target_ids: tuple[str, ...] = ("ssh://deploy@host:22",),
 ) -> JsonObject:
     return record_event(
         {
@@ -246,6 +256,7 @@ def _remote_observation(
             "provenance_incomplete": incomplete,
             "provenance_mutation_capable": local_mutation_capable,
             "provenance_remote_mutation": True,
+            "remote_target_ids": list(remote_target_ids),
         }
     )
 
@@ -260,7 +271,11 @@ def test_remote_only_mutation_requires_later_fresh_verification(tmp_path: Path) 
 def test_fresh_verification_resolves_incomplete_remote_only_turn(tmp_path: Path) -> None:
     _ = _start(tmp_path)
     remote = _remote_observation(tmp_path)
-    covers = _covers(tmp_path, "verify-remote")
+    covers = _covers(
+        tmp_path,
+        "verify-remote",
+        remote_target_ids=("ssh://deploy@host:22",),
+    )
     verified = _verify(tmp_path, covers, "verify-remote")
 
     active = verified["active_turns"]
@@ -268,6 +283,9 @@ def test_fresh_verification_resolves_incomplete_remote_only_turn(tmp_path: Path)
     turn = active["host:session:alpha"]
     assert isinstance(turn, dict)
     assert turn["last_remote_mutation_seq"] == remote["event_seq"]
+    assert turn["remote_mutation_epochs"] == {
+        "ssh://deploy@host:22": remote["event_seq"]
+    }
     assert _stop(tmp_path) == "allow"
 
 
@@ -290,3 +308,58 @@ def test_local_mutation_capable_incomplete_turn_stays_blocked_after_verification
 
     assert result["decision"] == "block"
     assert result["reason_code"] == "stop.provenance_incomplete"
+
+
+def test_remote_host_b_verification_does_not_cover_host_a_mutation(
+    tmp_path: Path,
+) -> None:
+    _ = _start(tmp_path)
+    _ = _remote_observation(
+        tmp_path,
+        remote_target_ids=("ssh://deploy@host-a:22",),
+    )
+    _ = _verify(
+        tmp_path,
+        _covers(
+            tmp_path,
+            "verify-host-b",
+            remote_target_ids=("ssh://deploy@host-b:22",),
+        ),
+        "verify-host-b",
+    )
+
+    assert _stop(tmp_path) == "block"
+
+
+def test_each_remote_target_requires_its_own_fresh_verification(tmp_path: Path) -> None:
+    _ = _start(tmp_path)
+    _ = _remote_observation(
+        tmp_path,
+        remote_target_ids=("ssh://deploy@host-a:22",),
+    )
+    _ = _remote_observation(
+        tmp_path,
+        remote_target_ids=("ssh://deploy@host-b:22",),
+    )
+    _ = _verify(
+        tmp_path,
+        _covers(
+            tmp_path,
+            "verify-host-a",
+            remote_target_ids=("ssh://deploy@host-a:22",),
+        ),
+        "verify-host-a",
+    )
+
+    assert _stop(tmp_path) == "block"
+
+    _ = _verify(
+        tmp_path,
+        _covers(
+            tmp_path,
+            "verify-host-b",
+            remote_target_ids=("ssh://deploy@host-b:22",),
+        ),
+        "verify-host-b",
+    )
+    assert _stop(tmp_path) == "allow"

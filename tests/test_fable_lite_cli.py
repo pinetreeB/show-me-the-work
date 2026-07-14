@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import TypeAlias
 
+from core.adapter_observation import CanonicalInvocation, start_turn
 from core.ledger import record_event
 
 
@@ -94,6 +95,46 @@ def record_card_work(project: Path, changed_path: str, verify: str, *, success: 
     record_event({**base, "event": "prompt", "task_mode": "deep", "prompt": "카드 작업"})
     record_event({**base, "event": "change", "path": changed_path, "kind": "artifact"})
     record_event({**base, "event": "verification", "command": verify, "success": success, "evidence": "1 passed"})
+
+
+def start_observed_turn(
+    project: Path,
+    *,
+    session_id: str = "session",
+    prompt: str = "dist/current.js 수정해줘",
+) -> CanonicalInvocation:
+    invocation = CanonicalInvocation(
+        "codex_cli",
+        "codex",
+        session_id,
+        f"turn-{session_id}",
+        f"start-{session_id}",
+        "turn_start",
+        "other",
+        (),
+        "",
+        True,
+        "",
+    )
+    observation = start_turn(project, invocation)
+    _ = record_event(
+        {
+            "project_root": str(project),
+            "event": "prompt",
+            "host": invocation.host,
+            "agent": invocation.agent,
+            "session_id": invocation.session_id,
+            "turn_id": invocation.turn_id,
+            "baseline_snapshot_id": observation.baseline_snapshot_id,
+            "current_snapshot_id": observation.snapshot_id,
+            "provenance_incomplete": observation.incomplete,
+            "provenance_status": observation.status.value,
+            "provenance_status_reason": observation.status_reason,
+            "task_mode": "normal",
+            "prompt": prompt,
+        }
+    )
+    return invocation
 
 
 def test_check_reports_green_when_changed_files_have_successful_verification(tmp_path: Path) -> None:
@@ -248,3 +289,91 @@ def test_brief_with_card_uses_card_fields(tmp_path: Path) -> None:
         token in result.stdout
         for token in ("fable_lite/**", "core/**", "python -m pytest tests/test_fable_lite_cli.py", "tmp/.done-card", "C:/Users/rotat/.claude/tmp/.done-card", "antigravity")
     )
+
+
+def test_check_uses_active_turn_delta_instead_of_preexisting_repo_dirty(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    write_project_file(tmp_path, "build/preexisting.js", "before\n")
+    write_project_file(tmp_path, "dist/preexisting.js", "before\n")
+    write_project_file(tmp_path, "uv.lock", "version = 1\n")
+    _ = start_observed_turn(tmp_path)
+
+    before = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    assert before.returncode == 0
+    assert "changed: 0" in before.stdout
+    assert "build/preexisting.js" not in before.stdout
+    assert "dist/preexisting.js" not in before.stdout
+    assert "uv.lock" not in before.stdout
+
+    write_project_file(tmp_path, "dist/current.js", "current turn\n")
+    after = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    assert after.returncode == 1
+    assert "changed: 1" in after.stdout
+    assert "dist/current.js" in after.stdout
+    assert "build/preexisting.js" not in after.stdout
+    assert "dist/preexisting.js" not in after.stdout
+    assert "uv.lock" not in after.stdout
+
+
+def test_check_fresh_reconciliation_observes_change_after_last_tool_event(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    write_project_file(tmp_path, "app.py", "before\n")
+    git(tmp_path, "add", "app.py")
+    git(tmp_path, "commit", "-m", "add app")
+    _ = start_observed_turn(tmp_path, prompt="app.py 수정해줘")
+
+    write_project_file(tmp_path, "app.py", "after external change\n")
+    result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    assert result.returncode == 1
+    assert "changed: 1" in result.stdout
+    assert "app.py" in result.stdout
+
+
+def test_check_reports_provenance_finding_for_ambiguous_active_turns(
+    tmp_path: Path,
+) -> None:
+    init_repo(tmp_path)
+    for session in ("one", "two"):
+        _ = record_event(
+            {
+                "project_root": str(tmp_path),
+                "event": "prompt",
+                "host": "codex_cli",
+                "agent": "codex",
+                "session_id": session,
+                "turn_id": f"turn-{session}",
+                "prompt": "app.py 수정해줘",
+            }
+        )
+        _ = record_event(
+            {
+                "project_root": str(tmp_path),
+                "event": "change",
+                "host": "codex_cli",
+                "agent": "codex",
+                "session_id": session,
+                "paths": [
+                    {
+                        "change_id": f"change-{session}",
+                        "path": f"{session}.py",
+                        "kind": "code",
+                        "before": None,
+                        "after": session,
+                        "requires_verification": True,
+                    }
+                ],
+            }
+        )
+
+    result = run_cli(["check", "--root", str(tmp_path), "--agent", "codex"])
+
+    assert result.returncode == 1
+    assert "provenance" in result.stdout.casefold()
+    assert "ambiguous" in result.stdout.casefold()

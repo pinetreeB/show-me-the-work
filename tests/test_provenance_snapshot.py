@@ -19,7 +19,12 @@ from core.provenance import (
     snapshot_workspace,
     snapshot_workspace_with_options,
 )
-from core.provenance_types import ProvenanceStatus, ScanBudget, SnapshotScanOptions
+from core.provenance_types import (
+    ProvenanceReason,
+    ProvenanceStatus,
+    ScanBudget,
+    SnapshotScanOptions,
+)
 
 
 def _entries(snapshot: Snapshot) -> Mapping[str, ManifestEntry]:
@@ -184,7 +189,7 @@ def test_snapshot_entry_budget_returns_scope_too_large_before_hashing(
         snapshot = snapshot_workspace_with_options(tmp_path, options)
 
     assert snapshot.status is ProvenanceStatus.SCOPE_TOO_LARGE
-    assert snapshot.status_reason == "entry_limit"
+    assert snapshot.status_reason is ProvenanceReason.ENTRY_LIMIT
     assert snapshot.incomplete is False
     assert snapshot.entries == ()
     capture_many.assert_not_called()
@@ -208,9 +213,9 @@ def test_snapshot_byte_and_deadline_budgets_return_explicit_scope_status(
     )
 
     assert byte_limited.status is ProvenanceStatus.SCOPE_TOO_LARGE
-    assert byte_limited.status_reason == "byte_limit"
+    assert byte_limited.status_reason is ProvenanceReason.BYTE_LIMIT
     assert deadline_limited.status is ProvenanceStatus.SCOPE_TOO_LARGE
-    assert deadline_limited.status_reason == "deadline"
+    assert deadline_limited.status_reason is ProvenanceReason.DEADLINE
 
 
 def test_snapshot_budget_boundaries_are_inclusive(tmp_path: Path) -> None:
@@ -239,7 +244,7 @@ def test_regular_capture_stops_hashing_when_deadline_expires(tmp_path: Path) -> 
 
     assert captured.entry is None
     assert captured.issue is None
-    assert captured.status_reason == "deadline"
+    assert captured.status_reason is ProvenanceReason.DEADLINE
 
 
 def test_directory_symlink_loop_is_recorded_without_traversal(tmp_path: Path) -> None:
