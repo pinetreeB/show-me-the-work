@@ -60,6 +60,12 @@ jobs:
         run: python -m build --wheel --outdir dist
       - name: Clean wheel install and help outside checkout
         shell: pwsh
+        # Clear the job-level PYTHONPATH=. for this step only: with the repo
+        # root on PYTHONPATH, pip treats the source tree as an already-installed
+        # fable-lite and skips the wheel, so the clean-venv smoke never exercises
+        # the built artifact. Empty PYTHONPATH forces a real wheel install.
+        env:
+          PYTHONPATH: ""
         run: |
           python -m venv .release-venv
           & .\.release-venv\Scripts\python.exe -m pip install --no-index --find-links dist fable-lite
