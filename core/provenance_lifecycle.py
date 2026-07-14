@@ -138,10 +138,10 @@ class ProvenanceLifecycle:
                 self._root, agent, turn_id, self._state.event_seq, mutation_capable
             )
         except MissingTurnBaselineError:
+            if not allow_full_bootstrap:
+                raise
             current = self._state.current
             if current is None:
-                if not allow_full_bootstrap:
-                    raise
                 result = self.start_turn(agent, turn_id, mutation_capable)
                 if (
                     result.status is ProvenanceStatus.COMPLETE

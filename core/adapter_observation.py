@@ -10,7 +10,7 @@ from .provenance_lifecycle import ProvenanceLifecycle
 from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
 from .provenance_store import SnapshotStoreError
-from .provenance_turn_resume import TurnBootstrapError
+from .provenance_turn_resume import MissingTurnBaselineError, TurnBootstrapError
 from .provenance_types import ProvenanceReason, ProvenanceStatus
 from .shell_hints import shell_candidate_paths
 from .shell_command import (
@@ -163,6 +163,16 @@ def finish_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRepor
         lifecycle.resume_turn(invocation.agent_key, invocation.turn_id, _mutation_capable(invocation))
         with scan_progress(lifecycle.observed_file_count):
             result = lifecycle.finish_turn(invocation.agent_key, invocation.turn_id)
+    except MissingTurnBaselineError:
+        ledger = load_ledger({"project_root": str(root)})
+        turns = ledger.get("active_turns")
+        if not isinstance(turns, dict) or not isinstance(
+            turns.get(invocation.agent_key), dict
+        ):
+            return ObservationReport("", "", (), False, True)
+        report = _incomplete_report(True)
+        _record_status(root, invocation, report)
+        return report
     except KeyError:
         return ObservationReport("", "", (), False, True)
     except (OSError, SnapshotStoreError):

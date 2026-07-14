@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import TypeAlias
 
+from core.provenance_store import turn_baseline_path
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTERS = ROOT / "adapters" / "claude_code"
@@ -58,6 +60,56 @@ def test_adapters_handle_realistic_claude_code_nested_payloads(tmp_path: Path) -
     assert "hookSpecificOutput" in prompt_result
     assert "observed 1 change(s)." in str(post_result["systemMessage"])
     assert ledger["changed_files_seen"] == ["app.py"]
+
+
+def test_stop_fails_closed_when_mutated_turn_baseline_is_missing(
+    tmp_path: Path,
+) -> None:
+    # Given: agent A mutates, agent B advances shared current, and A's baseline disappears.
+    _ = run_hook(
+        "user_prompt_submit.py",
+        {"cwd": str(tmp_path), "prompt": "app.py 수정해줘", "session_id": "s1"},
+    )
+    _ = run_hook(
+        "pre_tool_use.py",
+        {
+            "cwd": str(tmp_path),
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "app.py"},
+            "session_id": "s1",
+            "tool_use_id": "edit-a",
+        },
+    )
+    _ = (tmp_path / "app.py").write_text("changed", encoding="utf-8")
+    _ = run_hook(
+        "user_prompt_submit.py",
+        {"cwd": str(tmp_path), "prompt": "상태만 파악하고 대기해", "session_id": "s2"},
+    )
+    ledger = json.loads(
+        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+    )
+    turns = object_value(ledger["active_turns"])
+    agent_key, turn = next(
+        (key, object_value(value))
+        for key, value in turns.items()
+        if key.split(":", 2)[1] == "s1"
+    )
+    baseline = turn_baseline_path(
+        tmp_path,
+        agent_key,
+        str(turn["turn_id"]),
+    )
+    baseline.unlink()
+
+    # When: agent A reaches the real Stop adapter without a trustworthy baseline.
+    result = run_hook(
+        "stop.py",
+        {"cwd": str(tmp_path), "session_id": "s1", "stop_hook_active": False},
+    )
+
+    # Then: missing provenance blocks instead of allowing a clean claim.
+    assert result.get("decision") == "block", result
+    assert "provenance" in str(result["reason"])
 
 
 def test_pretool_blocks_realistic_high_risk_edit_and_shell_payloads(tmp_path: Path) -> None:
