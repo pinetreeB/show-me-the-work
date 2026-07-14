@@ -141,7 +141,12 @@ def capture_verification_covers(payload: Mapping[str, JsonValue]) -> JsonObject:
         turn = active_turn(ledger, payload)
         if turn is None:
             raise LedgerSchemaError("ledger.active_turns", "must contain the verification agent turn")
-        return capture_covers(ledger, turn)
+        target_ids = payload.get("remote_target_ids")
+        return capture_covers(
+            ledger,
+            turn,
+            target_ids if isinstance(target_ids, list) else (),
+        )
 
 
 def load_agent_ledger(payload: Mapping[str, JsonValue]) -> JsonObject:
@@ -167,5 +172,6 @@ def _agent_events_have_v2_state(events: list[JsonObject]) -> bool:
     return any(
         isinstance(event.get("paths"), list)
         or isinstance(event.get("covers"), dict)
+        or isinstance(event.get("baseline_snapshot_id"), str)
         for event in events
     )

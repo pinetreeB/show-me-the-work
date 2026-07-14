@@ -31,6 +31,7 @@ from .provenance_types import (
     ManifestEntry,
     NetDelta,
     ProvenanceConfig,
+    ProvenanceReason,
     ScanIssue,
     ScanResult,
     Snapshot,
@@ -91,7 +92,7 @@ class _ScanState:
     issues: list[ScanIssue]
     regular_requests: list[CaptureRequest]
     status: ProvenanceStatus
-    status_reason: str
+    status_reason: ProvenanceReason
     entry_count: int
     byte_count: int
 
@@ -102,7 +103,7 @@ class _ScanState:
         self.issues = []
         self.regular_requests = []
         self.status = ProvenanceStatus.COMPLETE
-        self.status_reason = ""
+        self.status_reason = ProvenanceReason.NONE
         self.entry_count = 0
         self.byte_count = 0
 
@@ -285,18 +286,18 @@ def _deadline_exceeded(context: _ScanContext, state: _ScanState) -> bool:
     if context.budget.max_seconds > 0.0 and time.monotonic() <= context.deadline:
         return False
     state.status = ProvenanceStatus.SCOPE_TOO_LARGE
-    state.status_reason = "deadline"
+    state.status_reason = ProvenanceReason.DEADLINE
     return True
 
 
 def _reserve_entry(size: int, context: _ScanContext, state: _ScanState) -> bool:
     if state.entry_count + 1 > context.budget.max_entries:
         state.status = ProvenanceStatus.SCOPE_TOO_LARGE
-        state.status_reason = "entry_limit"
+        state.status_reason = ProvenanceReason.ENTRY_LIMIT
         return False
     if state.byte_count + max(0, size) > context.budget.max_bytes:
         state.status = ProvenanceStatus.SCOPE_TOO_LARGE
-        state.status_reason = "byte_limit"
+        state.status_reason = ProvenanceReason.BYTE_LIMIT
         return False
     state.entry_count += 1
     state.byte_count += max(0, size)

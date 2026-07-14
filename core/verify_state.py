@@ -76,16 +76,50 @@ def has_successful_verification(
                 and verification_seq > last_change_seq
                 for result in results
             )
-    remote_seq = _positive_sequence(state.get("last_remote_mutation_seq"))
-    return local_verified and (
-        remote_seq is None or _has_remote_verification(results, remote_seq)
-    )
+    epochs = _remote_epochs(state)
+    if epochs:
+        remote_verified = all(
+            _has_target_verification(results, target_id, remote_seq)
+            for target_id, remote_seq in epochs.items()
+        )
+    else:
+        remote_seq = _positive_sequence(state.get("last_remote_mutation_seq"))
+        remote_verified = remote_seq is None or _has_remote_verification(
+            results, remote_seq
+        )
+    return local_verified and remote_verified
 
 
 def _has_remote_verification(results: list[JsonObject], remote_seq: int) -> bool:
     return any(
         result.get("success") is True
         and isinstance(covers := result.get("covers"), dict)
+        and (through_seq := _positive_sequence(covers.get("through_seq"))) is not None
+        and through_seq >= remote_seq
+        for result in results
+    )
+
+
+def _remote_epochs(state: Mapping[str, JsonValue]) -> dict[str, int]:
+    raw = state.get("remote_mutation_epochs")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        target_id: sequence
+        for target_id, value in raw.items()
+        if isinstance(target_id, str)
+        and (sequence := _positive_sequence(value)) is not None
+    }
+
+
+def _has_target_verification(
+    results: list[JsonObject], target_id: str, remote_seq: int
+) -> bool:
+    return any(
+        result.get("success") is True
+        and isinstance(covers := result.get("covers"), dict)
+        and isinstance(targets := covers.get("remote_target_ids"), list)
+        and target_id in targets
         and (through_seq := _positive_sequence(covers.get("through_seq"))) is not None
         and through_seq >= remote_seq
         for result in results
@@ -117,6 +151,7 @@ def _docs_only(ledger: Mapping[str, JsonValue]) -> bool:
     remote_seq = _positive_sequence(ledger.get("last_remote_mutation_seq"))
     return (
         remote_seq is None
+        and not _remote_epochs(ledger)
         and bool(changed)
         and bool(kinds)
         and kinds <= {"docs"}
@@ -187,10 +222,27 @@ def evaluate_without_io(
 ) -> Decision:
     turn = active_turn(ledger, payload)
     state: Mapping[str, JsonValue] = turn if turn is not None else ledger
-    changed = bool(_as_str_list(state.get("changed_files_seen"))) or (
-        _positive_sequence(state.get("last_remote_mutation_seq")) is not None
+    changed = (
+        bool(_as_str_list(state.get("changed_files_seen")))
+        or _positive_sequence(state.get("last_remote_mutation_seq")) is not None
+        or bool(_remote_epochs(state))
     )
     verified = has_successful_verification(ledger, payload)
+
+    if (
+        state.get("provenance_status") == ProvenanceStatus.SCOPE_TOO_LARGE.value
+        and state.get("provenance_mutation_capable") is True
+    ):
+        return {
+            "decision": "block",
+            "reason_code": ReasonCode.STOP_PROVENANCE_INCOMPLETE.value,
+            "reason": (
+                "[smtw] Stop gate: provenance 범위가 너무 커서 local-or-unknown 변경 가능성을 "
+                "안전하게 관측할 수 없습니다. 프로젝트 루트를 좁히고 다시 관측하세요. "
+                "/ Scope too large cannot prove a clean local-or-unknown turn.\n"
+                "Show me the work."
+            ),
+        }
 
     if (
         state.get("provenance_incomplete") is True

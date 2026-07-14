@@ -10,9 +10,14 @@ from .provenance_lifecycle import ProvenanceLifecycle
 from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
 from .provenance_store import SnapshotStoreError
-from .provenance_types import ProvenanceStatus
+from .provenance_types import ProvenanceReason, ProvenanceStatus
 from .shell_hints import shell_candidate_paths
-from .shell_command import is_remote_mutation_command
+from .shell_command import (
+    ShellClassification,
+    ShellEffect,
+    classify_shell_effect,
+    is_remote_mutation_command,
+)
 from .verification import is_verification_command
 from .verification_covers import active_turn
 
@@ -67,7 +72,7 @@ class ObservationReport:
     incomplete: bool
     full_reconcile: bool
     status: ProvenanceStatus = ProvenanceStatus.COMPLETE
-    status_reason: str = ""
+    status_reason: ProvenanceReason = ProvenanceReason.NONE
 
 
 def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
@@ -152,6 +157,32 @@ def finish_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRepor
     return report
 
 
+def reconcile_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
+    invocation = _active_invocation(root, invocation)
+    if report := _scope_too_large_report(root, invocation):
+        return report
+    try:
+        lifecycle = ProvenanceLifecycle(root)
+        lifecycle.resume_turn(
+            invocation.agent_key,
+            invocation.turn_id,
+            _mutation_capable(invocation),
+        )
+        with scan_progress(lifecycle.observed_file_count):
+            result = lifecycle.reconcile_turn(
+                invocation.agent_key,
+                invocation.turn_id,
+            )
+    except (KeyError, OSError, SnapshotStoreError):
+        report = _incomplete_report(True)
+        _record_status(root, invocation, report)
+        return report
+    report = _report(result, "")
+    _record_changes(root, invocation, result.changes, report.snapshot_id)
+    _record_status(root, invocation, report)
+    return report
+
+
 def verification_covers(root: Path, invocation: CanonicalInvocation) -> JsonObject | None:
     resolved = _active_invocation(root, invocation)
     return _stored_covers(root, resolved) or _covers(root, resolved)
@@ -201,7 +232,7 @@ def _incomplete_report(full_reconcile: bool = False) -> ObservationReport:
         True,
         full_reconcile,
         ProvenanceStatus.INCOMPLETE,
-        "observation_error",
+        ProvenanceReason.OBSERVATION_ERROR,
     )
 
 
@@ -209,7 +240,10 @@ def _covers(root: Path, invocation: CanonicalInvocation) -> JsonObject | None:
     if not is_verification_command(invocation.command_hint):
         return None
     try:
-        return capture_verification_covers(_ledger_payload(root, invocation))
+        return capture_verification_covers(
+            _ledger_payload(root, invocation)
+            | {"remote_target_ids": list(_remote_target_ids(invocation))}
+        )
     except ValueError:
         return None
 
@@ -241,6 +275,7 @@ def _record_changes(
 
 
 def _record_status(root: Path, invocation: CanonicalInvocation, report: ObservationReport) -> None:
+    classification = _shell_classification(invocation)
     payload = _ledger_payload(root, invocation) | {
         "event": "observation",
         "current_snapshot_id": report.snapshot_id,
@@ -248,13 +283,12 @@ def _record_status(root: Path, invocation: CanonicalInvocation, report: Observat
         "provenance_status": report.status.value,
         "provenance_status_reason": report.status_reason,
     }
-    if _mutation_capable(invocation):
+    if _mutation_capable(invocation, classification):
         payload["provenance_mutation_capable"] = True
-    if (
-        _remote_mutation(invocation)
-        and not is_verification_command(invocation.command_hint)
-    ):
+    target_ids = _remote_target_ids(invocation, classification)
+    if target_ids and not is_verification_command(invocation.command_hint):
         payload["provenance_remote_mutation"] = True
+        payload["remote_target_ids"] = list(target_ids)
     _ = record_event(payload)
 
 
@@ -338,8 +372,16 @@ def _source(invocation: CanonicalInvocation) -> str:
     return invocation.tool_family_hint if invocation.tool_family_hint in OBSERVABLE_FAMILIES else "external"
 
 
-def _mutation_capable(invocation: CanonicalInvocation) -> bool:
-    return invocation.tool_family_hint in OBSERVABLE_FAMILIES
+def _mutation_capable(
+    invocation: CanonicalInvocation,
+    classification: ShellClassification | None = None,
+) -> bool:
+    if invocation.tool_family_hint == "edit":
+        return True
+    if invocation.tool_family_hint != "shell":
+        return False
+    resolved = classification or classify_shell_effect(invocation.command_hint)
+    return resolved.effect is ShellEffect.LOCAL_OR_UNKNOWN
 
 
 def _remote_mutation(invocation: CanonicalInvocation) -> bool:
@@ -347,6 +389,22 @@ def _remote_mutation(invocation: CanonicalInvocation) -> bool:
         invocation.tool_family_hint == "shell"
         and is_remote_mutation_command(invocation.command_hint)
     )
+
+
+def _shell_classification(invocation: CanonicalInvocation) -> ShellClassification | None:
+    if invocation.tool_family_hint != "shell":
+        return None
+    return classify_shell_effect(invocation.command_hint)
+
+
+def _remote_target_ids(
+    invocation: CanonicalInvocation,
+    classification: ShellClassification | None = None,
+) -> tuple[str, ...]:
+    if not _remote_mutation(invocation):
+        return ()
+    resolved = classification or classify_shell_effect(invocation.command_hint)
+    return resolved.remote_target_ids
 
 
 def _scope_too_large_report(
@@ -364,5 +422,7 @@ def _scope_too_large_report(
         False,
         False,
         ProvenanceStatus.SCOPE_TOO_LARGE,
-        reason if isinstance(reason, str) else "",
+        ProvenanceReason(reason)
+        if isinstance(reason, str) and reason in ProvenanceReason
+        else ProvenanceReason.NONE,
     )

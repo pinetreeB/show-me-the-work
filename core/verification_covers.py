@@ -36,7 +36,11 @@ def active_turn(ledger: Mapping[str, JsonValue], payload: Mapping[str, JsonValue
     return next((turn for turn in turns.values() if isinstance(turn, dict)), None)
 
 
-def capture_covers(ledger: Mapping[str, JsonValue], turn: JsonObject) -> JsonObject:
+def capture_covers(
+    ledger: Mapping[str, JsonValue],
+    turn: JsonObject,
+    remote_target_ids: Iterable[JsonValue] = (),
+) -> JsonObject:
     revisions = pending_revisions(turn)
     path_revisions = [
         {
@@ -49,13 +53,17 @@ def capture_covers(ledger: Mapping[str, JsonValue], turn: JsonObject) -> JsonObj
     ]
     change_ids = _unique_strings(revision["change_id"] for revision in revisions)
     event_ids = _unique_strings(revision["change_event_id"] for revision in revisions)
-    return {
+    covers: JsonObject = {
         "through_seq": sequence_value(ledger.get("event_seq")),
         "snapshot_id": _string(turn.get("current_snapshot_id"), "snapshot:unavailable"),
         "change_ids": change_ids,
         "change_event_ids": event_ids,
         "path_revisions": path_revisions,
     }
+    targets = _unique_strings(remote_target_ids)
+    if targets:
+        covers["remote_target_ids"] = targets
+    return covers
 
 
 def record_path_revisions(turn: JsonObject, payload: Mapping[str, JsonValue]) -> None:

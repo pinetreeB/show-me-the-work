@@ -122,7 +122,17 @@ def _update_turn_after_event(turn: JsonObject, payload: Mapping[str, JsonValue])
         turn["provenance_mutation_capable"] = True
     if payload.get("provenance_remote_mutation") is True:
         turn["provenance_remote_mutation"] = True
-        turn["last_remote_mutation_seq"] = sequence_value(payload.get("seq"))
+        mutation_seq = sequence_value(payload.get("seq"))
+        turn["last_remote_mutation_seq"] = mutation_seq
+        epochs = turn.get("remote_mutation_epochs")
+        epochs = epochs if isinstance(epochs, dict) else {}
+        target_ids = payload.get("remote_target_ids")
+        if isinstance(target_ids, list):
+            for target_id in target_ids:
+                if isinstance(target_id, str) and target_id:
+                    epochs[target_id] = mutation_seq
+        if epochs:
+            turn["remote_mutation_epochs"] = epochs
     event = payload.get("event")
     if event == "invocation":
         _remember_invocation(turn, payload)

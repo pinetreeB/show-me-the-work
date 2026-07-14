@@ -29,7 +29,7 @@ from .provenance_store import (
 from .provenance_turn_resume import load_resumed_turn
 from .provenance_lifecycle_start import can_fast_start, candidate_paths as candidate_paths_for_root
 from .provenance_lifecycle_scope import prime_candidate_scope, scan_snapshot
-from .provenance_types import ProvenanceStatus, Snapshot
+from .provenance_types import ProvenanceReason, ProvenanceStatus, Snapshot
 
 
 class ProvenanceLifecycle:
@@ -43,6 +43,7 @@ class ProvenanceLifecycle:
             current = None
             self._state = LifecycleState(str(self._root))
             self._state.incomplete = True
+            self._state.incomplete_reason = ProvenanceReason.STORE_READ_ERROR
         else:
             self._state = LifecycleState(str(self._root), current)
 
@@ -71,6 +72,11 @@ class ProvenanceLifecycle:
         turn_id: str,
         mutation_capable: bool = False,
     ) -> ObservationResult:
+        if self._state.incomplete_reason is ProvenanceReason.STORE_READ_ERROR:
+            return self._mark_incomplete(
+                self._result(None, (), True, 0),
+                ProvenanceReason.STORE_READ_ERROR,
+            )
         result = self._observe(
             "",
             "external",
@@ -88,7 +94,7 @@ class ProvenanceLifecycle:
         try:
             save_turn_baseline_from_current(self._root, agent, turn_id, turn.baseline)
         except SnapshotStoreError:
-            return self._mark_incomplete(result)
+            return self._mark_incomplete(result, ProvenanceReason.STORE_WRITE_ERROR)
         self._state.turns[(agent, turn_id)] = turn
         return self._turn_result(result, turn, False)
 
@@ -139,7 +145,7 @@ class ProvenanceLifecycle:
             )
         return self._turn_result(result, turn, False)
 
-    def finish_turn(self, agent: str, turn_id: str) -> ObservationResult:
+    def reconcile_turn(self, agent: str, turn_id: str) -> ObservationResult:
         turn = self._state.turns[(agent, turn_id)]
         result = self._observe(agent, "external", frozenset(), True)
         if result.status is ProvenanceStatus.COMPLETE and self._state.current is not None:
@@ -150,7 +156,9 @@ class ProvenanceLifecycle:
             try:
                 save_workspace_current(self._root, finalized)
             except SnapshotStoreError:
-                result = self._mark_incomplete(result)
+                result = self._mark_incomplete(
+                    result, ProvenanceReason.STORE_WRITE_ERROR
+                )
             else:
                 self._state.current = finalized
                 self._state.current_is_stop_full = True
@@ -164,16 +172,21 @@ class ProvenanceLifecycle:
                     "external",
                 ),
             )
+        return self._turn_result(result, turn, False)
+
+    def finish_turn(self, agent: str, turn_id: str) -> ObservationResult:
+        turn = self._state.turns[(agent, turn_id)]
+        result = self.reconcile_turn(agent, turn_id)
         reserved = result.incomplete and turn.mutation_capable
         if reserved:
             self._state.stop_cap_reservations.add((agent, turn_id))
         try:
             delete_turn_baseline(self._root, agent, turn_id)
         except SnapshotStoreError:
-            result = self._mark_incomplete(result)
+            result = self._mark_incomplete(result, ProvenanceReason.STORE_WRITE_ERROR)
             reserved = turn.mutation_capable
         self._state.turns.pop((agent, turn_id), None)
-        return self._turn_result(result, turn, reserved)
+        return replace(result, stop_cap_reserved=reserved)
 
     def _scan(
         self,
@@ -208,7 +221,10 @@ class ProvenanceLifecycle:
         committed = self._commit_if_current(rebase_generation, rebased, agent, source, full_scan)
         if committed is not None:
             return replace(committed, rebase_count=1)
-        return self._mark_incomplete(self._result(None, (), full_scan, 1))
+        return self._mark_incomplete(
+            self._result(None, (), full_scan, 1),
+            ProvenanceReason.OBSERVATION_ERROR,
+        )
 
     def _generation_current(self) -> tuple[int, Snapshot | None]:
         with ledger_transaction(str(self._root)):
@@ -235,12 +251,16 @@ class ProvenanceLifecycle:
                 try:
                     save_workspace_current(self._root, snapshot)
                 except SnapshotStoreError:
-                    return self._mark_incomplete(self._result(snapshot, changes, full_scan, 0))
+                    return self._mark_incomplete(
+                        self._result(snapshot, changes, full_scan, 0),
+                        ProvenanceReason.STORE_WRITE_ERROR,
+                    )
             elif unchanged.full_reconciled_at is not None:
                 snapshot = unchanged
             self._state.current = snapshot
             self._state.generation += 1
             self._state.incomplete = False
+            self._state.incomplete_reason = ProvenanceReason.NONE
             self._state.current_is_stop_full = reconciled_at is not None
             return self._result(snapshot, changes, full_scan, 0)
 
@@ -257,13 +277,19 @@ class ProvenanceLifecycle:
             stop_cap_reserved=stop_cap_reserved,
         )
 
-    def _mark_incomplete(self, result: ObservationResult) -> ObservationResult:
+    def _mark_incomplete(
+        self,
+        result: ObservationResult,
+        reason: ProvenanceReason = ProvenanceReason.OBSERVATION_ERROR,
+    ) -> ObservationResult:
         self._state.incomplete = True
+        self._state.incomplete_reason = reason
         return replace(
             result,
             incomplete=True,
             clean_claim=False,
             status=ProvenanceStatus.INCOMPLETE,
+            status_reason=reason,
         )
 
     def _mark_scope_too_large(self, result: ObservationResult) -> ObservationResult:
@@ -282,7 +308,11 @@ class ProvenanceLifecycle:
         rebase_count: int,
     ) -> ObservationResult:
         status = snapshot.status if snapshot is not None else ProvenanceStatus.INCOMPLETE
-        reason = snapshot.status_reason if snapshot is not None else "snapshot_unavailable"
+        reason = (
+            snapshot.status_reason
+            if snapshot is not None
+            else ProvenanceReason.SNAPSHOT_UNAVAILABLE
+        )
         return ObservationResult(
             snapshot,
             changes,
