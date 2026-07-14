@@ -105,6 +105,30 @@ def test_remote_mutation_epoch_is_independent_of_local_effect_classification() -
         assert is_remote_mutation_command(command) is True, command
 
 
+def test_env_wrapped_remote_mutation_creates_epoch() -> None:
+    command = 'env FOO=bar ssh deploy@host "touch /srv/marker"'
+    result = is_remote_mutation_command(command)
+    assert result is True
+
+
+def test_bash_wrapped_remote_mutation_creates_epoch() -> None:
+    command = 'bash -c "ssh deploy@host touch /srv/marker"'
+    result = is_remote_mutation_command(command)
+    assert result is True
+
+
+def test_sh_wrapped_remote_mutation_creates_epoch() -> None:
+    command = 'sh -c "ssh deploy@host touch /srv/marker"'
+    result = is_remote_mutation_command(command)
+    assert result is True
+
+
+def test_uv_wrapped_remote_mutation_creates_epoch() -> None:
+    command = 'uv run ssh deploy@host "touch /srv/marker"'
+    result = is_remote_mutation_command(command)
+    assert result is True
+
+
 def test_non_remote_ssh_and_scp_operations_do_not_create_remote_epochs() -> None:
     commands = (
         "echo ssh host touch /tmp/x",

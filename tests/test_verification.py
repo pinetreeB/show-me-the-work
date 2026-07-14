@@ -66,6 +66,9 @@ def test_shell_chains_cannot_claim_atomic_verification_evidence() -> None:
         "pytest | cat",
         "pytest |& echo 1 passed",
         "pytest & echo ok",
+        'bash -c "pytest && echo done"',
+        'sh -c "pytest; echo done"',
+        'env FOO=bar bash -c "pytest && echo done"',
     )
 
     # When/Then: a chained command is not atomic verification evidence.

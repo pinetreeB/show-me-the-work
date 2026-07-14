@@ -9,8 +9,7 @@ from .shell_command import (
     command_operators,
     command_segments,
     remote_ssh_command_tokens,
-    without_environment_assignments,
-    without_shell_redirections,
+    unwrap_command_wrapper,
 )
 
 
@@ -31,8 +30,6 @@ DIRECT_TEST_RUNNERS: Final = frozenset(
         "node:test",
     }
 )
-SHELL_WRAPPERS: Final = frozenset({"bash", "sh", "zsh", "pwsh", "powershell"})
-
 # 스크립트 재실행 패턴(E1c F1에서 관측: `python demo.py`로 수정 전후 검증했는데 미인식).
 # 인터프리터 + 스크립트파일. bash/sh/zsh 추가(H3 — 이 프로젝트가 직접 감시하는
 # SHELL_TOOLS의 한 축인 Bash 자체의 스크립트 재실행이 빠져 있던 것을 보강).
@@ -60,32 +57,23 @@ def is_verification_command(command: str) -> bool:
     """이 셸 명령이 검증(테스트/빌드확인) 명령으로 인정되는지 판정한다."""
     if "\n" in command or "\r" in command or command_operators(command):
         return False
-    return any(
-        _is_verification_invocation(without_shell_redirections(tokens))
-        for tokens in command_segments(command)
-    )
+    for segment in command_segments(command):
+        tokens, nested = unwrap_command_wrapper(segment)
+        if nested and is_verification_command(nested):
+            return True
+        if tokens and _is_verification_invocation(tokens):
+            return True
+    return False
 
 
 def _is_verification_invocation(tokens: tuple[str, ...]) -> bool:
-    tokens = without_environment_assignments(tokens)
-    if not tokens:
-        return False
     command = command_name(tokens[0])
     arguments = tokens[1:]
     if command in OUTPUT_ONLY_COMMANDS:
         return False
-    if command in SHELL_WRAPPERS and arguments and arguments[0].casefold() in {"-c", "-command"}:
-        return len(arguments) > 1 and is_verification_command(arguments[1])
-    if command == "env":
-        return _is_verification_invocation(without_environment_assignments(arguments))
-    if command == "uv" and arguments[:1] == ("run",):
-        return _is_verification_invocation(arguments[1:])
     if command == "ssh":
         nested = remote_ssh_command_tokens(tokens)
-        nested_segments = command_segments(nested) if nested else ()
-        return len(nested_segments) == 1 and _is_verification_invocation(
-            nested_segments[0]
-        )
+        return bool(nested) and is_verification_command(nested)
     if command in {"python", "python3"}:
         return _is_python_verification(arguments)
     if command in DIRECT_TEST_RUNNERS:
