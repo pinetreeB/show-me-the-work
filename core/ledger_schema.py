@@ -132,6 +132,30 @@ def _validate_v1_projection(value: JsonObject) -> None:
     )
     _string_list(_required(value, "scope_warnings", "ledger"), "ledger.scope_warnings")
     _string(_required(value, "agent", "ledger"), "ledger.agent")
+    _validate_design_state(value, "ledger")
+
+
+def _validate_design_state(value: JsonObject, field: str) -> None:
+    if "design_required" not in value:
+        return
+    for name in ("design_required", "design_touched", "design_check_passed"):
+        _boolean(_required(value, name, field), f"{field}.{name}")
+    for name in ("design_blocks", "design_last_change_seq", "design_check_seq"):
+        _nonnegative_integer(_required(value, name, field), f"{field}.{name}")
+    _string(
+        _required(value, "design_baseline_revision", field),
+        f"{field}.design_baseline_revision",
+    )
+    violations = _required(value, "design_violations", field)
+    if not isinstance(violations, list):
+        _reject(f"{field}.design_violations", "must be a list")
+    dirty_baseline = _object(
+        _required(value, "design_dirty_baseline", field),
+        f"{field}.design_dirty_baseline",
+    )
+    for path, hashes in dirty_baseline.items():
+        _string(path, f"{field}.design_dirty_baseline key")
+        _string_list(hashes, f"{field}.design_dirty_baseline.{path}")
 
 
 def validate_v2_ledger(value: JsonValue) -> JsonObject:
@@ -171,6 +195,7 @@ def validate_v2_ledger(value: JsonValue) -> JsonObject:
                 _reject(f"{field}.migration_mode", "must equal legacy_turn")
         if "legacy_seq_less" in turn:
             _boolean(turn["legacy_seq_less"], f"{field}.legacy_seq_less")
+        _validate_design_state(turn, field)
     if "scorecard_cache" in ledger:
         _validate_scorecard_cache(ledger["scorecard_cache"])
     if "scorecard_journal_offset" in ledger:

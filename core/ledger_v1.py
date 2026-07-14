@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
+from .design_gate import is_ui_path
 from .ledger_schema import JsonObject, JsonValue
 
 DOC_EXTS: Final = (".md", ".txt", ".rst", ".adoc")
@@ -16,7 +17,11 @@ V1_PROJECTION_FIELDS: Final = (
     "verification_commands", "verification_results", "event_seq", "last_change_seq",
     "stop_blocks", "goals_blocks", "intent_blocks", "requires_investigation_compliance",
     "needs_goals", "intent_required", "ambiguity_score", "scope_warnings", "agent",
+    "design_required", "design_touched", "design_blocks", "design_last_change_seq",
+    "design_check_passed", "design_check_seq", "design_violations", "design_baseline_revision",
+    "design_dirty_baseline",
 )
+DESIGN_FIELDS: Final = tuple(field for field in V1_PROJECTION_FIELDS if field.startswith("design_"))
 
 
 def default_ledger() -> JsonObject:
@@ -113,6 +118,7 @@ def apply_v1_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
         ledger["verification_results"] = []
         ledger["last_change_seq"] = 0
         ledger["scope_warnings"] = []
+        _reset_design_state(ledger, payload)
     elif event == "change":
         path = payload.get("path")
         if isinstance(path, str) and path:
@@ -124,6 +130,10 @@ def apply_v1_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
             ledger["change_kinds"] = _append_unique(kinds, kind)
             if kind != "docs":
                 ledger["last_change_seq"] = event_seq
+            if ledger.get("design_required") is True and is_ui_path(path):
+                ledger["design_touched"] = True
+                ledger["design_last_change_seq"] = event_seq
+                ledger["design_check_passed"] = False
     elif event == "verification":
         command_value = payload.get("command")
         evidence_value = payload.get("evidence")
@@ -142,4 +152,31 @@ def apply_v1_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
         warning = warning_value if isinstance(warning_value, str) else ""
         warnings = _as_str_list(ledger.get("scope_warnings"))
         ledger["scope_warnings"] = _append_unique(warnings, warning)
+    elif event == "design_check" and ledger.get("design_required") is True:
+        ledger["design_check_passed"] = payload.get("passed") is True
+        ledger["design_check_seq"] = event_seq
+        violations = payload.get("violations")
+        ledger["design_violations"] = (
+            [item for item in violations if isinstance(item, dict)]
+            if isinstance(violations, list)
+            else []
+        )
     return ledger
+
+
+def _reset_design_state(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> None:
+    if payload.get("design_required") is not True:
+        for field in DESIGN_FIELDS:
+            _ = ledger.pop(field, None)
+        return
+    ledger["design_required"] = True
+    ledger["design_touched"] = False
+    ledger["design_blocks"] = 0
+    ledger["design_last_change_seq"] = 0
+    ledger["design_check_passed"] = False
+    ledger["design_check_seq"] = 0
+    ledger["design_violations"] = []
+    baseline = payload.get("design_baseline_revision")
+    ledger["design_baseline_revision"] = baseline if isinstance(baseline, str) else ""
+    dirty_baseline = payload.get("design_dirty_baseline")
+    ledger["design_dirty_baseline"] = dirty_baseline if isinstance(dirty_baseline, dict) else {}

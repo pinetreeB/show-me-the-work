@@ -305,13 +305,25 @@ def evaluate_stop(payload: Mapping[str, JsonValue]) -> Decision:
     with ledger_transaction(root):
         ledger = load_ledger(payload)
         decision = evaluate_without_io(ledger, payload)
-        if decision.get("decision") != "block":
-            if _record_stop_recoveries(ledger, payload):
-                if not save_ledger(payload, ledger):
-                    mark_cached_session_incomplete(ledger, payload)
+        ordinary_capped = False
+        if decision.get("decision") == "block":
+            decision = _record_stop_block(payload, ledger, decision)
+            if decision.get("decision") == "block":
+                return _with_scorecard_line(decision, ledger, payload)
+            ordinary_capped = True
+        from .design_gate_state import evaluate_design_stop
+
+        design_decision = evaluate_design_stop(ledger, payload)
+        if design_decision is not None:
+            if not save_ledger(payload, ledger):
+                mark_cached_session_incomplete(ledger, payload)
+            return design_decision
+        if ordinary_capped:
             return _with_scorecard_line(decision, ledger, payload)
-        gated = _record_stop_block(payload, ledger, decision)
-        return _with_scorecard_line(gated, ledger, payload)
+        if _record_stop_recoveries(ledger, payload):
+            if not save_ledger(payload, ledger):
+                mark_cached_session_incomplete(ledger, payload)
+        return _with_scorecard_line(decision, ledger, payload)
 
 
 def _with_scorecard_line(

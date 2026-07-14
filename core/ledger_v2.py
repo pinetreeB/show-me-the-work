@@ -25,6 +25,8 @@ def refresh_v1_projection(ledger: JsonObject, turn: JsonObject) -> JsonObject:
     for field in V1_PROJECTION_FIELDS:
         if field in turn:
             ledger[field] = turn[field]
+        elif field.startswith("design_"):
+            _ = ledger.pop(field, None)
     # Legacy projection counters are conservative maxima; active turn fields remain authoritative.
     ledger["last_change_seq"] = _max_active_field(ledger, "last_change_seq")
     ledger["stop_blocks"] = _max_active_stop_blocks(ledger)
