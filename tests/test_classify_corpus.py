@@ -160,3 +160,29 @@ def test_nominal_generation_language_does_not_break_briefing_suppression() -> No
     assert result["needs_goals"] is False
     assert isinstance(packs, list)
     assert "verification-grounding" not in packs
+
+
+def test_actual_wmux_boot_templates_are_briefings_without_provenance_authority() -> None:
+    prompts = (
+        "[부팅] 너는 wmux 4-pane 팀의 우상 pane, 역할=구현이다. MEMORY.md와 project.md를 읽고 상태를 파악한 뒤 대기하라.",
+        "세션 부팅: 공통 메모리와 fable-lite/project.md를 읽어 운영규칙을 파악해라. 완료 후 부팅 완료만 보고하고 대기해라.",
+        "Role briefing: inspect MEMORY.md and the project note, report READY-CODEX only, then wait.",
+    )
+
+    results = [classify_prompt({"prompt": prompt}) for prompt in prompts]
+
+    assert all(result["briefing"] is True for result in results)
+    assert all(result["needs_goals"] is False for result in results)
+
+
+def test_boot_marker_cannot_disguise_real_write_instruction() -> None:
+    result = classify_prompt(
+        {
+            "prompt": (
+                "[부팅] MEMORY.md를 읽고 운영규칙을 파악한 뒤 "
+                "app.py를 실제로 고쳐줘. 마지막에는 대기하라"
+            )
+        }
+    )
+
+    assert result["briefing"] is False

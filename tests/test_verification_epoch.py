@@ -284,3 +284,41 @@ def test_scope_too_large_is_advisory_unless_known_changes_need_verification(
         assert result["decision"] == expected
         if not changed:
             assert "scope too large" in str(result["message"])
+
+
+def test_scope_too_large_blocks_local_or_unknown_mutation_capability(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        ("proven-read-only", False, "allow"),
+        ("local-or-unknown", True, "block"),
+    )
+    for case_name, mutation_capable, expected in cases:
+        case_root = tmp_path / case_name
+        case_root.mkdir()
+        _ = record_event(
+            {
+                "project_root": str(case_root),
+                "event": "prompt",
+                "task_mode": "quick",
+                "prompt": "work",
+                "provenance_status": "scope_too_large",
+                "provenance_status_reason": "entry_limit",
+                "provenance_incomplete": False,
+            }
+        )
+        if mutation_capable:
+            _ = record_event(
+                {
+                    "project_root": str(case_root),
+                    "event": "observation",
+                    "provenance_status": "scope_too_large",
+                    "provenance_status_reason": "entry_limit",
+                    "provenance_incomplete": False,
+                    "provenance_mutation_capable": True,
+                }
+            )
+
+        result = evaluate_stop({"project_root": str(case_root)})
+
+        assert result["decision"] == expected, case_name

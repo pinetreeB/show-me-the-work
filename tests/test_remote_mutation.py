@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from core.shell_command import (
+    ShellEffect,
+    classify_shell_effect,
     is_remote_mutation_command,
     is_remote_only_mutation_command,
 )
@@ -186,3 +188,69 @@ def test_remote_commands_with_local_or_mixed_effects_are_not_remote_only() -> No
 
     for command in commands:
         assert is_remote_only_mutation_command(command) is False, command
+
+
+def test_shell_effect_defaults_conservatively_and_preserves_proven_remote_targets() -> None:
+    cases = (
+        ("git status --short", ShellEffect.PROVEN_READ_ONLY, ()),
+        ("rg provenance core", ShellEffect.PROVEN_READ_ONLY, ()),
+        (
+            'ssh deploy@example.com "touch /srv/marker"',
+            ShellEffect.PROVEN_REMOTE_ONLY,
+            ("ssh://deploy@example.com:22",),
+        ),
+        (
+            "scp -P 2222 artifact.tar deploy@example.com:/srv/app/",
+            ShellEffect.PROVEN_REMOTE_ONLY,
+            ("ssh://deploy@example.com:2222",),
+        ),
+        ("git status --short > status.txt", ShellEffect.LOCAL_OR_UNKNOWN, ()),
+        ("scp example.com:/tmp/a ./a", ShellEffect.LOCAL_OR_UNKNOWN, ()),
+        (
+            'ssh deploy@example.com "touch /srv/marker" && rm local.txt',
+            ShellEffect.LOCAL_OR_UNKNOWN,
+            ("ssh://deploy@example.com:22",),
+        ),
+        (
+            'bash -c "ssh deploy@example.com touch /srv/marker"',
+            ShellEffect.LOCAL_OR_UNKNOWN,
+            ("ssh://deploy@example.com:22",),
+        ),
+        ("opaque-shell-writer", ShellEffect.LOCAL_OR_UNKNOWN, ()),
+    )
+
+    for command, effect, target_ids in cases:
+        classification = classify_shell_effect(command)
+        assert classification.effect is effect, command
+        assert classification.remote_target_ids == target_ids, command
+
+
+def test_remote_target_identity_distinguishes_user_host_and_port() -> None:
+    commands = (
+        'ssh host "touch marker"',
+        'ssh deploy@host "touch marker"',
+        'ssh -p 2222 deploy@host "touch marker"',
+        'ssh deploy@other "touch marker"',
+    )
+
+    target_ids = tuple(
+        classify_shell_effect(command).remote_target_ids[0] for command in commands
+    )
+
+    assert target_ids == (
+        "ssh://host:22",
+        "ssh://deploy@host:22",
+        "ssh://deploy@host:2222",
+        "ssh://deploy@other:22",
+    )
+    assert len(set(target_ids)) == len(target_ids)
+
+
+def test_jump_host_and_localhost_do_not_gain_local_provenance_authority() -> None:
+    jump = classify_shell_effect('ssh -J bastion deploy@host "touch marker"')
+    localhost = classify_shell_effect('ssh localhost "echo hi"')
+
+    assert jump.effect is ShellEffect.LOCAL_OR_UNKNOWN
+    assert jump.remote_target_ids == ("ssh://deploy@host:22",)
+    assert localhost.effect is ShellEffect.PROVEN_REMOTE_ONLY
+    assert localhost.remote_target_ids == ("ssh://localhost:22",)

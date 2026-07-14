@@ -10,10 +10,12 @@ from core.provenance import ScanIssue, Snapshot, snapshot_workspace_with_options
 from core.provenance_lifecycle import ProvenanceLifecycle
 from core.provenance_types import (
     DEFAULT_MAX_SCAN_BYTES,
+    ProvenanceReason,
     ProvenanceStatus,
     ScanBudget,
     SnapshotScanOptions,
 )
+from core.provenance_store import SnapshotStoreError, workspace_current_path
 
 
 def _write(path: Path, content: str) -> None:
@@ -257,3 +259,44 @@ def test_scope_too_large_finish_never_claims_clean(tmp_path: Path) -> None:
     assert result.status is ProvenanceStatus.SCOPE_TOO_LARGE
     assert result.incomplete is False
     assert result.clean_claim is False
+
+
+def test_missing_snapshot_store_bootstraps_normally(tmp_path: Path) -> None:
+    _write(tmp_path / "app.py", "stable")
+
+    result = ProvenanceLifecycle(tmp_path).start_turn("codex", "turn-cold")
+
+    assert result.status is ProvenanceStatus.COMPLETE
+    assert result.incomplete is False
+    assert workspace_current_path(tmp_path).is_file()
+
+
+def test_corrupt_snapshot_store_reports_typed_read_error_until_removed(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "app.py", "stable")
+    current = workspace_current_path(tmp_path)
+    _write(current, "{not json")
+
+    failed = ProvenanceLifecycle(tmp_path).start_turn("codex", "turn-corrupt")
+
+    assert failed.status is ProvenanceStatus.INCOMPLETE
+    assert failed.incomplete is True
+    assert failed.status_reason is ProvenanceReason.STORE_READ_ERROR
+
+    current.unlink()
+    recovered = ProvenanceLifecycle(tmp_path).start_turn("codex", "turn-recovered")
+    assert recovered.status is ProvenanceStatus.COMPLETE
+    assert recovered.incomplete is False
+
+
+def test_snapshot_store_write_failure_reports_typed_reason(tmp_path: Path) -> None:
+    _write(tmp_path / "app.py", "stable")
+    error = SnapshotStoreError(workspace_current_path(tmp_path), "injected")
+
+    with patch("core.provenance_lifecycle.save_workspace_current", side_effect=error):
+        result = ProvenanceLifecycle(tmp_path).start_turn("codex", "turn-write")
+
+    assert result.status is ProvenanceStatus.INCOMPLETE
+    assert result.incomplete is True
+    assert result.status_reason is ProvenanceReason.STORE_WRITE_ERROR
