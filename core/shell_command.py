@@ -1,11 +1,16 @@
+"""Shell command parsing and OpenSSH mutation classification.
+
+# noqa: SIZE_OK — option grammar and parsing form one auditable classifier.
+"""
+
 from __future__ import annotations
 
 import re
 import shlex
 from typing import Final
 
-
 COMMAND_SEPARATORS: Final = frozenset({"&&", "||", ";", "|", "|&", "&"})
+_COMMAND_WRAPPERS: Final = frozenset({"bash", "sh", "zsh", "pwsh", "powershell"})
 _SSH_SAFE_FLAGS: Final = frozenset(
     {
         "-4",
@@ -190,7 +195,11 @@ def is_remote_only_mutation_command(command: str) -> bool:
 
 def is_remote_mutation_command(command: str) -> bool:
     for segment in command_segments(command):
-        tokens = without_environment_assignments(without_shell_redirections(segment))
+        tokens, nested = unwrap_command_wrapper(segment)
+        if nested:
+            if is_remote_mutation_command(nested):
+                return True
+            continue
         if not tokens:
             continue
         name = command_name(tokens[0])
@@ -221,6 +230,27 @@ def without_shell_redirections(tokens: tuple[str, ...]) -> tuple[str, ...]:
         normalized.append(token)
         index += 1
     return tuple(normalized)
+
+
+def unwrap_command_wrapper(tokens: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
+    tokens = without_environment_assignments(without_shell_redirections(tokens))
+    while tokens:
+        name = command_name(tokens[0])
+        arguments = tokens[1:]
+        if name == "env":
+            tokens = without_environment_assignments(arguments)
+            continue
+        if name == "uv" and arguments[:1] == ("run",):
+            tokens = without_environment_assignments(arguments[1:])
+            continue
+        if (
+            name in _COMMAND_WRAPPERS
+            and arguments
+            and arguments[0].casefold() in {"-c", "-command"}
+        ):
+            return (), arguments[1] if len(arguments) > 1 else ""
+        return tokens, ""
+    return (), ""
 
 
 def _is_redirection_operator(token: str) -> bool:

@@ -6,7 +6,7 @@
 
 - Added Session Quality Scorecard: an append-only gate journal, bounded per-session ledger cache, privacy-preserving CLI summaries, and optional Stop allow summaries for Claude Code, Codex CLI, and Antigravity payloads.
 - Added bounded provenance scans for 10,000 tracked entries, 256 MiB, and cooperative full/incremental deadlines. Oversized scopes now return an explicit advisory-only `scope too large` state without committing partial snapshots.
-- Added conservative remote mutation epochs for direct `ssh` and local-to-remote `scp`. A separately started successful verification must cover the remote epoch; local redirects, pipelines, downloads, command chains, substitutions, and unsafe SSH options do not use this relaxation.
+- Added conservative remote mutation epochs for direct `ssh` and local-to-remote `scp`. A separately started successful verification, including a local-only check, must cover the remote epoch; satisfying it does not prove that remote state was observed as clean. Local redirects, pipelines, downloads, command chains, substitutions, and unsafe SSH options do not use this relaxation.
 - Expanded CI with Ruff, version synchronization, fresh W9 receipts, wheel build/install smoke, and a Windows nightly/tag workflow for randomized W9, W10, the eight-process Stop race, tag/version matching, and receipt artifacts.
 
 ### Fixed
