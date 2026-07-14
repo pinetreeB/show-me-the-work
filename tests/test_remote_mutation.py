@@ -214,6 +214,23 @@ def test_remote_commands_with_local_or_mixed_effects_are_not_remote_only() -> No
         assert is_remote_only_mutation_command(command) is False, command
 
 
+def test_shell_comments_cannot_launder_local_mutations_as_proven_safe() -> None:
+    # Given: bash commands where a mid-word hash is literal and a later segment mutates locally.
+    commands = (
+        "cat x#; rm -rf src",
+        (
+            "ssh -F none -o StrictHostKeyChecking=yes "
+            "host.example.com true#; rm -rf src"
+        ),
+    )
+
+    # When: shell authority is classified before execution.
+    results = tuple(classify_shell_effect(command) for command in commands)
+
+    # Then: neither the read-only nor remote-only authority can hide the local segment.
+    assert all(result.effect is ShellEffect.LOCAL_OR_UNKNOWN for result in results)
+
+
 def test_shell_effect_defaults_conservatively_and_preserves_proven_remote_targets() -> None:
     cases = (
         ("git status --short", ShellEffect.LOCAL_OR_UNKNOWN, ()),
@@ -272,6 +289,28 @@ def test_remote_target_identity_distinguishes_user_host_and_port() -> None:
     assert len(set(target_ids)) == len(target_ids)
 
 
+def test_remote_payload_options_do_not_change_ssh_target_authority() -> None:
+    # Given: remote payloads contain tokens that also resemble SSH options.
+    commands = (
+        "ssh -F none -o StrictHostKeyChecking=yes deploy.example.com ls -l /srv",
+        (
+            "ssh -F none -o StrictHostKeyChecking=yes "
+            "deploy.example.com run --flag -p 2222"
+        ),
+        "ssh -F none -o StrictHostKeyChecking=yes deploy.example.com make -j build",
+    )
+
+    # When: remote-only authority and target identity are derived.
+    results = tuple(classify_shell_effect(command) for command in commands)
+
+    # Then: payload options neither rewrite the target nor create local ambiguity.
+    assert all(result.effect is ShellEffect.PROVEN_REMOTE_ONLY for result in results)
+    assert all(
+        result.remote_target_ids == ("ssh://deploy.example.com:22",)
+        for result in results
+    )
+
+
 def test_jump_host_and_localhost_do_not_gain_local_provenance_authority() -> None:
     jump = classify_shell_effect('ssh -J bastion deploy@host "touch marker"')
     localhost = classify_shell_effect('ssh localhost "echo hi"')
@@ -284,6 +323,30 @@ def test_jump_host_and_localhost_do_not_gain_local_provenance_authority() -> Non
     assert localhost.remote_target_ids == ("ssh://localhost:22",)
     assert ipv4_loopback.effect is ShellEffect.LOCAL_OR_UNKNOWN
     assert ipv6_loopback.effect is ShellEffect.LOCAL_OR_UNKNOWN
+
+
+def test_loopback_aliases_never_gain_remote_only_authority() -> None:
+    # Given: legacy IPv4 and hostname forms that resolve to the local machine.
+    aliases = (
+        "localhost.",
+        "127.1",
+        "127.0.1",
+        "127.255.255.254",
+        "0.0.0.0",
+        "2130706433",
+    )
+
+    # When: each alias is used with otherwise isolated SSH configuration.
+    results = tuple(
+        classify_shell_effect(
+            "ssh -F none -o StrictHostKeyChecking=yes "
+            f'{alias} "sed -i s/x/y/ app.py"'
+        )
+        for alias in aliases
+    )
+
+    # Then: local aliases stay local-or-unknown and cannot claim remote-only authority.
+    assert all(result.effect is ShellEffect.LOCAL_OR_UNKNOWN for result in results)
 
 
 def test_read_only_allowlist_rejects_external_program_escape_hatches() -> None:

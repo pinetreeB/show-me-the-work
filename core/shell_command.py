@@ -10,6 +10,7 @@ from enum import StrEnum
 import ipaddress
 import re
 import shlex
+import socket
 from typing import Final
 
 COMMAND_SEPARATORS: Final = frozenset({"&&", "||", ";", "|", "|&", "&"})
@@ -261,7 +262,7 @@ def _command_tokens(command: str, *, posix: bool) -> tuple[str, ...]:
     try:
         lexer = shlex.shlex(command, posix=posix, punctuation_chars=";&|<>")
         lexer.whitespace_split = True
-        lexer.commenters = "#"
+        lexer.commenters = ""
         return tuple(clean_token(token) for token in lexer if token)
     except ValueError:
         return ()
@@ -373,12 +374,17 @@ def _is_bare_command_token(token: str) -> bool:
 
 
 def _is_loopback_host(host: str) -> bool:
-    if host.casefold() == "localhost":
+    normalized = host.rstrip(".").casefold()
+    if normalized == "localhost":
         return True
     try:
-        return ipaddress.ip_address(host).is_loopback
+        address = ipaddress.ip_address(normalized)
     except ValueError:
-        return False
+        try:
+            address = ipaddress.ip_address(socket.inet_aton(normalized))
+        except OSError:
+            return False
+    return address.is_loopback or address.is_unspecified
 
 
 def _has_isolated_ssh_config(arguments: tuple[str, ...]) -> bool:
@@ -394,6 +400,13 @@ def _ssh_config_value(arguments: tuple[str, ...], config_name: str) -> str:
     index = 0
     while index < len(arguments):
         argument = clean_token(arguments[index])
+        if argument == "--" or not argument.startswith("-"):
+            break
+        if argument in _SSH_ALL_VALUE_OPTIONS and argument != "-o":
+            if index + 1 >= len(arguments):
+                break
+            index += 2
+            continue
         if argument == "-o" and index + 1 < len(arguments):
             option = clean_token(arguments[index + 1])
             index += 2
@@ -494,6 +507,8 @@ def _option_value(
     index = 0
     while index < len(arguments):
         argument = clean_token(arguments[index])
+        if argument == "--" or not argument.startswith("-"):
+            break
         if argument == short_option and index + 1 < len(arguments):
             value = clean_token(arguments[index + 1])
             index += 2
@@ -509,22 +524,24 @@ def _option_value(
                 value = raw_value.strip()
             index += 2
             continue
+        if argument in _SSH_ALL_VALUE_OPTIONS | _SCP_ALL_VALUE_OPTIONS:
+            if index + 1 >= len(arguments):
+                break
+            index += 2
+            continue
         index += 1
     return value
 
 
 def _has_ambiguous_remote_options(command: str) -> bool:
-    lowered = command.casefold()
-    return any(
-        marker in lowered
-        for marker in (
-            " -j ",
-            " -j",
-            "proxyjump=",
-            "proxycommand=",
-            "hostname=",
-            "remotecommand=",
-        )
+    segments = command_segments(command)
+    if len(segments) != 1:
+        return True
+    tokens = without_environment_assignments(segments[0])
+    return bool(
+        tokens
+        and command_name(tokens[0]) == "ssh"
+        and not _is_direct_ssh(tokens[1:])
     )
 
 
