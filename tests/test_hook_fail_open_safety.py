@@ -54,13 +54,18 @@ def test_hook_entrypoints_have_no_module_level_core_or_adapters_imports() -> Non
 
 
 def test_antigravity_handlers_each_locally_import_what_they_use() -> None:
-    # B1이 정확히 고쳐졌는지 대상 파일 하나를 직접 짚어 확인 — 4개 handle_* 함수
+    # B1이 정확히 고쳐졌는지 대상 파일 하나를 직접 짚어 확인 — 실물 이벤트 handler 4개
     # 전부 자신이 쓰는 core 심볼을 함수 본문 안에서 import해야 한다.
     path = ADAPTERS_DIR / "antigravity" / "oma_hook.py"
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
 
-    handler_names = {"handle_before_tool", "handle_after_tool", "handle_after_agent", "handle_before_model"}
+    handler_names = {
+        "handle_pre_tool_use",
+        "handle_post_tool_use",
+        "handle_stop",
+        "handle_pre_invocation",
+    }
     found: dict[str, bool] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name in handler_names:

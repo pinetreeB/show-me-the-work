@@ -1,33 +1,51 @@
-# show-me-the-work Antigravity (OmA) 어댑터 설치 가이드
+# show-me-the-work Antigravity 어댑터 설치 가이드
 
-> ⚠️ **실호스트 발동 미확인 (2026-07-12 실측)**: Antigravity CLI 1.1.1에서 아래 안내를 포함한 6가지 설치 조합을
-> 라이브로 실측한 결과 **훅이 한 번도 발동하지 않았습니다** — 현행 agy의 실물 훅 이벤트는 이 어댑터가 쓰는
-> `BeforeModel/BeforeTool/AfterTool/AfterAgent`가 아니라 `PreToolUse/PostToolUse/PreInvocation/PostInvocation/Stop`
-> 계열이며, `/hooks` UI로 실물 등록을 해도 훅 프로세스가 실행되지 않았습니다 (엔진 미발동 판정).
-> 상세 증거와 재판정 절차: `docs/reviews/p9-agy-live-hooks.md`.
-> 본 어댑터는 **payload 주입 테스트 레벨로만 검증**된 상태입니다. agy 훅 엔진이 발동하는 버전이 확인되면
-> 이벤트 매핑 개편과 함께 본 가이드가 갱신됩니다.
+Antigravity CLI 1.1.2에서 command를 절대 경로로 지정하면 훅이 실제 발동하는 것을 확인했습니다. 상대 명령인 `python ...`은 훅 실행 환경에서 PATH가 해석되지 않아 조용히 미발동하므로 사용할 수 없습니다.
 
-이 문서는 show-me-the-work 코어를 Antigravity CLI(OmA) 환경에 통합하는 방법을 설명합니다.
+## 1. 절대 경로 치환
 
-## 주의: 메인 설정 훼손 방지
+`adapters/antigravity/hooks.json`의 두 placeholder를 모두 실제 절대 경로로 바꾸십시오.
 
-OmA의 글로벌 설정 파일인 `~/.gemini/config/plugins/oh-my-antigravity/hooks.json`을 직접 수정하는 것은 권장하지 않습니다. 대신 대상 프로젝트의 로컬 디렉토리 내에 `.gemini/hooks.json` 파일을 구성하여 안전하게 훅을 주입하는 방식을 사용하십시오.
+- `{PYTHON_EXECUTABLE}`: Python 실행 파일의 절대 경로(예: `C:/Python312/python.exe`)
+- `{FABLE_LITE_ROOT}`: show-me-the-work 저장소의 절대 경로(예: `C:/Users/rotat/show-me-the-work`)
 
-## 설치 방법
+치환 뒤 command는 다음처럼 실행 파일과 스크립트가 모두 절대 경로여야 합니다.
 
-1. **절대 경로 치환 (수동)**
-   show-me-the-work 저장소의 `adapters/antigravity/hooks.json` 파일을 열고, 템플릿의 `{FABLE_LITE_ROOT}` 부분을 사용자가 실제 클론한 show-me-the-work의 절대 경로(예: `C:/Users/rotat/show-me-the-work`)로 직접 치환해야 합니다. 내부 환경변수 이름은 v2.0 호환성을 위해 유지합니다. 이 작업은 현재 수동으로 진행해야 합니다.
-   
-2. **로컬 프로젝트에 적용**
-   show-me-the-work 하네스를 적용하려는 대상 프로젝트의 경로로 이동하여, 아래와 같이 로컬 훅 설정 파일을 복사합니다.
+```text
+"C:/Python312/python.exe" "C:/Users/rotat/show-me-the-work/adapters/antigravity/oma_hook.py" PreToolUse
+```
 
-   ```bash
-   mkdir -p .gemini
-   cp /path/to/show-me-the-work/adapters/antigravity/hooks.json .gemini/hooks.json
-   ```
+## 2. 설정 파일 설치
 
-   > ⚠️ **로컬 훅 등록 주의**: OmA는 프로젝트 로컬의 훅을 로드할 때 `.gemini/hooks.json` 파일을 사용합니다. 다른 경로(예: `.omg/...`)를 사용하면 훅이 조용히 무시되므로 주의하십시오. 만약 대상 프로젝트에 이미 사용 중인 `.gemini/hooks.json` 파일이 존재한다면 덮어쓰지 말고 JSON 내용을 수동으로 병합(Merge)하십시오.
+프로젝트별 적용은 대상 프로젝트의 `.agents/hooks.json`에 템플릿을 복사하거나 기존 JSON 그룹과 병합하십시오.
 
-3. **작동 확인**
-   해당 프로젝트 디렉토리에서 Antigravity CLI를 구동하면 `oma_hook.py`가 자동으로 호출되어 페이로드를 Python 코어 판정 로직으로 전달합니다.
+```bash
+mkdir -p .agents
+cp /absolute/path/to/show-me-the-work/adapters/antigravity/hooks.json .agents/hooks.json
+```
+
+전역 적용이 필요한 경우 다음 두 위치도 유효합니다.
+
+- `~/.gemini/config/hooks.json`
+- `~/.gemini/antigravity-cli/hooks.json`
+
+기존 파일이 있으면 덮어쓰지 말고 최상위 `show-me-the-work` 그룹을 병합하십시오. 전역 훅은 열려 있는 다른 Antigravity 워크스페이스에도 적용될 수 있으므로 프로젝트 로컬 `.agents/hooks.json`을 우선 권장합니다.
+
+## 3. 등록되는 실물 이벤트
+
+템플릿은 Antigravity 1.1.2의 다음 6종 이벤트를 등록합니다.
+
+- `SessionStart`
+- `PreInvocation`
+- `PostInvocation`
+- `PreToolUse`
+- `PostToolUse`
+- `Stop`
+
+실물 stdin payload의 `conversationId`, `modelName`, `stepIdx`, `artifactDirectoryPath`, `transcriptPath`, `workspacePaths`, `toolCall`을 어댑터 경계에서 수용합니다. `view_file`, `write_to_file`, `run_command`는 각각 코어의 읽기, 편집, 셸 판정으로 정규화하며 `PostToolUse.error`는 실패 결과로 기록합니다.
+
+## 4. fail-open 확인
+
+Antigravity는 `PreToolUse` hook이 0이 아닌 exit code를 반환하면 도구 자체를 차단할 수 있습니다. 이 어댑터는 정상 판정, 차단 결정, 잘못된 JSON, 누락 payload, 알 수 없는 이벤트를 포함한 모든 실행 경로에서 프로세스 exit code 0을 반환합니다. 설치 후에는 `/hooks`에서 6종 이벤트가 보이는지와 절대 경로 치환이 남아 있지 않은지 확인하십시오.
+
+라이브 재판정 근거와 실측 매트릭스는 `docs/reviews/p9-agy-live-hooks.md`의 재판정 섹션에 있습니다.

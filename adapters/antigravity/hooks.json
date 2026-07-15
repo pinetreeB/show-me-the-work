@@ -1,35 +1,75 @@
 {
-  "hooks": {
-    "BeforeModel": [
+  "show-me-the-work": {
+    "SessionStart": [
       {
-        "type": "command",
-        "name": "show-me-the-work-before-model",
-        "command": "python \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" BeforeModel",
-        "timeout": 5000
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{PYTHON_EXECUTABLE}\" \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" SessionStart",
+            "timeout": 5000
+          }
+        ]
       }
     ],
-    "BeforeTool": [
+    "PreInvocation": [
       {
-        "type": "command",
-        "name": "show-me-the-work-before-tool",
-        "command": "python \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" BeforeTool",
-        "timeout": 5000
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{PYTHON_EXECUTABLE}\" \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" PreInvocation",
+            "timeout": 5000
+          }
+        ]
       }
     ],
-    "AfterTool": [
+    "PostInvocation": [
       {
-        "type": "command",
-        "name": "show-me-the-work-after-tool",
-        "command": "python \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" AfterTool",
-        "timeout": 5000
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{PYTHON_EXECUTABLE}\" \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" PostInvocation",
+            "timeout": 5000
+          }
+        ]
       }
     ],
-    "AfterAgent": [
+    "PreToolUse": [
       {
-        "type": "command",
-        "name": "show-me-the-work-after-agent",
-        "command": "python \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" AfterAgent",
-        "timeout": 5000
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{PYTHON_EXECUTABLE}\" \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" PreToolUse",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{PYTHON_EXECUTABLE}\" \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" PostToolUse",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{PYTHON_EXECUTABLE}\" \"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py\" Stop",
+            "timeout": 5000
+          }
+        ]
       }
     ]
   }
