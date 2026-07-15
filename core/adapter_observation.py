@@ -9,6 +9,7 @@ from .ledger import JsonObject, capture_verification_covers, load_ledger, record
 from .provenance_lifecycle import ProvenanceLifecycle
 from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
+from .project_root import is_user_home_root
 from .provenance_store import SnapshotStoreError
 from .provenance_turn_resume import MissingTurnBaselineError, TurnBootstrapError
 from .provenance_types import ProvenanceReason, ProvenanceStatus
@@ -77,6 +78,8 @@ class ObservationReport:
 
 
 def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
+    if report := _home_root_unsupported_report(root):
+        return report
     try:
         lifecycle = ProvenanceLifecycle(root)
         with scan_progress(lifecycle.observed_file_count):
@@ -87,6 +90,9 @@ def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport
 
 
 def begin_invocation(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
+    if report := _home_root_unsupported_report(root):
+        _record_invocation(root, invocation, _covers(root, invocation))
+        return report
     invocation = _with_shell_candidates(_active_invocation(root, invocation))
     if report := _scope_too_large_report(root, invocation):
         _record_invocation(root, invocation, _covers(root, invocation))
@@ -128,6 +134,9 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
 
 
 def observe_post_tool(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
+    if report := _home_root_unsupported_report(root):
+        _record_status(root, invocation, report)
+        return report
     invocation = _with_shell_candidates(_active_invocation(root, invocation))
     if report := _scope_too_large_report(root, invocation):
         _record_status(root, invocation, report)
@@ -155,6 +164,8 @@ def observe_post_tool(root: Path, invocation: CanonicalInvocation) -> Observatio
 
 
 def finish_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
+    if report := _home_root_unsupported_report(root):
+        return report
     invocation = _active_invocation(root, invocation)
     if report := _scope_too_large_report(root, invocation):
         return report
@@ -186,6 +197,8 @@ def finish_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRepor
 
 
 def reconcile_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
+    if report := _home_root_unsupported_report(root):
+        return report
     invocation = _active_invocation(root, invocation)
     if report := _scope_too_large_report(root, invocation):
         return report
@@ -271,6 +284,20 @@ def _incomplete_report(full_reconcile: bool = False) -> ObservationReport:
         full_reconcile,
         ProvenanceStatus.INCOMPLETE,
         ProvenanceReason.OBSERVATION_ERROR,
+    )
+
+
+def _home_root_unsupported_report(root: Path) -> ObservationReport | None:
+    if not is_user_home_root(root):
+        return None
+    return ObservationReport(
+        "",
+        "",
+        (),
+        False,
+        False,
+        ProvenanceStatus.UNSUPPORTED,
+        ProvenanceReason.HOME_ROOT,
     )
 
 
