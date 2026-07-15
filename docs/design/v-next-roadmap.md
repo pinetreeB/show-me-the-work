@@ -49,3 +49,11 @@
 - 서드파티 의존성·외부 텔레메트리 서버·wmux 데몬을 core에 추가 (zero-dep·플랫폼 중립 유지)
 - 마켓플레이스 선등재 (증거 무결성 먼저)
 - 전용 하네스 통합 (사용자 보류 결정 유지)
+
+## 추가 트랙 — 디자인 게이트 (2026-07-14 신설, 착수 대기)
+
+> wmux 4-pane에서 AI(Claude·Codex·agy·ultracode)마다 UI 결과물이 갈리는 문제 → 디자인 규칙 SSOT `~/.claude/DESIGN-OPS.md` 신설(3-AI 토론). 그 규칙을 show-me-the-work 팩·게이트로 **기계 강제** 편입.
+
+- **착수 스펙**: `docs/design/design-ops-integration.md` — 동작 흐름·검증 3층(정적 core / 렌더 tool기록 / 사람)·영역 배타까지 상세.
+- 핵심: `design-review` 팩 신설 + `verification-grounding` 관측 확장 + `gate_stop` 편입 + `core/design_lint.py`(하드코딩 lint). 새 래퍼·러너 신설 금지(기존 팩·게이트 확장).
+- **선결**: 홈/대형/원격 provenance 오탐 수정·재활성화(project.md v-next 근거 #1~#4)가 이 트랙보다 먼저.
