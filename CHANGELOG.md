@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.1] - 2026-07-16
+
+### Fixed
+
+- Home-directory sessions (project root exactly equal to `$HOME`/`%USERPROFILE%`) now explicitly skip provenance instead of looping on `scope_too_large`. A home directory's scan volume structurally exceeds any budget (observed 11x: `.claude` alone is 2.8 GB, 61% of it the agent's own session logs), so provenance was blocking every turn and passing only via the fail-open cap without ever verifying anything (observed 9 cap-allows, 0 resolutions). Home root is now reported as `unsupported`/`home_root` with an actionable message (open the session from the project folder), snapshot scans are skipped entirely, and only the `scope_too_large`/`incomplete` provenance blocks are bypassed — investigation, design, and verification gates stay active. Exact home match only (case-folded, path-normalized); projects under the home directory keep full supervision.
+
 ## [2.1.0] - 2026-07-15
 
 ### Added
