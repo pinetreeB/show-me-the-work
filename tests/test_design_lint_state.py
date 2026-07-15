@@ -200,7 +200,7 @@ def test_design_lint_ignores_shifted_legacy_debt_after_top_insertion(
     assert _violations(payload) == []
 
 
-def test_design_lint_blocks_a_preexisting_dirty_violation_moved_during_turn(
+def test_design_lint_blocks_a_modified_dirty_violation_during_reorder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -221,11 +221,11 @@ def test_design_lint_blocks_a_preexisting_dirty_violation_moved_during_turn(
         }
     )
 
-    # When: the turn moves that violation below the clean line.
+    # When: the turn moves and changes that violation below the clean line.
     _write(
         tmp_path,
         "src/App.css",
-        ".clean { color: var(--ink); }\n.legacy { color: #123456; }\n",
+        ".clean { color: var(--ink); }\n.legacy { color: #abcdef; }\n",
     )
     _ = record_event(
         {
@@ -237,11 +237,54 @@ def test_design_lint_blocks_a_preexisting_dirty_violation_moved_during_turn(
     )
     process, payload = _run_design(tmp_path)
 
-    # Then: moving legacy debt counts as a current-turn change and cannot launder it.
+    # Then: changing legacy debt remains a current-turn violation during reorder.
     assert process.returncode == 1
     assert [(item["line"], item["rule_id"]) for item in _violations(payload)] == [
         (2, "design/raw-color")
     ]
+
+
+def test_design_lint_ignores_equal_legacy_debt_during_function_move(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: unchanged legacy debt sits between two tokenized helpers before the turn.
+    _init_repo(tmp_path)
+    _write(
+        tmp_path,
+        "src/App.tsx",
+        'const first = { color: "var(--first)" };\nconst legacy = { color: "#123456" };\nconst moved = { color: "var(--moved)" };\n',
+    )
+    monkeypatch.setenv("FABLE_LITE_DESIGN_GATE", "1")
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "prompt",
+            "task_mode": "normal",
+            "prompt": "src/App.tsx UI helper 위치를 정리해줘",
+        }
+    )
+
+    # When: only the tokenized helper moves above the equal legacy line.
+    _write(
+        tmp_path,
+        "src/App.tsx",
+        'const moved = { color: "var(--moved)" };\nconst first = { color: "var(--first)" };\nconst legacy = { color: "#123456" };\n',
+    )
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "change",
+            "path": "src/App.tsx",
+            "kind": "code",
+        }
+    )
+    process, payload = _run_design(tmp_path)
+
+    # Then: SequenceMatcher equal content stays outside the turn-local lint scope.
+    assert process.returncode == 0
+    assert payload["passed"] is True
+    assert _violations(payload) == []
 
 
 def test_design_lint_keeps_same_line_legacy_debt_exempt_during_clean_reorder(
