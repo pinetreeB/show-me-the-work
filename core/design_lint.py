@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from difflib import SequenceMatcher
 import hashlib
 from pathlib import Path
 import re
@@ -155,18 +156,37 @@ def _has_raw_color(line: str, suffix: str, context: str) -> bool:
 
 def _chart_data_color(context: str) -> bool:
     current_line_start = context.rfind("\n") + 1
-    if CHART_COLOR_RE.search(context[current_line_start:]) is None:
+    color = CHART_COLOR_RE.search(context[current_line_start:])
+    if color is None:
         return False
     starts = tuple(CHART_DATA_START_RE.finditer(context))
     if not starts:
         return False
     start = starts[-1]
-    if start.start() >= current_line_start:
-        return True
     opener = start.group("open")
     closer = "]" if opener == "[" else "}"
-    preceding = context[start.end() - 1 : current_line_start]
-    return preceding.count(opener) > preceding.count(closer)
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    color_start = current_line_start + color.start()
+    for character in context[start.end() - 1 : color_start]:
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {"'", '"', "`"}:
+            quote = character
+        elif character == opener:
+            depth += 1
+        elif character == closer:
+            depth -= 1
+            if depth == 0:
+                return False
+    return depth > 0
 
 
 def _has_raw_spacing(line: str, suffix: str) -> bool:
@@ -227,10 +247,39 @@ def _changed_from_hashes(path: Path, baseline_hashes: tuple[str, ...]) -> set[in
         hashlib.blake2b(line.encode("utf-8"), digest_size=16).hexdigest()
         for line in path.read_text(encoding="utf-8").splitlines()
     )
-    return {
+    opcodes = SequenceMatcher(
+        None,
+        baseline_hashes,
+        current_hashes,
+        autojunk=False,
+    ).get_opcodes()
+    changed = {
         index + 1
-        for index, digest in enumerate(current_hashes)
-        if index >= len(baseline_hashes) or digest != baseline_hashes[index]
+        for tag, _, _, start, end in opcodes
+        if tag in {"replace", "insert"}
+        for index in range(start, end)
+    }
+    deleted = {
+        digest
+        for tag, start, end, _, _ in opcodes
+        if tag in {"replace", "delete"}
+        for digest in baseline_hashes[start:end]
+    }
+    inserted = {
+        digest
+        for tag, _, _, start, end in opcodes
+        if tag in {"replace", "insert"}
+        for digest in current_hashes[start:end]
+    }
+    if deleted & inserted:
+        for tag, baseline_start, _, current_start, current_end in opcodes:
+            if tag == "equal" and baseline_start != current_start:
+                changed.update(range(current_start + 1, current_end + 1))
+    return {
+        line_number
+        for line_number in changed
+        if line_number > len(baseline_hashes)
+        or current_hashes[line_number - 1] != baseline_hashes[line_number - 1]
     }
 
 
