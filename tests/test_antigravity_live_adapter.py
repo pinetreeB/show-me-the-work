@@ -15,13 +15,14 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / "adapters" / "antigravity" / "oma_hook.py"
 HOOKS = ROOT / "adapters" / "antigravity" / "hooks.json"
 LIVE_EVENTS = (
-    "SessionStart",
     "PreInvocation",
     "PostInvocation",
     "PreToolUse",
     "PostToolUse",
     "Stop",
 )
+TOOL_EVENTS = ("PreToolUse", "PostToolUse")
+FLAT_EVENTS = ("PreInvocation", "PostInvocation", "Stop")
 
 
 def _live_payload(workspace: Path, tool_name: str = "view_file") -> JsonObject:
@@ -50,13 +51,13 @@ def _run(event: str, stdin: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_hooks_template_uses_live_grouped_schema_and_absolute_path_placeholders() -> None:
+def test_hooks_template_uses_official_mixed_schema_and_absolute_path_placeholders() -> None:
     config = cast(dict[str, object], json.loads(HOOKS.read_text(encoding="utf-8")))
 
     assert set(config) == {"show-me-the-work"}
     group = cast(dict[str, object], config["show-me-the-work"])
     assert set(group) == set(LIVE_EVENTS)
-    for event in LIVE_EVENTS:
+    for event in TOOL_EVENTS:
         registrations = cast(list[object], group[event])
         assert len(registrations) == 1
         registration = cast(dict[str, object], registrations[0])
@@ -70,6 +71,19 @@ def test_hooks_template_uses_live_grouped_schema_and_absolute_path_placeholders(
         assert command.startswith('"{PYTHON_EXECUTABLE}" ')
         assert '"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py"' in command
         assert command.endswith(event)
+        assert hook["timeout"] == 30
+
+    for event in FLAT_EVENTS:
+        registrations = cast(list[object], group[event])
+        assert len(registrations) == 1
+        hook = cast(dict[str, object], registrations[0])
+        assert set(hook) == {"type", "command", "timeout"}
+        assert hook["type"] == "command"
+        command = cast(str, hook["command"])
+        assert command.startswith('"{PYTHON_EXECUTABLE}" ')
+        assert '"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py"' in command
+        assert command.endswith(event)
+        assert hook["timeout"] == 30
 
 
 def test_real_tool_names_map_to_core_names_and_families() -> None:
@@ -111,7 +125,7 @@ def test_post_tool_error_is_a_failed_result() -> None:
     assert evidence == "boom"
 
 
-def test_six_live_events_dispatch_and_all_inputs_fail_open_with_exit_zero(tmp_path: Path) -> None:
+def test_five_live_events_dispatch_and_all_inputs_fail_open_with_exit_zero(tmp_path: Path) -> None:
     payload = _live_payload(tmp_path)
     valid = json.dumps(payload, ensure_ascii=False)
 

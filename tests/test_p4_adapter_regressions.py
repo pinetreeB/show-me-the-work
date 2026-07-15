@@ -190,4 +190,4 @@ def test_antigravity_fresh_successful_verification_allows_after_agent(tmp_path: 
     assert isinstance(verification["seq"], int)
     assert isinstance(ledger["last_change_seq"], int)
     assert verification["seq"] > ledger["last_change_seq"]
-    assert result["decision"] == "allow"
+    assert result == {}

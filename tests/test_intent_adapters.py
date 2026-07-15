@@ -171,13 +171,15 @@ def test_antigravity_intent_gate_records_prompt_and_blocks_edit(tmp_path: Path) 
         },
         "BeforeTool",
     )
-    context = object_value(prompt_result["hookSpecificOutput"])["additionalContext"]
+    steps = prompt_result["injectSteps"]
+    assert isinstance(steps, list)
+    context = object_value(steps[0])["ephemeralMessage"]
     ledger = read_ledger(tmp_path)
 
     assert isinstance(context, str)
     assert "확인질문" in context
     assert launcher_command_prefix() in context
-    assert result["decision"] == "block"
+    assert result["decision"] == "deny"
     assert "의도" in str(result["reason"])
     assert launcher_command_prefix() in str(result["reason"])
     assert ledger["intent_required"] is True
