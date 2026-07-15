@@ -237,6 +237,27 @@ def test_design_lint_closes_chart_exception_before_later_ui_styles(tmp_path: Pat
     ]
 
 
+def test_design_lint_does_not_reopen_chart_exception_for_later_array(
+    tmp_path: Path,
+) -> None:
+    # Given: a closed chart data array is followed by an unrelated open array.
+    _init_repo(tmp_path)
+    _write(
+        tmp_path,
+        "src/chart.tsx",
+        'const chartData = [\n  { color: "#123456" },\n];\nconst unrelated = [\n  { color: "#abcdef" },\n];\n',
+    )
+
+    # When: design lint reaches a raw color inside the unrelated array.
+    process, payload = _run_design(tmp_path)
+
+    # Then: the terminated chart context cannot be resurrected by later brackets.
+    assert process.returncode == 1
+    assert [(item["line"], item["rule_id"]) for item in _violations(payload)] == [
+        (5, "design/raw-color")
+    ]
+
+
 def test_design_lint_honors_reasoned_unexpired_allowlist(tmp_path: Path) -> None:
     # Given: a violation has a path/rule exception with both reason and future expiry.
     _init_repo(tmp_path)

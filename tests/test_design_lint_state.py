@@ -157,6 +157,49 @@ def test_design_lint_ignores_preexisting_dirty_violation_in_touched_file(
     assert _violations(payload) == []
 
 
+def test_design_lint_ignores_shifted_legacy_debt_after_top_insertion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: dirty legacy debt exists before an enabled UI turn begins.
+    _init_repo(tmp_path)
+    _write(
+        tmp_path,
+        "src/App.css",
+        ".legacy { color: #123456; }\n.tail { color: var(--tail); }\n",
+    )
+    monkeypatch.setenv("FABLE_LITE_DESIGN_GATE", "1")
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "prompt",
+            "task_mode": "normal",
+            "prompt": "src/App.css UI 화면을 수정해줘",
+        }
+    )
+
+    # When: the turn prepends one compliant line and shifts the legacy text downward.
+    _write(
+        tmp_path,
+        "src/App.css",
+        ".new { color: var(--new); }\n.legacy { color: #123456; }\n.tail { color: var(--tail); }\n",
+    )
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "change",
+            "path": "src/App.css",
+            "kind": "code",
+        }
+    )
+    process, payload = _run_design(tmp_path)
+
+    # Then: a uniform line-number shift does not reclassify legacy debt as new work.
+    assert process.returncode == 0
+    assert payload["passed"] is True
+    assert _violations(payload) == []
+
+
 def test_design_lint_blocks_a_preexisting_dirty_violation_moved_during_turn(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
