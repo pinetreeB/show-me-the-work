@@ -147,8 +147,7 @@ def _seed_without_cache(root: Path) -> None:
 
 def _system_message(result: JsonObject) -> str:
     message = result.get("systemMessage")
-    assert isinstance(message, str)
-    return message
+    return message if isinstance(message, str) else ""
 
 
 def _scorecard_lines(result: JsonObject) -> list[str]:
@@ -283,16 +282,19 @@ def test_stop_allow_when_cache_has_activity_appends_exact_shared_line(tmp_path: 
         host: _run_stop(host, roots[host]) for host in HOSTS
     }
 
-    # Then: all hosts expose the same exact count-only line in their native shape.
+    # Then: message-capable hosts expose the shared line; agy's Stop allow contract is empty.
     assert {
         host: _scorecard_lines(result) for host, result in results.items()
-    } == {host: [SCORECARD_LINE] for host in HOSTS}
+    } == {
+        "claude_code": [SCORECARD_LINE],
+        "codex_cli": [SCORECARD_LINE],
+        "antigravity": [],
+    }
     assert set(results["claude_code"]) == {"systemMessage"}
     assert set(results["codex_cli"]) == {"systemMessage"}
-    assert results["antigravity"].get("decision") == "allow"
-    assert set(results["antigravity"]) == {"decision", "systemMessage"}
-    messages = [_system_message(results[host]) for host in HOSTS]
-    assert messages == [messages[0]] * len(HOSTS)
+    assert results["antigravity"] == {}
+    messages = [_system_message(results[host]) for host in ("claude_code", "codex_cli")]
+    assert messages == [messages[0]] * len(messages)
 
 
 def test_stop_allow_when_scorecard_is_disabled_omits_line(tmp_path: Path) -> None:

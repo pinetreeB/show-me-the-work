@@ -43,8 +43,11 @@ def emit(payload: Mapping[str, object]) -> int:
     return 0
 
 
-def fail_open(msg: str) -> int:
-    return emit({"decision": "allow", "systemMessage": f"[smtw] fail-open: {msg}"})
+def fail_open(event_name: str, msg: str) -> int:
+    reason = f"[smtw] fail-open: {msg}"
+    if event_name in {"PreToolUse", "BeforeTool"}:
+        return emit({"decision": "allow", "reason": reason})
+    return emit({})
 
 def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     from adapters.antigravity.tool_io import extract_command, extract_paths_from_input, extract_tool_info, tool_family
@@ -82,7 +85,7 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     })
     
     if result.get("decision") == "block":
-        return emit({"decision": "block", "reason": str(result.get("reason", ""))})
+        return emit({"decision": "deny", "reason": str(result.get("reason", ""))})
     _ = begin_invocation(Path(common.project_root(payload)), invocation)
     return emit({"decision": "allow"})
 
@@ -139,14 +142,11 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
             if covers is not None:
                 verification["covers"] = covers
             _ = record_event(verification)
-            return emit({
-                "decision": "allow",
-                "systemMessage": "[smtw] 원장: 검증 기록.",
-            })
+            return emit({})
         if observation.status is ProvenanceStatus.SCOPE_TOO_LARGE:
-            return emit({"decision": "allow"})
+            return emit({})
         if observation.incomplete and not verification_command:
-            return emit({"decision": "allow", "systemMessage": "[smtw] provenance incomplete; fail-open observation."})
+            return emit({})
         paths = list(observation.changed_paths)
         ledger = load_ledger({"project_root": root})
         prompt = ledger.get("prompt", "")
@@ -170,15 +170,11 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
                 "turn_id": invocation.turn_id,
                 "message": scope.get("message"),
             })
-            return emit({
-                "decision": "allow",
-                "systemMessage": str(scope.get("message")),
-                "hookSpecificOutput": {"additionalContext": str(scope.get("message"))}
-            })
+            return emit({})
         if family == "edit":
-            return emit({"decision": "allow", "systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
-        return emit({"decision": "allow", "systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
-    return emit({"decision": "allow"})
+            return emit({})
+        return emit({})
+    return emit({})
 
 def handle_pre_invocation(payload: Mapping[str, object]) -> int:
     from core.classify import classify_prompt
@@ -186,10 +182,7 @@ def handle_pre_invocation(payload: Mapping[str, object]) -> int:
     common = _common()
     lines = common.prepare_turn(payload, "", __file__, classify_prompt, force=True)
     return emit({
-        "decision": "allow",
-        "hookSpecificOutput": {
-            "additionalContext": "\n".join(lines)
-        }
+        "injectSteps": [{"ephemeralMessage": "\n".join(lines)}],
     })
 
 
@@ -202,11 +195,11 @@ def handle_stop(payload: Mapping[str, object]) -> int:
     return common.emit_stop_result(root, invocation, result)
 
 def main() -> int:
+    event_name = sys.argv[1] if len(sys.argv) >= 2 else ""
     try:
-        if len(sys.argv) < 2:
-            return fail_open("No event specified")
-            
-        event_name = sys.argv[1]
+        if not event_name:
+            return fail_open(event_name, "No event specified")
+
         payload = read_payload()
         
         handlers = {
@@ -220,10 +213,10 @@ def main() -> int:
             "AfterAgent": handle_stop,
         }
         handler = handlers.get(event_name)
-        return handler(payload) if handler is not None else emit({"decision": "allow"})
+        return handler(payload) if handler is not None else emit({})
             
     except Exception as e:
-        return fail_open(str(e))
+        return fail_open(event_name, str(e))
 
 if __name__ == "__main__":
     sys.exit(main())

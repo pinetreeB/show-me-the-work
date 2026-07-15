@@ -48,14 +48,18 @@ def oma_prompt_payload(tmp_path: Path, prompt: str) -> HookPayload:
         "session_id": "oma-session-1"
     }
 
-def test_oma_before_model_injects_pack_context_and_records_ledger(tmp_path: Path) -> None:
+def test_oma_pre_invocation_injects_ephemeral_pack_context_and_records_ledger(
+    tmp_path: Path,
+) -> None:
     payload = oma_prompt_payload(tmp_path, "버그 고쳐줘 안되는데요")
 
-    result = run_oma_hook("BeforeModel", payload)
+    result = run_oma_hook("PreInvocation", payload)
 
-    hook_output = object_value(result["hookSpecificOutput"])
-    context = hook_output["additionalContext"]
+    steps = list_value(result["injectSteps"])
+    step = object_value(steps[0])
+    context = step["ephemeralMessage"]
     ledger = read_ledger(tmp_path)
+    assert set(result) == {"injectSteps"}
     assert isinstance(context, str)
     assert "조사 팩" in context
     assert ledger["requires_investigation_compliance"] is True
@@ -77,10 +81,22 @@ def test_oma_before_tool_uses_actual_top_level_tool_as_authority(tmp_path: Path)
         },
     }
 
-    result = run_oma_hook("BeforeTool", payload)
+    result = run_oma_hook("PreToolUse", payload)
 
-    assert result["decision"] == "block"
+    assert result["decision"] == "deny"
     assert "contract.json" in str(result.get("reason", ""))
+
+
+def test_oma_pre_tool_allow_uses_official_decision(tmp_path: Path) -> None:
+    payload: HookPayload = {
+        "cwd": str(tmp_path),
+        "tool_name": "view_file",
+        "tool_input": {"path": "README.md"},
+    }
+
+    result = run_oma_hook("PreToolUse", payload)
+
+    assert result == {"decision": "allow"}
 
 
 def test_oma_after_tool_records_file_changes_and_scope_warning(tmp_path: Path) -> None:
@@ -94,11 +110,11 @@ def test_oma_after_tool_records_file_changes_and_scope_warning(tmp_path: Path) -
         }
     }
 
-    result = run_oma_hook("AfterTool", payload)
+    result = run_oma_hook("PostToolUse", payload)
 
     ledger = read_ledger(tmp_path)
     assert ledger["changed_files_seen"] == ["settings.py"]
-    assert "범위 이탈" in str(result["systemMessage"])
+    assert result == {}
 
 
 def test_oma_after_tool_records_shell_verification(tmp_path: Path) -> None:
@@ -115,12 +131,12 @@ def test_oma_after_tool_records_shell_verification(tmp_path: Path) -> None:
     }
 
     # When: Antigravity reports the completed tool call.
-    result = run_oma_hook("AfterTool", payload)
+    result = run_oma_hook("PostToolUse", payload)
 
     # Then: the ledger records the observed successful output as evidence.
     ledger = read_ledger(tmp_path)
     verification = object_value(list_value(ledger["verification_results"])[0])
-    assert "recorded verification" in str(result.get("systemMessage", "")).lower() or "[smtw] 원장: 검증 기록." in str(result.get("systemMessage", ""))
+    assert result == {}
     assert verification["success"] is True
     assert "3 passed in 0.02s" in str(verification["evidence"])
 
@@ -186,10 +202,10 @@ def test_oma_after_agent_blocks_after_code_change_and_failed_verification(tmp_pa
     }
 
     # When: the agent attempts to finish the changed task.
-    result = run_oma_hook("AfterAgent", payload)
+    result = run_oma_hook("Stop", payload)
 
     # Then: the missing successful verification keeps completion blocked.
-    assert result["decision"] == "block"
+    assert result["decision"] == "continue"
     assert "성공한 검증 증거가 없습니다" in str(result.get("reason", ""))
     assert str(result.get("reason", "")).endswith("Show me the work.")
 
@@ -251,9 +267,9 @@ def test_oma_after_agent_blocks_if_n1_missing(tmp_path: Path) -> None:
         }
     }
 
-    result = run_oma_hook("AfterAgent", payload)
+    result = run_oma_hook("Stop", payload)
 
-    assert result["decision"] == "block"
+    assert result["decision"] == "continue"
     assert "조사 팩" in str(result.get("reason", ""))
 
 
@@ -270,9 +286,9 @@ def test_oma_after_agent_allows_answer_only_investigation_turn(tmp_path: Path) -
         }
     }
 
-    result = run_oma_hook("AfterAgent", payload)
+    result = run_oma_hook("Stop", payload)
 
-    assert result.get("decision") != "block"
+    assert result == {}
 
 
 def test_oma_after_tool_records_bash_script_and_make_test_as_verification(tmp_path: Path) -> None:
@@ -287,14 +303,15 @@ def test_oma_after_tool_records_bash_script_and_make_test_as_verification(tmp_pa
         "metadata": {"tool_name": "run_command", "tool_input": {"CommandLine": "make test"}},
     }
 
-    bash_result = run_oma_hook("AfterTool", bash_payload)
-    make_result = run_oma_hook("AfterTool", make_payload)
+    bash_result = run_oma_hook("PostToolUse", bash_payload)
+    make_result = run_oma_hook("PostToolUse", make_payload)
 
-    assert "[smtw] 원장: 검증 기록." in str(bash_result.get("systemMessage", ""))
-    assert "[smtw] 원장: 검증 기록." in str(make_result.get("systemMessage", ""))
+    assert bash_result == {}
+    assert make_result == {}
 
 
 def test_oma_hooks_fail_open_on_malformed_payload() -> None:
-    result = run_oma_hook("BeforeTool", "{not-json")
+    result = run_oma_hook("PreToolUse", "{not-json")
 
-    assert str(result.get("systemMessage", "")).startswith("[smtw] fail-open")
+    assert result["decision"] == "allow"
+    assert str(result.get("reason", "")).startswith("[smtw] fail-open")

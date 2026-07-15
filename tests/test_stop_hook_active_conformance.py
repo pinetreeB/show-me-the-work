@@ -93,7 +93,7 @@ def _run_stop(host: str, case_root: Path, assistant_text: str, *, active: bool) 
 def _decision(result: JsonObject) -> str:
     encoded = json.dumps(result, ensure_ascii=False).casefold()
     assert "fail-open" not in encoded
-    return "block" if result.get("decision") == "block" else "allow"
+    return "block" if result.get("decision") in {"block", "continue"} else "allow"
 
 
 def _seed_changed_turn(

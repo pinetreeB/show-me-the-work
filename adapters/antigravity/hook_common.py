@@ -240,11 +240,8 @@ def emit_stop_result(
 
     if result.get("decision") == "block":
         restart_blocked_turn(Path(root), invocation)
-        return emit({"decision": "block", "reason": str(result.get("reason", ""))})
-    return emit({
-        "decision": "allow",
-        "systemMessage": str(result.get("message", "[smtw] Stop gate allow.")),
-    })
+        return emit({"decision": "continue", "reason": str(result.get("reason", ""))})
+    return emit({})
 
 
 def handle_after_agent(payload: Mapping[str, object]) -> int:

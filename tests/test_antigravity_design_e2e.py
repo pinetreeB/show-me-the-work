@@ -130,7 +130,7 @@ def test_real_payload_recovers_prompt_and_blocks_design_stop(tmp_path: Path) -> 
     result = cast(dict[str, object], json.loads(stop.stdout))
 
     assert stop.returncode == 0
-    assert result["decision"] == "block"
+    assert result["decision"] == "continue"
     assert "design/raw-color" in cast(str, result["reason"])
 
 
