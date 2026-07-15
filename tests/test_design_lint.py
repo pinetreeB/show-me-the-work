@@ -7,6 +7,8 @@ import subprocess
 import sys
 from typing import TypeAlias, cast
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -252,6 +254,29 @@ def test_design_lint_does_not_reopen_chart_exception_for_later_array(
     process, payload = _run_design(tmp_path)
 
     # Then: the terminated chart context cannot be resurrected by later brackets.
+    assert process.returncode == 1
+    assert [(item["line"], item["rule_id"]) for item in _violations(payload)] == [
+        (5, "design/raw-color")
+    ]
+
+
+@pytest.mark.parametrize("comment", ["// [", "/* [ */"])
+def test_design_lint_ignores_comment_brackets_when_closing_chart_context(
+    tmp_path: Path,
+    comment: str,
+) -> None:
+    # Given: an unmatched opener exists only inside a chart data comment.
+    _init_repo(tmp_path)
+    _write(
+        tmp_path,
+        "src/chart.tsx",
+        f'const chartData = [\n  {comment}\n  {{ color: "#123456" }},\n];\nconst buttonStyle = {{ color: "#abcdef" }};\n',
+    )
+
+    # When: design lint reaches a raw color after the chart array closes.
+    process, payload = _run_design(tmp_path)
+
+    # Then: comment text cannot keep the chart exception open.
     assert process.returncode == 1
     assert [(item["line"], item["rule_id"]) for item in _violations(payload)] == [
         (5, "design/raw-color")

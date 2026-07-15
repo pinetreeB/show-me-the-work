@@ -30,6 +30,10 @@ CHART_COLOR_RE: Final = re.compile(
     rf"\b(?:color|backgroundColor)\s*:\s*[\"']?{COLOR_LITERAL_PATTERN}",
     re.IGNORECASE,
 )
+JS_LITERAL_OR_COMMENT_RE: Final = re.compile(
+    r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|//[^\n]*|/\*.*?\*/)''',
+    re.DOTALL,
+)
 COLOR_PROPERTY_RE: Final = re.compile(
     rf"(?:^|[;{{\s])(?:color|background(?:-color)?|border(?:-[\w-]+)?-color|outline-color|fill|stroke|box-shadow|text-shadow|--[\w-]+)\s*:\s*[^;}}]*?{COLOR_LITERAL_PATTERN}",
     re.IGNORECASE,
@@ -165,22 +169,13 @@ def _chart_data_color(context: str) -> bool:
     start = starts[-1]
     opener = start.group("open")
     closer = "]" if opener == "[" else "}"
-    depth = 0
-    quote: str | None = None
-    escaped = False
     color_start = current_line_start + color.start()
-    for character in context[start.end() - 1 : color_start]:
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == quote:
-                quote = None
-            continue
-        if character in {"'", '"', "`"}:
-            quote = character
-        elif character == opener:
+    structure = JS_LITERAL_OR_COMMENT_RE.sub(
+        "", context[start.end() - 1 : color_start]
+    )
+    depth = 0
+    for character in structure:
+        if character == opener:
             depth += 1
         elif character == closer:
             depth -= 1
@@ -259,22 +254,6 @@ def _changed_from_hashes(path: Path, baseline_hashes: tuple[str, ...]) -> set[in
         if tag in {"replace", "insert"}
         for index in range(start, end)
     }
-    deleted = {
-        digest
-        for tag, start, end, _, _ in opcodes
-        if tag in {"replace", "delete"}
-        for digest in baseline_hashes[start:end]
-    }
-    inserted = {
-        digest
-        for tag, _, _, start, end in opcodes
-        if tag in {"replace", "insert"}
-        for digest in current_hashes[start:end]
-    }
-    if deleted & inserted:
-        for tag, baseline_start, _, current_start, current_end in opcodes:
-            if tag == "equal" and baseline_start != current_start:
-                changed.update(range(current_start + 1, current_end + 1))
     return {
         line_number
         for line_number in changed
