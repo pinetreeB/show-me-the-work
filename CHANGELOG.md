@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.0] - 2026-07-15
+
+### Added
+
+- Added an opt-in design gate (default OFF). Enable it with `FABLE_LITE_DESIGN_GATE=1` or a project `design/gate.config` `{"enabled": true}` (project config wins over the environment variable). When enabled, UI-domain or UI-file-creation turns run `design_lint` on changed lines — raw hex/rgb/hsl colors, raw px spacing, and Tailwind arbitrary design literals — with DESIGN-OPS exception boundaries (token source files, `0`/`1px` hairlines, percentages, `currentColor`, SVG internals, and a path+rule+reason+expiry allowlist). Stop blocks a UI-touching turn until the lint passes and a render-verification tool call was observed, with an independent two-block fail-open counter. `fable_lite check --design` runs the lint on demand regardless of the toggle. Editing `design/gate.config` invalidates a prior pass, so an agent cannot launder an allowlist entry to bypass the gate. Adds the `design-review` pack and extends `verification-grounding` with design observation checks.
+
 ## [2.0.2] - 2026-07-15
 
 ### Fixed
