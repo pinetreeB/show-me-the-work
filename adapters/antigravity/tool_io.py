@@ -20,6 +20,7 @@ _TEXT_CONTAINER_KEYS: Final = ("tool_response", "tool_result")
 _EXIT_CODE_KEYS: Final = ("exit_code", "exitCode", "returncode")
 _ANSI_ESCAPE_RE: Final = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _TOOL_NAME_MAP: Final = {
+    "view_file": "Read",
     "write_to_file": "Edit",
     "replace_file_content": "Edit",
     "multi_replace_file_content": "Edit",
@@ -30,6 +31,18 @@ _TOOL_NAME_MAP: Final = {
     "write_file": "Edit",
     "edit_file": "Edit",
 }
+
+
+def tool_family(tool_name: str) -> str:
+    from core.contract import EDIT_TOOLS, SHELL_TOOLS
+
+    if tool_name == "Read":
+        return "read"
+    if tool_name in EDIT_TOOLS:
+        return "edit"
+    if tool_name in SHELL_TOOLS:
+        return "shell"
+    return "other"
 
 
 def _mapping(value: object) -> Mapping[str, object]:

@@ -46,17 +46,17 @@ def emit(payload: Mapping[str, object]) -> int:
 def fail_open(msg: str) -> int:
     return emit({"decision": "allow", "systemMessage": f"[smtw] fail-open: {msg}"})
 
-def handle_before_tool(payload: Mapping[str, object]) -> int:
-    from adapters.antigravity.tool_io import extract_command, extract_paths_from_input, extract_tool_info
+def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
+    from adapters.antigravity.tool_io import extract_command, extract_paths_from_input, extract_tool_info, tool_family
     from adapters.intent_command import intent_set_command
     from core.adapter_observation import begin_invocation, resolve_active_invocation
-    from core.contract import EDIT_TOOLS, SHELL_TOOLS, evaluate_pretool_contract
+    from core.contract import evaluate_pretool_contract
 
     common = _common()
     tool_name, tool_input = extract_tool_info(payload)
     paths = extract_paths_from_input(tool_input)
     cmd = extract_command(tool_input)
-    family = "edit" if tool_name in EDIT_TOOLS else "shell" if tool_name in SHELL_TOOLS else "other"
+    family = tool_family(tool_name)
     invocation = common.canonical_invocation(payload, "pre_tool", family, paths, cmd, False, "")
     invocation = resolve_active_invocation(Path(common.project_root(payload)), invocation)
 
@@ -79,11 +79,12 @@ def handle_before_tool(payload: Mapping[str, object]) -> int:
     _ = begin_invocation(Path(common.project_root(payload)), invocation)
     return emit({"decision": "allow"})
 
-def handle_after_tool(payload: Mapping[str, object]) -> int:
+def handle_post_tool_use(payload: Mapping[str, object]) -> int:
     from adapters.antigravity.tool_io import (
         extract_command,
         extract_paths_from_input,
         extract_tool_info,
+        tool_family,
         verification_result,
     )
 
@@ -93,14 +94,13 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
 
     from core.adapter_observation import observe_post_tool, resolve_active_invocation, verification_covers
     from core.classify import classify_prompt
-    from core.contract import EDIT_TOOLS, SHELL_TOOLS
     from core.ledger import JsonObject, load_ledger, record_event
     from core.provenance_types import ProvenanceStatus
     from core.scope_guard import evaluate_scope
     from core.verification import is_verification_command
 
-    family = "edit" if tool_name in EDIT_TOOLS else "shell" if tool_name in SHELL_TOOLS else "other"
-    if family != "other":
+    family = tool_family(tool_name)
+    if family in {"edit", "shell"}:
         command = extract_command(tool_input)
         success, evidence = verification_result(payload)
         invocation = common.canonical_invocation(
@@ -173,7 +173,7 @@ def handle_after_tool(payload: Mapping[str, object]) -> int:
         return emit({"decision": "allow", "systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
     return emit({"decision": "allow"})
 
-def handle_before_model(payload: Mapping[str, object]) -> int:
+def handle_pre_invocation(payload: Mapping[str, object]) -> int:
     from adapters.intent_command import intent_set_command
     from core.ambiguity import evaluate_ambiguity
     from core.classify import classify_prompt
@@ -251,7 +251,7 @@ def handle_before_model(payload: Mapping[str, object]) -> int:
     })
 
 
-def handle_after_agent(payload: Mapping[str, object]) -> int:
+def handle_stop(payload: Mapping[str, object]) -> int:
     from core.adapter_observation import finish_turn, resolve_active_invocation
     from core.verify_state import evaluate_stop
 
@@ -266,16 +266,18 @@ def main() -> int:
         event_name = sys.argv[1]
         payload = read_payload()
         
-        if event_name == "BeforeModel":
-            return handle_before_model(payload)
-        elif event_name == "BeforeTool":
-            return handle_before_tool(payload)
-        elif event_name == "AfterTool":
-            return handle_after_tool(payload)
-        elif event_name == "AfterAgent":
-            return handle_after_agent(payload)
-        else:
-            return emit({"decision": "allow"})
+        handlers = {
+            "PreInvocation": handle_pre_invocation,
+            "PreToolUse": handle_pre_tool_use,
+            "PostToolUse": handle_post_tool_use,
+            "Stop": handle_stop,
+            "BeforeModel": handle_pre_invocation,
+            "BeforeTool": handle_pre_tool_use,
+            "AfterTool": handle_post_tool_use,
+            "AfterAgent": handle_stop,
+        }
+        handler = handlers.get(event_name)
+        return handler(payload) if handler is not None else emit({"decision": "allow"})
             
     except Exception as e:
         return fail_open(str(e))

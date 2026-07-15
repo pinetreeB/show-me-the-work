@@ -27,7 +27,8 @@ def string_list(value: object) -> list[str]:
 
 
 def project_root(payload: Mapping[str, object]) -> str:
-    cwd = payload.get("cwd") or os.getcwd()
+    workspaces = string_list(payload.get("workspacePaths"))
+    cwd = workspaces[0] if workspaces else payload.get("cwd") or os.getcwd()
     return str(cwd)
 
 
@@ -42,15 +43,17 @@ def canonical_invocation(
 ) -> CanonicalInvocation:
     from core.adapter_observation import CanonicalInvocation
 
-    session = payload.get("session_id")
+    session = payload.get("conversationId") or payload.get("session_id")
     identity_synthetic = not isinstance(session, str) or not session
     session_id = session if isinstance(session, str) and session else "default"
     agent_value = payload.get("agent")
     agent = agent_value if isinstance(agent_value, str) and agent_value else "antigravity"
+    step_value = payload.get("stepIdx")
+    step_id = str(step_value) if isinstance(step_value, int | str) and not isinstance(step_value, bool) else ""
     turn_value = payload.get("turn_id")
-    turn_id = turn_value if isinstance(turn_value, str) and turn_value else f"turn:{session_id}"
+    turn_id = turn_value if isinstance(turn_value, str) and turn_value else ":".join(filter(None, ("turn", session_id, step_id)))
     invocation_value = payload.get("tool_use_id") or payload.get("invocation_id") or payload.get("tool_call_id")
-    invocation_id = invocation_value if isinstance(invocation_value, str) and invocation_value else f"{phase}:{session_id}:{family}"
+    invocation_id = invocation_value if isinstance(invocation_value, str) and invocation_value else ":".join(filter(None, ("tool", session_id, step_id, family)))
     return CanonicalInvocation(
         "antigravity",
         agent,
