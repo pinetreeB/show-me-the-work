@@ -68,8 +68,11 @@ def test_hooks_template_uses_official_mixed_schema_and_absolute_path_placeholder
         assert set(hook) == {"type", "command", "timeout"}
         assert hook["type"] == "command"
         command = cast(str, hook["command"])
-        assert command.startswith('"{PYTHON_EXECUTABLE}" ')
-        assert '"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py"' in command
+        assert command.startswith("{PYTHON_EXECUTABLE} ")
+        assert "{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py" in command
+        # Antigravity(Go)가 cmd /c 재인용으로 따옴표 포함 command를 깨뜨리므로
+        # 템플릿은 따옴표 없는 공백-미포함 절대 경로만 허용한다 (2026-07-16 실측).
+        assert '"' not in command
         assert command.endswith(event)
         assert hook["timeout"] == 30
 
@@ -80,8 +83,9 @@ def test_hooks_template_uses_official_mixed_schema_and_absolute_path_placeholder
         assert set(hook) == {"type", "command", "timeout"}
         assert hook["type"] == "command"
         command = cast(str, hook["command"])
-        assert command.startswith('"{PYTHON_EXECUTABLE}" ')
-        assert '"{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py"' in command
+        assert command.startswith("{PYTHON_EXECUTABLE} ")
+        assert "{FABLE_LITE_ROOT}/adapters/antigravity/oma_hook.py" in command
+        assert '"' not in command
         assert command.endswith(event)
         assert hook["timeout"] == 30
 
