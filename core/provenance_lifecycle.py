@@ -33,6 +33,7 @@ from .provenance_turn_resume import (
 )
 from .provenance_lifecycle_start import can_fast_start, candidate_paths as candidate_paths_for_root
 from .provenance_lifecycle_scope import prime_candidate_scope, scan_snapshot
+from .project_root import is_user_home_root
 from .provenance_types import ProvenanceReason, ProvenanceStatus, Snapshot
 
 
@@ -41,6 +42,10 @@ class ProvenanceLifecycle:
 
     def __init__(self, root: Path) -> None:
         self._root = root.resolve()
+        self._home_root_unsupported = is_user_home_root(self._root)
+        if self._home_root_unsupported:
+            self._state = LifecycleState(str(self._root))
+            return
         try:
             current = load_workspace_current(self._root)
         except SnapshotStoreError:
@@ -76,6 +81,19 @@ class ProvenanceLifecycle:
         turn_id: str,
         mutation_capable: bool = False,
     ) -> ObservationResult:
+        if self._home_root_unsupported:
+            return ObservationResult(
+                None,
+                (),
+                (),
+                False,
+                False,
+                0,
+                False,
+                False,
+                ProvenanceStatus.UNSUPPORTED,
+                ProvenanceReason.HOME_ROOT,
+            )
         if self._state.incomplete_reason is ProvenanceReason.STORE_READ_ERROR:
             return self._mark_incomplete(
                 self._result(None, (), True, 0),

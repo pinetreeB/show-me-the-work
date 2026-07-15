@@ -30,10 +30,12 @@ class ProvenanceStatus(StrEnum):
     COMPLETE = "complete"
     INCOMPLETE = "incomplete"
     SCOPE_TOO_LARGE = "scope_too_large"
+    UNSUPPORTED = "unsupported"
 
 
 class ProvenanceReason(StrEnum):
     NONE = ""
+    HOME_ROOT = "home_root"
     ENTRY_LIMIT = "entry_limit"
     BYTE_LIMIT = "byte_limit"
     DEADLINE = "deadline"

@@ -24,6 +24,7 @@ from .scorecard_store import (
     unresolved_block_ids,
 )
 from .verification_covers import active_turn, covers_verified
+from .project_root import HOME_ROOT_ADVISORY, is_user_home_root
 from .provenance_types import ProvenanceStatus
 
 Decision: TypeAlias = dict[str, JsonValue]
@@ -228,9 +229,11 @@ def evaluate_without_io(
         or bool(_remote_epochs(state))
     )
     verified = has_successful_verification(ledger, payload)
+    home_root_unsupported = is_user_home_root(_project_root(payload))
 
     if (
-        state.get("provenance_status") == ProvenanceStatus.SCOPE_TOO_LARGE.value
+        not home_root_unsupported
+        and state.get("provenance_status") == ProvenanceStatus.SCOPE_TOO_LARGE.value
         and state.get("provenance_mutation_capable") is True
     ):
         return {
@@ -245,7 +248,8 @@ def evaluate_without_io(
         }
 
     if (
-        state.get("provenance_incomplete") is True
+        not home_root_unsupported
+        and state.get("provenance_incomplete") is True
         and state.get("provenance_mutation_capable") is True
     ):
         return {
@@ -277,6 +281,8 @@ def evaluate_without_io(
             }
 
     if _docs_only(state) or not changed or verified:
+        if home_root_unsupported:
+            return {"decision": "allow", "message": HOME_ROOT_ADVISORY}
         if state.get("provenance_status") == ProvenanceStatus.SCOPE_TOO_LARGE.value:
             return {
                 "decision": "allow",
