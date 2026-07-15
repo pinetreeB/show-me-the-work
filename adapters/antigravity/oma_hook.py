@@ -50,6 +50,7 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     from adapters.antigravity.tool_io import extract_command, extract_paths_from_input, extract_tool_info, tool_family
     from adapters.intent_command import intent_set_command
     from core.adapter_observation import begin_invocation, resolve_active_invocation
+    from core.classify import classify_prompt
     from core.contract import evaluate_pretool_contract
 
     common = _common()
@@ -57,8 +58,14 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     paths = extract_paths_from_input(tool_input)
     cmd = extract_command(tool_input)
     family = tool_family(tool_name)
+    prompt_hint = " ".join(paths) if family == "edit" else ""
     invocation = common.canonical_invocation(payload, "pre_tool", family, paths, cmd, False, "")
     invocation = resolve_active_invocation(Path(common.project_root(payload)), invocation)
+    turn_payload = dict(payload)
+    turn_payload["agent"] = invocation.agent
+    turn_payload["session_id"] = invocation.session_id
+    turn_payload["turn_id"] = invocation.turn_id
+    _ = common.prepare_turn(turn_payload, prompt_hint, __file__, classify_prompt)
 
     result = evaluate_pretool_contract({
         "project_root": common.project_root(payload),
@@ -174,75 +181,10 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
     return emit({"decision": "allow"})
 
 def handle_pre_invocation(payload: Mapping[str, object]) -> int:
-    from adapters.intent_command import intent_set_command
-    from core.ambiguity import evaluate_ambiguity
     from core.classify import classify_prompt
-    from core.intent import clear_intent
-    from core.ledger import record_event
-    from core.adapter_observation import start_turn
 
     common = _common()
-    prompt_value = payload.get("prompt", "")
-    if not isinstance(prompt_value, str):
-        prompt_value = ""
-    
-    if not prompt_value:
-        req = common.mapping(payload.get("llm_request"))
-        for msg in reversed(common.mapping_sequence(req.get("messages"))):
-            if msg.get("role") == "user":
-                prompt_value = str(msg.get("content", ""))
-                break
-
-    root = common.project_root(payload)
-    invocation = common.canonical_invocation(payload, "turn_start", "other", [], "", True, "")
-    observation = start_turn(Path(root), invocation)
-    _ = clear_intent(root)
-    result = classify_prompt({"prompt": prompt_value})
-    ambiguity = evaluate_ambiguity({
-        "project_root": root,
-        "prompt": prompt_value,
-        "requested_paths": common.string_list(result.get("requested_paths")),
-    })
-    intent_required = ambiguity.get("ambiguous") is True
-    command_template = intent_set_command(__file__)
-    packs = common.packs_with_intent(result.get("packs", []), intent_required)
-    
-    _ = record_event({
-        "project_root": root,
-        "event": "prompt",
-        "host": invocation.host,
-        "agent": invocation.agent,
-        "session_id": invocation.session_id,
-        "turn_id": invocation.turn_id,
-        "baseline_snapshot_id": observation.baseline_snapshot_id,
-        "current_snapshot_id": observation.snapshot_id,
-        "provenance_incomplete": observation.incomplete,
-        "provenance_status": observation.status.value,
-        "provenance_status_reason": observation.status_reason,
-        "task_mode": result.get("mode", "quick"),
-        "prompt": prompt_value,
-        "packs": packs,
-        "needs_goals": result.get("needs_goals", False),
-        "intent_required": intent_required,
-        "ambiguity_score": ambiguity.get("ambiguity_score") if isinstance(ambiguity.get("ambiguity_score"), int) else 0,
-        "requires_investigation_compliance": "investigation" in packs
-    })
-    
-    lines = [
-        "show-me-the-work 활성화: 작업 규율을 절차로 적용하세요.",
-        f"mode={result.get('mode', 'quick')}"
-    ]
-    if "investigation" in packs:
-        lines.extend([
-            "조사 팩 준수 필수: 출력에 `가설 1:`, `가설 2:`, `가설 3:`, `기각:`, `증거:`를 포함하세요.",
-            "수정 전 재현과 경쟁 가설을 먼저 기록하세요."
-        ])
-    if "verification-grounding" in packs:
-        lines.append("렌더/실행 산출물은 RUN→OBSERVE→FIX→RE-RUN 증거 없이는 완료하지 마세요.")
-    if result.get("needs_goals"):
-        lines.append("2+ 스토리 작업입니다. goals 체크포인트를 만들거나 사용자에게 명시 확인을 받으세요.")
-    common.append_intent_context(lines, intent_required, command_template)
-        
+    lines = common.prepare_turn(payload, "", __file__, classify_prompt, force=True)
     return emit({
         "decision": "allow",
         "hookSpecificOutput": {
@@ -252,11 +194,12 @@ def handle_pre_invocation(payload: Mapping[str, object]) -> int:
 
 
 def handle_stop(payload: Mapping[str, object]) -> int:
-    from core.adapter_observation import finish_turn, resolve_active_invocation
     from core.verify_state import evaluate_stop
 
-    _ = (finish_turn, resolve_active_invocation, evaluate_stop)
-    return _common().handle_after_agent(payload)
+    common = _common()
+    root, invocation, stop_payload = common.stop_context(payload)
+    result = evaluate_stop(stop_payload)
+    return common.emit_stop_result(root, invocation, result)
 
 def main() -> int:
     try:
