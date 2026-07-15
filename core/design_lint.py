@@ -22,18 +22,6 @@ COLOR_LITERAL_PATTERN: Final = (
 )
 COLOR_LITERAL_RE: Final = re.compile(COLOR_LITERAL_PATTERN, re.IGNORECASE)
 TAILWIND_RE: Final = re.compile(r"\[(?:#[0-9A-Fa-f]{3,8}|-?\d+(?:\.\d+)?px)\]")
-CHART_DATA_START_RE: Final = re.compile(
-    r"\b(?:chartData|chart_data|datasets?|series)\b\s*(?:=|:)\s*(?P<open>[\[{])",
-    re.IGNORECASE,
-)
-CHART_COLOR_RE: Final = re.compile(
-    rf"\b(?:color|backgroundColor)\s*:\s*[\"']?{COLOR_LITERAL_PATTERN}",
-    re.IGNORECASE,
-)
-JS_LITERAL_OR_COMMENT_RE: Final = re.compile(
-    r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|//[^\n]*|/\*.*?\*/)''',
-    re.DOTALL,
-)
 COLOR_PROPERTY_RE: Final = re.compile(
     rf"(?:^|[;{{\s])(?:color|background(?:-color)?|border(?:-[\w-]+)?-color|outline-color|fill|stroke|box-shadow|text-shadow|--[\w-]+)\s*:\s*[^;}}]*?{COLOR_LITERAL_PATTERN}",
     re.IGNORECASE,
@@ -131,7 +119,7 @@ def _lint_file(
         if line_number < 1 or line_number > len(lines):
             continue
         line = lines[line_number - 1]
-        rules = _rules_for_line(line, suffix, "\n".join(lines[:line_number]))
+        rules = _rules_for_line(line, suffix)
         for rule_id in rules:
             if _allowed(relative, rule_id, allowlist):
                 continue
@@ -141,47 +129,21 @@ def _lint_file(
     return violations
 
 
-def _rules_for_line(line: str, suffix: str, context: str) -> tuple[str, ...]:
+def _rules_for_line(line: str, suffix: str) -> tuple[str, ...]:
     rules: list[str] = []
     if TAILWIND_RE.search(line):
         rules.append(TAILWIND_ARBITRARY)
-    if suffix != ".svg" and _has_raw_color(line, suffix, context):
+    if suffix != ".svg" and _has_raw_color(line, suffix):
         rules.append(RAW_COLOR)
     if _has_raw_spacing(line, suffix):
         rules.append(RAW_SPACING)
     return tuple(rules)
 
 
-def _has_raw_color(line: str, suffix: str, context: str) -> bool:
+def _has_raw_color(line: str, suffix: str) -> bool:
     if suffix in SCRIPT_EXTENSIONS:
-        return COLOR_LITERAL_RE.search(line) is not None and not _chart_data_color(context)
+        return COLOR_LITERAL_RE.search(line) is not None
     return COLOR_PROPERTY_RE.search(line) is not None
-
-
-def _chart_data_color(context: str) -> bool:
-    current_line_start = context.rfind("\n") + 1
-    color = CHART_COLOR_RE.search(context[current_line_start:])
-    if color is None:
-        return False
-    starts = tuple(CHART_DATA_START_RE.finditer(context))
-    if not starts:
-        return False
-    start = starts[-1]
-    opener = start.group("open")
-    closer = "]" if opener == "[" else "}"
-    color_start = current_line_start + color.start()
-    structure = JS_LITERAL_OR_COMMENT_RE.sub(
-        "", context[start.end() - 1 : color_start]
-    )
-    depth = 0
-    for character in structure:
-        if character == opener:
-            depth += 1
-        elif character == closer:
-            depth -= 1
-            if depth == 0:
-                return False
-    return depth > 0
 
 
 def _has_raw_spacing(line: str, suffix: str) -> bool:

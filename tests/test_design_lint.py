@@ -7,8 +7,6 @@ import subprocess
 import sys
 from typing import TypeAlias, cast
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[1]
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -186,101 +184,70 @@ def test_design_lint_preserves_design_ops_literal_boundaries(tmp_path: Path) -> 
         ".safe { margin: 0; width: 50%; color: currentColor; border: 1px solid currentColor; }\n",
     )
     _write(tmp_path, "src/icon.svg", '<svg><path fill="#123456" stroke="#abcdef" /></svg>\n')
+
+    # When: design lint evaluates those changed files.
+    process, payload = _run_design(tmp_path)
+
+    # Then: token sources, zero, hairlines, percentages, currentColor, and SVG stay allowed.
+    assert process.returncode == 0
+    assert payload["passed"] is True
+    assert _violations(payload) == []
+
+
+def test_design_lint_blocks_raw_chart_color_without_allowlist(tmp_path: Path) -> None:
+    # Given: changed chart data contains a raw color without an explicit exception.
+    _init_repo(tmp_path)
     _write(
         tmp_path,
         "src/chart.ts",
         'const chartData = [\n  { label: "A", color: "#123456" },\n];\n',
     )
 
-    # When: design lint evaluates those changed files.
-    process, payload = _run_design(tmp_path)
-
-    # Then: token sources, zero, hairlines, percentages, currentColor, SVG, and chart data stay allowed.
-    assert process.returncode == 0
-    assert payload["passed"] is True
-    assert _violations(payload) == []
-
-
-def test_design_lint_does_not_treat_chart_named_styles_as_chart_data(tmp_path: Path) -> None:
-    # Given: a normal UI style uses a raw color behind a chart-shaped variable name.
-    _init_repo(tmp_path)
-    _write(
-        tmp_path,
-        "src/chart.tsx",
-        'const chartLabelStyle = { color: "#123456" };\n',
-    )
-
     # When: the manual design lint evaluates the changed script.
     process, payload = _run_design(tmp_path)
 
-    # Then: only actual chart data colors are exempt, so the style remains blocked.
+    # Then: chart context cannot hide the raw color from the token rule.
     assert process.returncode == 1
-    assert [(item["file"], item["rule_id"]) for item in _violations(payload)] == [
-        ("src/chart.tsx", "design/raw-color")
+    assert [(item["file"], item["line"], item["rule_id"]) for item in _violations(payload)] == [
+        ("src/chart.ts", 2, "design/raw-color")
     ]
 
 
-def test_design_lint_closes_chart_exception_before_later_ui_styles(tmp_path: Path) -> None:
-    # Given: valid chart data is followed by a separate raw-color UI style.
-    _init_repo(tmp_path)
-    _write(
-        tmp_path,
-        "src/chart.tsx",
-        'const chartData = [\n  { color: "#123456" },\n];\nconst buttonStyle = { color: "#abcdef" };\n',
-    )
-
-    # When: design lint evaluates the changed script.
-    process, payload = _run_design(tmp_path)
-
-    # Then: closing the data array also closes its color exception.
-    assert process.returncode == 1
-    assert [(item["line"], item["rule_id"]) for item in _violations(payload)] == [
-        (4, "design/raw-color")
-    ]
-
-
-def test_design_lint_does_not_reopen_chart_exception_for_later_array(
+def test_design_lint_allows_raw_chart_color_with_reasoned_unexpired_allowlist(
     tmp_path: Path,
 ) -> None:
-    # Given: a closed chart data array is followed by an unrelated open array.
+    # Given: chart data has a path/rule exception with a reason and future expiry.
     _init_repo(tmp_path)
     _write(
         tmp_path,
-        "src/chart.tsx",
-        'const chartData = [\n  { color: "#123456" },\n];\nconst unrelated = [\n  { color: "#abcdef" },\n];\n',
+        "src/chart.ts",
+        'const chartData = [\n  { label: "A", color: "#123456" },\n];\n',
     )
-
-    # When: design lint reaches a raw color inside the unrelated array.
-    process, payload = _run_design(tmp_path)
-
-    # Then: the terminated chart context cannot be resurrected by later brackets.
-    assert process.returncode == 1
-    assert [(item["line"], item["rule_id"]) for item in _violations(payload)] == [
-        (5, "design/raw-color")
-    ]
-
-
-@pytest.mark.parametrize("comment", ["// [", "/* [ */"])
-def test_design_lint_ignores_comment_brackets_when_closing_chart_context(
-    tmp_path: Path,
-    comment: str,
-) -> None:
-    # Given: an unmatched opener exists only inside a chart data comment.
-    _init_repo(tmp_path)
     _write(
         tmp_path,
-        "src/chart.tsx",
-        f'const chartData = [\n  {comment}\n  {{ color: "#123456" }},\n];\nconst buttonStyle = {{ color: "#abcdef" }};\n',
+        "design/gate.config",
+        json.dumps(
+            {
+                "enabled": False,
+                "allowlist": [
+                    {
+                        "path": "src/chart.ts",
+                        "rule_id": "design/raw-color",
+                        "reason": "legacy vendor palette migration",
+                        "expires": "2099-12-31",
+                    }
+                ],
+            }
+        ),
     )
 
-    # When: design lint reaches a raw color after the chart array closes.
+    # When: the one-shot design lint evaluates the chart data.
     process, payload = _run_design(tmp_path)
 
-    # Then: comment text cannot keep the chart exception open.
-    assert process.returncode == 1
-    assert [(item["line"], item["rule_id"]) for item in _violations(payload)] == [
-        (5, "design/raw-color")
-    ]
+    # Then: the existing scoped allowlist is the sole chart-color exception path.
+    assert process.returncode == 0
+    assert payload["passed"] is True
+    assert _violations(payload) == []
 
 
 def test_design_lint_honors_reasoned_unexpired_allowlist(tmp_path: Path) -> None:
