@@ -25,7 +25,12 @@ from .scorecard_store import (
 )
 from .verification_covers import active_turn, covers_verified
 from .project_root import HOME_ROOT_ADVISORY, is_user_home_root
-from .provenance_types import ProvenanceStatus
+from .provenance_types import (
+    ProvenanceReason,
+    ProvenanceStatus,
+    normalize_budget_breach_path,
+    normalize_budget_top_paths,
+)
 
 Decision: TypeAlias = dict[str, JsonValue]
 
@@ -218,6 +223,59 @@ def _record_stop_block(
     return decision
 
 
+_CONFIG_GUIDE = (
+    ".fable-lite/provenance-config.json 에 exclude 패턴을 추가한 뒤 저장하세요 "
+    "(저장 후 다음 턴부터 반영됩니다). "
+    "예: {\"version\": 1, \"exclude\": [\"path/to/heavy/dir/**\"]} "
+    "⚠️ 빌드·캐시·데이터 산출물만 제외하세요 — 소스 디렉토리(src/, app/ 등)를 제외하면 "
+    "이후 그 안의 변조가 관측되지 않습니다. "
+    "/ Add an exclude pattern to .fable-lite/provenance-config.json and save "
+    "(takes effect starting next turn). "
+    "Example: {\"version\": 1, \"exclude\": [\"path/to/heavy/dir/**\"]} "
+    "Warning: exclude only build/cache/data artifacts - excluding source directories "
+    "(src/, app/, ...) hides future tampering inside them from observation."
+)
+
+
+def _format_budget_paths(top_paths: list[JsonObject]) -> str:
+    return ", ".join(
+        f"{item['path']} (entries={item['entries']}, bytes={item['bytes']})"
+        for item in top_paths
+    )
+
+
+def _scope_too_large_detail(state: Mapping[str, JsonValue]) -> str:
+    reason = state.get("provenance_status_reason")
+    top_paths = list(normalize_budget_top_paths(state.get("provenance_budget_top_paths")))
+    breach_path = normalize_budget_breach_path(state.get("provenance_budget_breach_path"))
+    if reason in (ProvenanceReason.BYTE_LIMIT.value, ProvenanceReason.ENTRY_LIMIT.value):
+        limit_ko = "바이트 예산" if reason == ProvenanceReason.BYTE_LIMIT.value else "파일 개수 예산"
+        limit_en = "byte budget" if reason == ProvenanceReason.BYTE_LIMIT.value else "entry-count budget"
+        pieces = [f"{limit_ko} 초과 / {limit_en} exceeded."]
+        if top_paths:
+            formatted = _format_budget_paths(top_paths)
+            pieces.append(
+                "예산 초과 시점까지의 부분 관측 상위 경로(순회 순서에 따라 달라질 수 있음): "
+                f"{formatted}. / Partial observation up to the point the budget was exceeded "
+                f"(traversal order is non-deterministic): {formatted}."
+            )
+        if breach_path:
+            pieces.append(f"예산 초과 지점: {breach_path} / Budget breached at: {breach_path}.")
+        pieces.append(_CONFIG_GUIDE)
+        return " ".join(pieces)
+    if reason == ProvenanceReason.DEADLINE.value:
+        pieces = ["관측 시간 초과 / Observation timed out."]
+        hint = breach_path or (_format_budget_paths(top_paths) if top_paths else "")
+        if hint:
+            pieces.append(
+                f"참고용 힌트(원인이 아니라 시간 초과 시점 근처 경로): {hint} "
+                f"/ Reference hint only, not the cause — path near the timeout: {hint}."
+            )
+        pieces.append(_CONFIG_GUIDE)
+        return " ".join(pieces)
+    return _CONFIG_GUIDE
+
+
 def evaluate_without_io(
     ledger: Mapping[str, JsonValue], payload: Mapping[str, JsonValue]
 ) -> Decision:
@@ -241,7 +299,8 @@ def evaluate_without_io(
             "reason_code": ReasonCode.STOP_PROVENANCE_INCOMPLETE.value,
             "reason": (
                 "[smtw] Stop gate: provenance 범위가 너무 커서 local-or-unknown 변경 가능성을 "
-                "안전하게 관측할 수 없습니다. 프로젝트 루트를 좁히고 다시 관측하세요. "
+                "안전하게 관측할 수 없습니다. "
+                f"{_scope_too_large_detail(state)} "
                 "/ Scope too large cannot prove a clean local-or-unknown turn.\n"
                 "Show me the work."
             ),
@@ -288,8 +347,9 @@ def evaluate_without_io(
                 "decision": "allow",
                 "message": (
                     "[smtw] provenance scope too large: 파일 관측 지원 범위를 초과해 "
-                    "이번 턴은 차단하지 않고 안내만 제공합니다. 프로젝트 루트를 더 좁게 설정하세요. "
-                    "/ Provenance scope too large; advisory only. Narrow the project root."
+                    "이번 턴은 차단하지 않고 안내만 제공합니다. "
+                    f"{_scope_too_large_detail(state)} "
+                    "/ Provenance scope too large; advisory only."
                 ),
             }
         return {"decision": "allow", "message": "[smtw] Stop gate allow."}
