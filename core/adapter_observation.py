@@ -12,7 +12,12 @@ from .provenance_lifecycle_types import ObservationResult, ObservedChange
 from .project_root import is_user_home_root
 from .provenance_store import SnapshotStoreError
 from .provenance_turn_resume import MissingTurnBaselineError, TurnBootstrapError
-from .provenance_types import ProvenanceReason, ProvenanceStatus
+from .provenance_types import (
+    ProvenanceReason,
+    ProvenanceStatus,
+    normalize_budget_breach_path,
+    normalize_budget_top_paths,
+)
 from .shell_hints import shell_candidate_paths
 from .shell_command import (
     ShellClassification,
@@ -75,6 +80,8 @@ class ObservationReport:
     full_reconcile: bool
     status: ProvenanceStatus = ProvenanceStatus.COMPLETE
     status_reason: ProvenanceReason = ProvenanceReason.NONE
+    budget_top_paths: tuple[JsonObject, ...] = ()
+    budget_breach_path: str | None = None
 
 
 def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
@@ -253,6 +260,7 @@ def _report(result: ObservationResult, baseline_snapshot_id: str) -> Observation
             result.status_reason,
         )
     if result.status is ProvenanceStatus.SCOPE_TOO_LARGE:
+        top_paths, breach_path = _snapshot_budget_fields(result.snapshot)
         return ObservationReport(
             "",
             "",
@@ -261,6 +269,8 @@ def _report(result: ObservationResult, baseline_snapshot_id: str) -> Observation
             result.full_scan,
             result.status,
             result.status_reason,
+            top_paths,
+            breach_path,
         )
     snapshot = result.snapshot
     snapshot_id = snapshot.snapshot_id if snapshot is not None else ""
@@ -272,6 +282,20 @@ def _report(result: ObservationResult, baseline_snapshot_id: str) -> Observation
         result.full_scan,
         result.status,
         result.status_reason,
+    )
+
+
+def _snapshot_budget_fields(snapshot: object) -> tuple[tuple[JsonObject, ...], str | None]:
+    top_paths = getattr(snapshot, "budget_top_paths", None)
+    breach_path = getattr(snapshot, "budget_breach_path", None)
+    if not top_paths:
+        return (), breach_path if isinstance(breach_path, str) and breach_path else None
+    return (
+        tuple(
+            {"path": item.path, "bytes": item.total_bytes, "entries": item.total_entries}
+            for item in top_paths
+        ),
+        breach_path if isinstance(breach_path, str) and breach_path else None,
     )
 
 
@@ -354,6 +378,8 @@ def _record_status(root: Path, invocation: CanonicalInvocation, report: Observat
         "provenance_incomplete": report.incomplete,
         "provenance_status": report.status.value,
         "provenance_status_reason": report.status_reason,
+        "provenance_budget_top_paths": list(report.budget_top_paths),
+        "provenance_budget_breach_path": report.budget_breach_path,
     }
     if _mutation_capable(invocation, classification):
         payload["provenance_mutation_capable"] = True
@@ -487,6 +513,8 @@ def _scope_too_large_report(
     if turn is None or turn.get("provenance_status") != ProvenanceStatus.SCOPE_TOO_LARGE.value:
         return None
     reason = turn.get("provenance_status_reason")
+    top_paths = normalize_budget_top_paths(turn.get("provenance_budget_top_paths"))
+    breach_path = normalize_budget_breach_path(turn.get("provenance_budget_breach_path"))
     return ObservationReport(
         "",
         "",
@@ -497,4 +525,6 @@ def _scope_too_large_report(
         ProvenanceReason(reason)
         if isinstance(reason, str) and reason in ProvenanceReason
         else ProvenanceReason.NONE,
+        top_paths,
+        breach_path,
     )

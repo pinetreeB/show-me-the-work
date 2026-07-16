@@ -117,12 +117,21 @@ class ScanIssue:
 
 
 @dataclass(frozen=True, slots=True)
+class ScanBudgetPath:
+    path: str
+    total_bytes: int
+    total_entries: int
+
+
+@dataclass(frozen=True, slots=True)
 class ScanResult:
     entries: tuple[ManifestEntry, ...]
     reparse_observations: tuple[ManifestEntry, ...]
     issues: tuple[ScanIssue, ...]
     status: ProvenanceStatus = ProvenanceStatus.COMPLETE
     status_reason: ProvenanceReason = ProvenanceReason.NONE
+    budget_top_paths: tuple[ScanBudgetPath, ...] = ()
+    budget_breach_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +148,8 @@ class Snapshot:
     full_reconciled_at: str | None = None
     status: ProvenanceStatus = ProvenanceStatus.COMPLETE
     status_reason: ProvenanceReason = ProvenanceReason.NONE
+    budget_top_paths: tuple[ScanBudgetPath, ...] = ()
+    budget_breach_path: str | None = None
 
     @property
     def incomplete(self) -> bool:
@@ -156,3 +167,37 @@ class NetDelta:
     before: ManifestEntry | None
     after: ManifestEntry | None
     mode_changed: bool = False
+
+
+MAX_BUDGET_TOP_PATHS: Final = 3
+
+
+def normalize_budget_top_paths(value: object) -> tuple[dict[str, object], ...]:
+    """ledger에 저장된 provenance_budget_top_paths 원시값을 검증·정규화한다.
+
+    타입이 안 맞거나(비-list), 항목이 dict가 아니거나, path가 빈 문자열이거나,
+    bytes/entries가 음수 정수가 아니면 그 항목은 버린다. 최대 3개까지만 취한다.
+    """
+    if not isinstance(value, (list, tuple)):
+        return ()
+    normalized: list[dict[str, object]] = []
+    for item in value:
+        if len(normalized) >= MAX_BUDGET_TOP_PATHS:
+            break
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        raw_bytes = item.get("bytes")
+        raw_entries = item.get("entries")
+        if not isinstance(path, str) or not path:
+            continue
+        if not isinstance(raw_bytes, int) or isinstance(raw_bytes, bool) or raw_bytes < 0:
+            continue
+        if not isinstance(raw_entries, int) or isinstance(raw_entries, bool) or raw_entries < 0:
+            continue
+        normalized.append({"path": path, "bytes": raw_bytes, "entries": raw_entries})
+    return tuple(normalized)
+
+
+def normalize_budget_breach_path(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None

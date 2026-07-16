@@ -5,6 +5,7 @@ from typing import Final
 
 from .ledger_schema import JsonObject, JsonValue
 from .ledger_v1 import V1_PROJECTION_FIELDS, apply_v1_event, default_ledger, sequence_value
+from .provenance_types import normalize_budget_breach_path, normalize_budget_top_paths
 from .verification_covers import agent_key, attach_covers, record_path_revisions
 
 SNAPSHOT_UNAVAILABLE: Final = "snapshot:unavailable"
@@ -120,6 +121,18 @@ def _update_turn_after_event(turn: JsonObject, payload: Mapping[str, JsonValue])
     status_reason = payload.get("provenance_status_reason")
     if isinstance(status_reason, str):
         turn["provenance_status_reason"] = status_reason
+    if "provenance_budget_top_paths" in payload:
+        top_paths = normalize_budget_top_paths(payload.get("provenance_budget_top_paths"))
+        if top_paths:
+            turn["provenance_budget_top_paths"] = [dict(item) for item in top_paths]
+        else:
+            turn.pop("provenance_budget_top_paths", None)
+    if "provenance_budget_breach_path" in payload:
+        breach_path = normalize_budget_breach_path(payload.get("provenance_budget_breach_path"))
+        if breach_path:
+            turn["provenance_budget_breach_path"] = breach_path
+        else:
+            turn.pop("provenance_budget_breach_path", None)
     if payload.get("provenance_mutation_capable") is True:
         turn["provenance_mutation_capable"] = True
     if payload.get("provenance_remote_mutation") is True:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import stat
@@ -32,6 +32,7 @@ from .provenance_types import (
     NetDelta,
     ProvenanceConfig,
     ProvenanceReason,
+    ScanBudgetPath,
     ScanIssue,
     ScanResult,
     Snapshot,
@@ -48,6 +49,7 @@ __all__ = (
     "ManifestEntry",
     "NetDelta",
     "ProvenanceConfig",
+    "ScanBudgetPath",
     "ScanIssue",
     "ScanResult",
     "Snapshot",
@@ -95,6 +97,10 @@ class _ScanState:
     status_reason: ProvenanceReason
     entry_count: int
     byte_count: int
+    budget_bytes: dict[str, int]
+    budget_entries: dict[str, int]
+    budget_breach_path: str | None
+    last_relative: str
 
     def __init__(self, root: Path) -> None:
         self.directories = [(root, "")]
@@ -106,6 +112,10 @@ class _ScanState:
         self.status_reason = ProvenanceReason.NONE
         self.entry_count = 0
         self.byte_count = 0
+        self.budget_bytes = {}
+        self.budget_entries = {}
+        self.budget_breach_path = None
+        self.last_relative = ""
 
 
 def snapshot_workspace(
@@ -140,10 +150,18 @@ def snapshot_workspace_with_options(root: Path, options: SnapshotScanOptions) ->
         budget=budget,
         deadline=time.monotonic() + max(0.0, budget.max_seconds),
     )
-    return build_snapshot(
+    scan_result = _scan(context)
+    snapshot = build_snapshot(
         SnapshotBuildContext(context.root, context.config, context.windows, os.name),
-        _scan(context),
+        scan_result,
     )
+    if scan_result.budget_top_paths or scan_result.budget_breach_path:
+        snapshot = replace(
+            snapshot,
+            budget_top_paths=scan_result.budget_top_paths,
+            budget_breach_path=scan_result.budget_breach_path,
+        )
+    return snapshot
 
 
 def workspace_scope_policy_id(root: Path, windows: bool | None = None) -> str:
@@ -177,7 +195,10 @@ def _scan(context: _ScanContext) -> ScanResult:
             state.issues.append(ScanIssue(parent_relative, "unreadable_directory"))
             continue
     if state.status is ProvenanceStatus.SCOPE_TOO_LARGE:
-        return ScanResult((), (), (), state.status, state.status_reason)
+        return ScanResult(
+            (), (), (), state.status, state.status_reason,
+            _top_budget_paths(state), state.budget_breach_path,
+        )
     for captured in capture_regular_many(tuple(state.regular_requests), context.deadline):
         if captured.status_reason:
             return ScanResult(
@@ -186,10 +207,15 @@ def _scan(context: _ScanContext) -> ScanResult:
                 (),
                 ProvenanceStatus.SCOPE_TOO_LARGE,
                 captured.status_reason,
+                _top_budget_paths(state),
+                state.budget_breach_path,
             )
         _append_capture(captured, state)
     if _deadline_exceeded(context, state):
-        return ScanResult((), (), (), state.status, state.status_reason)
+        return ScanResult(
+            (), (), (), state.status, state.status_reason,
+            _top_budget_paths(state), state.budget_breach_path,
+        )
     return ScanResult(
         tuple(state.entries),
         tuple(state.observations),
@@ -205,6 +231,7 @@ def _visit_path(
     context: _ScanContext,
     state: _ScanState,
 ) -> None:
+    state.last_relative = relative
     try:
         metadata = child.stat(follow_symlinks=False)
         is_link = child.is_symlink()
@@ -222,7 +249,7 @@ def _visit_path(
         if stat.S_ISREG(mode):
             if not _in_scope(relative, context):
                 return
-            if not _reserve_entry(metadata.st_size, context, state):
+            if not _reserve_entry(metadata.st_size, relative, context, state):
                 return
             key = relative.casefold() if context.windows else relative
             previous = None if key in context.force_keys else context.previous_entries.get(key)
@@ -238,7 +265,7 @@ def _visit_path(
     if info.is_link:
         if not _in_scope(relative, context):
             return
-        if not _reserve_entry(metadata.st_size, context, state):
+        if not _reserve_entry(metadata.st_size, relative, context, state):
             return
         _append_capture(capture_symlink(_capture_request(info)), state)
         return
@@ -258,7 +285,7 @@ def _visit_reparse(
     if stat.S_ISDIR(info.metadata.st_mode):
         state.issues.append(ScanIssue(info.relative, "unstable_reparse"))
         return
-    if not _reserve_entry(info.metadata.st_size, context, state):
+    if not _reserve_entry(info.metadata.st_size, info.relative, context, state):
         return
     captured = capture_regular(_capture_request(info), context.deadline)
     if captured.entry is None:
@@ -291,20 +318,51 @@ def _deadline_exceeded(context: _ScanContext, state: _ScanState) -> bool:
         return False
     state.status = ProvenanceStatus.SCOPE_TOO_LARGE
     state.status_reason = ProvenanceReason.DEADLINE
+    if state.budget_breach_path is None:
+        state.budget_breach_path = state.last_relative or None
     return True
 
 
-def _reserve_entry(size: int, context: _ScanContext, state: _ScanState) -> bool:
+def _budget_prefix(relative: str, max_depth: int = 3) -> str:
+    segments = relative.split("/")
+    return "/".join(segments[:max_depth])
+
+
+def _accumulate_budget_prefix(state: _ScanState, relative: str, size: int) -> None:
+    prefix = _budget_prefix(relative)
+    state.budget_bytes[prefix] = state.budget_bytes.get(prefix, 0) + size
+    state.budget_entries[prefix] = state.budget_entries.get(prefix, 0) + 1
+
+
+def _top_budget_paths(state: _ScanState, limit: int = 3) -> tuple[ScanBudgetPath, ...]:
+    ranked = sorted(
+        state.budget_bytes.keys(),
+        key=lambda prefix: (
+            -state.budget_bytes[prefix],
+            -state.budget_entries.get(prefix, 0),
+            prefix,
+        ),
+    )
+    return tuple(
+        ScanBudgetPath(prefix, state.budget_bytes[prefix], state.budget_entries.get(prefix, 0))
+        for prefix in ranked[:limit]
+    )
+
+
+def _reserve_entry(size: int, relative: str, context: _ScanContext, state: _ScanState) -> bool:
     if state.entry_count + 1 > context.budget.max_entries:
         state.status = ProvenanceStatus.SCOPE_TOO_LARGE
         state.status_reason = ProvenanceReason.ENTRY_LIMIT
+        state.budget_breach_path = relative
         return False
     if state.byte_count + max(0, size) > context.budget.max_bytes:
         state.status = ProvenanceStatus.SCOPE_TOO_LARGE
         state.status_reason = ProvenanceReason.BYTE_LIMIT
+        state.budget_breach_path = relative
         return False
     state.entry_count += 1
     state.byte_count += max(0, size)
+    _accumulate_budget_prefix(state, relative, max(0, size))
     return True
 
 
