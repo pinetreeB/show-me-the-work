@@ -6,7 +6,14 @@ from pathlib import Path
 
 from .agent_log import ledger_transaction
 from .provenance import (
+    ChangeOperation,
+    NetDelta,
     calculate_net_delta,
+)
+from .provenance_policy import (
+    is_path_in_scope,
+    is_user_config_excluded,
+    load_provenance_config,
 )
 from .provenance_lifecycle_types import (
     Invocation,
@@ -16,7 +23,7 @@ from .provenance_lifecycle_types import (
     ObservedChange,
     TurnState,
 )
-from .provenance_observation import pending_change_ids, record_deltas
+from .provenance_observation import change_id_for, pending_change_ids, record_deltas
 from .provenance_store import (
     SnapshotStoreError,
     delete_turn_baseline,
@@ -31,7 +38,11 @@ from .provenance_turn_resume import (
     TurnBootstrapError,
     load_resumed_turn,
 )
-from .provenance_lifecycle_start import can_fast_start, candidate_paths as candidate_paths_for_root
+from .provenance_lifecycle_start import (
+    can_fast_start,
+    candidate_paths as candidate_paths_for_root,
+    trusted_default_policy_migration,
+)
 from .provenance_lifecycle_scope import prime_candidate_scope, scan_snapshot
 from .project_root import is_user_home_root
 from .provenance_types import ProvenanceReason, ProvenanceStatus, Snapshot
@@ -190,7 +201,7 @@ class ProvenanceLifecycle:
             record_deltas(
                 self._state,
                 ObservationInput(
-                    calculate_net_delta(turn.baseline, self._state.current),
+                    self._observable_deltas(turn.baseline, self._state.current),
                     invocation.agent,
                     source,
                 ),
@@ -219,7 +230,7 @@ class ProvenanceLifecycle:
             record_deltas(
                 self._state,
                 ObservationInput(
-                    calculate_net_delta(turn.baseline, self._state.current),
+                    self._observable_deltas(turn.baseline, self._state.current),
                     agent,
                     "external",
                 ),
@@ -302,8 +313,14 @@ class ProvenanceLifecycle:
             if self._state.generation != generation:
                 return None
             before = self._state.current
-            unchanged = before if before is not None and before.snapshot_id == snapshot.snapshot_id else None
-            deltas = () if before is None or unchanged is not None else calculate_net_delta(before, snapshot)
+            unchanged = (
+                before
+                if before is not None
+                and before.snapshot_id == snapshot.snapshot_id
+                and before.scope_policy_id == snapshot.scope_policy_id
+                else None
+            )
+            deltas = () if before is None or unchanged is not None else self._observable_deltas(before, snapshot)
             changes = record_deltas(self._state, ObservationInput(deltas, agent, source))
             reconciled_at = unchanged.full_reconciled_at if unchanged is not None else None
             snapshot = replace(snapshot, full_reconciled_at=reconciled_at)
@@ -324,8 +341,36 @@ class ProvenanceLifecycle:
             self._state.current_is_stop_full = reconciled_at is not None
             return self._result(snapshot, changes, full_scan, 0)
 
+    def _observable_deltas(
+        self,
+        before: Snapshot,
+        snapshot: Snapshot,
+    ) -> tuple[NetDelta, ...]:
+        deltas = calculate_net_delta(before, snapshot)
+        if not trusted_default_policy_migration(before, self._root):
+            return deltas
+        config = load_provenance_config(self._root)
+        return tuple(
+            delta
+            for delta in deltas
+            if not (
+                delta.op is ChangeOperation.DELETE
+                and not is_path_in_scope(delta.path, config)
+                and not is_user_config_excluded(delta.path, config)
+            )
+        )
+
     def _turn_result(self, result: ObservationResult, turn: TurnState, stop_cap_reserved: bool) -> ObservationResult:
-        pending = pending_change_ids(self._state, turn)
+        current = self._state.current
+        if current is not None and trusted_default_policy_migration(turn.baseline, self._root):
+            pending = tuple(
+                sorted(
+                    change_id_for(delta)
+                    for delta in self._observable_deltas(turn.baseline, current)
+                )
+            )
+        else:
+            pending = pending_change_ids(self._state, turn)
         return replace(
             result,
             pending_change_ids=pending,

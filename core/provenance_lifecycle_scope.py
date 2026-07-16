@@ -7,7 +7,13 @@ import subprocess
 
 from .agent_log import ledger_transaction
 from .provenance import SnapshotScanOptions, snapshot_workspace_with_options
-from .provenance_policy import is_hard_excluded, is_path_in_scope, load_provenance_config
+from .provenance_policy import (
+    is_hard_excluded,
+    is_path_in_scope,
+    is_user_config_excluded,
+    load_provenance_config,
+)
+from .provenance_lifecycle_start import trusted_default_policy_migration
 from .provenance_store import SnapshotStoreError, save_turn_baseline_from_current, save_workspace_current
 from .provenance_types import (
     DEFAULT_FULL_SCAN_SECONDS,
@@ -101,7 +107,13 @@ def persisted_force_paths(root: Path, previous: Snapshot | None) -> frozenset[st
     if previous is None:
         return frozenset()
     config = load_provenance_config(root)
-    return frozenset(entry.path for entry in previous.entries if not is_path_in_scope(entry.path, config))
+    trusted_migration = trusted_default_policy_migration(previous, root)
+    return frozenset(
+        entry.path
+        for entry in previous.entries
+        if not is_path_in_scope(entry.path, config)
+        and (not trusted_migration or is_user_config_excluded(entry.path, config))
+    )
 
 
 def git_tracked_paths(root: Path) -> frozenset[str]:
