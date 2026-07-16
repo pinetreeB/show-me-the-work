@@ -137,6 +137,13 @@ snap = scan_snapshot(Path(r'C:\Users\rotat\material-erp'), None, frozenset(), Tr
 - 세션 cwd가 다른 곳(예: 홈)이면 **Bash의 `cd`만으로는 그 루트에서 훅이 돌지 않는다** — 루트는 훅 payload의 `project_root`/cwd에서 결정된다(`adapters/claude_code/common.py:42-52`).
 - 따라서 **"ledger에 아직 scope_too_large가 보인다"는 수정 실패의 증거가 아니다.** 수정 여부는 스캐너 실구동으로 판정할 것. 조사 시 이 둘을 혼동하면 멀쩡한 수정을 되돌리게 된다.
 
+### ⚠️ 같은 날 추가 실측 — 검증이 원장에 기록되지 않는 두 가지 함정
+
+Stop 게이트("변경 파일에 검증 증거 없음")를 해소하려고 검증을 돌렸는데도 `verification_results`가 비어 있거나 `success=False`로 남는 두 경로를 실측했다.
+
+1. **셸 연산자가 있으면 검증으로 인식조차 안 된다** (`core/verification.py:58`): `cd … && python verify.py`, `python verify.py | tail`, `…; RC=$?` 전부 `is_verification_command()`에서 즉시 탈락. 원장에 아무 기록도 안 남는다. **게이트용 검증 명령은 연산자 없이 단독 실행할 것.** (부수 함정: `python … | tail` 뒤의 `$?`는 tail의 exit code라 실패가 0으로 위장된다 — 같은 습관이 두 사고를 동시에 만든다.)
+2. **성공해도 출력이 한국어뿐이면 `success=False`로 기록된다** (`core/verification.py:52-53`, `adapters/claude_code/common.py:106-123`): Claude Code Bash는 이 훅에 exit_code를 주지 않아 텍스트 폴백(`text_indicates_success`)으로 판정하는데, 성공 토큰이 `passed`/`verify_ok`/`success`/`all tests`/`✓`/단어 `OK` 뿐이다. "모든 정합성 검증 통과"는 물론 **"ALL PASS"조차 매치되지 않는다**("passed" 아님 — 실측 3회 연속 False). 해법: 검증 스크립트 성공 출력에 `OK` 또는 `passed`를 반드시 포함. (v-next: OK_SIGNALS에 "pass" 계열 보강 + 최소한 한국어 "통과"·"성공" 추가 검토 — 한국어 프로젝트에서 게이트가 성공을 구조적으로 못 알아본다.)
+
 ## fable-lite 관점 함의 (v-next 백로그)
 
 1. **기본 SOFT_EXCLUDES에 프레임워크 빌드 산출물 추가 검토** (`core/provenance_policy.py:24-32`). 현재 목록은 Python/Node 의존성 위주(`node_modules`, `.venv`, `__pycache__`)이고 **빌드 출력이 없다**. 후보: `.next/**`, `dist/**`, `build/**`, `out/**`, `target/**`, `.turbo/**`, `.svelte-kit/**`, `coverage/**`. Next.js 프로젝트에서 `.next`는 사실상 100% 존재하므로, 기본 제외가 없으면 **모든 Next 프로젝트가 본 건을 겪는다**. ★ 우선순위 높음 — 재현성이 높고 사용자가 원인을 찾기 어렵다.
