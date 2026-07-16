@@ -29,8 +29,16 @@ SOFT_EXCLUDES: Final = (
     ".pytest_cache/**",
     ".mypy_cache/**",
     ".ruff_cache/**",
+    ".next/cache/**",
+    ".turbo/**",
+    ".parcel-cache/**",
+    ".angular/cache/**",
+    ".nuxt/**",
+    ".svelte-kit/**",
 )
-SOFT_EXCLUDE_DIRS: Final = frozenset(pattern.removesuffix("/**") for pattern in SOFT_EXCLUDES)
+SOFT_EXCLUDE_CHAINS: Final = tuple(
+    tuple(pattern.removesuffix("/**").split("/")) for pattern in SOFT_EXCLUDES
+)
 CONFIG_RELATIVE_PATH: Final = ".fable-lite/provenance-config.json"
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
@@ -88,7 +96,16 @@ def is_path_in_scope(path: str, config: ProvenanceConfig) -> bool:
         return True
     if _matches_any(path, config.exclude):
         return False
-    return not _has_soft_excluded_segment(path)
+    return not _has_soft_excluded_chain(path)
+
+
+def is_user_config_excluded(path: str, config: ProvenanceConfig) -> bool:
+    return (
+        path != CONFIG_RELATIVE_PATH
+        and not is_hard_excluded(path)
+        and not _matches_any(path, config.include)
+        and _matches_any(path, config.exclude)
+    )
 
 
 def is_hard_excluded(path: str) -> bool:
@@ -107,7 +124,7 @@ def should_descend(path: str, config: ProvenanceConfig) -> bool:
         return False
     if _matches_any(path, config.include):
         return True
-    if _matches_any(path, config.exclude) or _has_soft_excluded_segment(path):
+    if _matches_any(path, config.exclude) or _has_soft_excluded_chain(path):
         return _has_included_descendant(path, config.include)
     return True
 
@@ -139,8 +156,20 @@ def _first_segment(path: str) -> str:
     return normalized.partition("/")[0]
 
 
-def _has_soft_excluded_segment(path: str) -> bool:
-    return any(segment in SOFT_EXCLUDE_DIRS for segment in path.split("/"))
+def _has_soft_excluded_chain(path: str) -> bool:
+    segments = tuple(segment for segment in path.replace("\\", "/").split("/") if segment)
+    return any(_contains_segment_chain(segments, chain) for chain in SOFT_EXCLUDE_CHAINS)
+
+
+def _contains_segment_chain(
+    segments: tuple[str, ...],
+    chain: tuple[str, ...],
+) -> bool:
+    chain_length = len(chain)
+    return any(
+        segments[index : index + chain_length] == chain
+        for index in range(len(segments) - chain_length + 1)
+    )
 
 
 def _matches(path: str, pattern: str) -> bool:

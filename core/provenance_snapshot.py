@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Final
 
 from .provenance_policy import canonical_manifest_key
 from .provenance_types import (
@@ -17,6 +18,7 @@ from .provenance_types import (
 )
 
 SCANNER_SCHEMA_VERSION = 2
+DEFAULT_POLICY_REVISION: Final = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,13 +91,23 @@ def _snapshot_id(entries: tuple[ManifestEntry, ...]) -> str:
 
 
 def _scope_policy_id(context: SnapshotBuildContext) -> str:
+    return _scope_policy_id_for_revision(context, DEFAULT_POLICY_REVISION)
+
+
+def _scope_policy_id_for_revision(
+    context: SnapshotBuildContext,
+    default_policy_revision: int | None,
+) -> str:
+    payload = {
+        "schema": SCANNER_SCHEMA_VERSION,
+        "include": context.config.include,
+        "exclude": context.config.exclude,
+        "casefolded": context.windows,
+    }
+    if default_policy_revision is not None:
+        payload["default_policy_revision"] = default_policy_revision
     encoded = json.dumps(
-        {
-            "schema": SCANNER_SCHEMA_VERSION,
-            "include": context.config.include,
-            "exclude": context.config.exclude,
-            "casefolded": context.windows,
-        },
+        payload,
         separators=(",", ":"),
         sort_keys=True,
     )
@@ -104,6 +116,18 @@ def _scope_policy_id(context: SnapshotBuildContext) -> str:
 
 def scope_policy_id(context: SnapshotBuildContext) -> str:
     return _scope_policy_id(context)
+
+
+def is_trusted_default_policy_migration(
+    context: SnapshotBuildContext,
+    previous_scope_policy_id: str,
+) -> bool:
+    previous_policy_ids = {
+        _scope_policy_id_for_revision(context, revision)
+        for revision in range(1, DEFAULT_POLICY_REVISION)
+    }
+    previous_policy_ids.add(_scope_policy_id_for_revision(context, None))
+    return previous_scope_policy_id in previous_policy_ids
 
 
 def _digest_text(value: str) -> str:
