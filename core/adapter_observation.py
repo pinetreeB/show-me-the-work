@@ -15,6 +15,7 @@ from .provenance_turn_resume import MissingTurnBaselineError, TurnBootstrapError
 from .provenance_types import (
     ProvenanceReason,
     ProvenanceStatus,
+    Snapshot,
     normalize_budget_breach_path,
     normalize_budget_top_paths,
 )
@@ -82,6 +83,9 @@ class ObservationReport:
     status_reason: ProvenanceReason = ProvenanceReason.NONE
     budget_top_paths: tuple[JsonObject, ...] = ()
     budget_breach_path: str | None = None
+    issue_sample: tuple[JsonObject, ...] = ()
+    rebase_count: int = 0
+    error_kind: str = ""
 
 
 def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
@@ -91,8 +95,8 @@ def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport
         lifecycle = ProvenanceLifecycle(root)
         with scan_progress(lifecycle.observed_file_count):
             result = lifecycle.start_turn(invocation.agent_key, invocation.turn_id)
-    except (KeyError, OSError, SnapshotStoreError):
-        return _incomplete_report()
+    except (KeyError, OSError, SnapshotStoreError) as exc:
+        return _incomplete_report(error_kind=type(exc).__name__)
     return _report(result, result.snapshot.snapshot_id if result.snapshot is not None else "")
 
 
@@ -132,8 +136,8 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
         )
         _record_status(root, invocation, report)
         return report
-    except (KeyError, OSError, SnapshotStoreError):
-        report = _incomplete_report()
+    except (KeyError, OSError, SnapshotStoreError) as exc:
+        report = _incomplete_report(error_kind=type(exc).__name__)
         _record_status(root, invocation, report)
         return report
     _record_invocation(root, invocation, covers)
@@ -160,8 +164,8 @@ def observe_post_tool(root: Path, invocation: CanonicalInvocation) -> Observatio
         )
         with scan_progress(lifecycle.observed_file_count):
             result = lifecycle.post_tool(started, _source(invocation))
-    except (KeyError, OSError, SnapshotStoreError):
-        report = _incomplete_report()
+    except (KeyError, OSError, SnapshotStoreError) as exc:
+        report = _incomplete_report(error_kind=type(exc).__name__)
         _record_status(root, invocation, report)
         return report
     report = _report(result, "")
@@ -188,13 +192,13 @@ def finish_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRepor
             turns.get(invocation.agent_key), dict
         ):
             return ObservationReport("", "", (), False, True)
-        report = _incomplete_report(True)
+        report = _incomplete_report(True, error_kind="MissingTurnBaselineError")
         _record_status(root, invocation, report)
         return report
     except KeyError:
         return ObservationReport("", "", (), False, True)
-    except (OSError, SnapshotStoreError):
-        report = _incomplete_report(True)
+    except (OSError, SnapshotStoreError) as exc:
+        report = _incomplete_report(True, error_kind=type(exc).__name__)
         _record_status(root, invocation, report)
         return report
     report = _report(result, "")
@@ -221,8 +225,8 @@ def reconcile_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRe
                 invocation.agent_key,
                 invocation.turn_id,
             )
-    except (KeyError, OSError, SnapshotStoreError):
-        report = _incomplete_report(True)
+    except (KeyError, OSError, SnapshotStoreError) as exc:
+        report = _incomplete_report(True, error_kind=type(exc).__name__)
         _record_status(root, invocation, report)
         return report
     report = _report(result, "")
@@ -258,6 +262,8 @@ def _report(result: ObservationResult, baseline_snapshot_id: str) -> Observation
             result.full_scan,
             result.status,
             result.status_reason,
+            issue_sample=_issue_sample(result.snapshot),
+            rebase_count=result.rebase_count,
         )
     if result.status is ProvenanceStatus.SCOPE_TOO_LARGE:
         top_paths, breach_path = _snapshot_budget_fields(result.snapshot)
@@ -299,7 +305,7 @@ def _snapshot_budget_fields(snapshot: object) -> tuple[tuple[JsonObject, ...], s
     )
 
 
-def _incomplete_report(full_reconcile: bool = False) -> ObservationReport:
+def _incomplete_report(full_reconcile: bool = False, error_kind: str = "") -> ObservationReport:
     return ObservationReport(
         "",
         "",
@@ -308,6 +314,15 @@ def _incomplete_report(full_reconcile: bool = False) -> ObservationReport:
         full_reconcile,
         ProvenanceStatus.INCOMPLETE,
         ProvenanceReason.OBSERVATION_ERROR,
+        error_kind=error_kind,
+    )
+
+
+def _issue_sample(snapshot: Snapshot | None, limit: int = 5) -> tuple[JsonObject, ...]:
+    if snapshot is None or not snapshot.issues:
+        return ()
+    return tuple(
+        {"path": issue.path, "reason": issue.reason} for issue in snapshot.issues[:limit]
     )
 
 
@@ -381,6 +396,12 @@ def _record_status(root: Path, invocation: CanonicalInvocation, report: Observat
         "provenance_budget_top_paths": list(report.budget_top_paths),
         "provenance_budget_breach_path": report.budget_breach_path,
     }
+    if report.issue_sample:
+        payload["provenance_issue_sample"] = list(report.issue_sample)
+    if report.rebase_count:
+        payload["provenance_rebase_count"] = report.rebase_count
+    if report.error_kind:
+        payload["provenance_error_kind"] = report.error_kind
     if _mutation_capable(invocation, classification):
         payload["provenance_mutation_capable"] = True
     target_ids = _remote_target_ids(invocation, classification)
