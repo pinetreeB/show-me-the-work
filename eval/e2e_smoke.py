@@ -27,13 +27,25 @@ JsonObject: TypeAlias = dict[str, JsonValue]
 results: list[tuple[bool, str]] = []
 
 
+def hook_environment(proj: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    project = pathlib.Path(proj)
+    environment["CLAUDE_PLUGIN_DATA"] = str(project.parent / "plugin-data")
+    environment["CLAUDE_PROJECT_DIR"] = str(project)
+    environment["PYTHONUTF8"] = "1"
+    environment["SMTW_TEST_FORCE_ENABLE"] = "1"
+    return environment
+
+
 def run_hook(script: str, payload: JsonObject) -> JsonObject:
+    proj = str(payload.get("cwd", ""))
     proc = subprocess.run(
         [sys.executable, str(ADAPT / script)],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
         encoding="utf-8",
+        env=hook_environment(proj),
     )
     out = proc.stdout.strip()
     try:
@@ -46,6 +58,14 @@ def check(name: str, cond: bool, detail: str = "") -> None:
     results.append((cond, f"{name}: {'PASS' if cond else 'FAIL'} {detail}"))
 
 
+def permission_decision(result: JsonObject) -> str:
+    specific = result.get("hookSpecificOutput")
+    if not isinstance(specific, dict):
+        return ""
+    decision = specific.get("permissionDecision")
+    return decision if isinstance(decision, str) else ""
+
+
 def make_transcript(proj: str, assistant_text: str) -> str:
     """assistant 레코드 1개를 담은 JSONL transcript를 만들어 경로 반환."""
     project = pathlib.Path(proj)
@@ -56,7 +76,9 @@ def make_transcript(proj: str, assistant_text: str) -> str:
 
 
 def main() -> int:
-    proj = tempfile.mkdtemp()
+    workspace = tempfile.mkdtemp(prefix="show-me-the-work-e2e-")
+    proj = os.path.join(workspace, "project")
+    os.makedirs(proj)
 
     # E2E-1: 한국어 디버그 라우팅 + N1 배선 (AC5·AC3·AC10)
     r = run_hook("user_prompt_submit.py", {"hook_event_name": "UserPromptSubmit", "cwd": proj, "prompt": "왜 로그인이 안 돼"})
@@ -92,12 +114,12 @@ def main() -> int:
     os.makedirs(os.path.dirname(sqlp), exist_ok=True)
     r = run_hook("pre_tool_use.py", {"hook_event_name": "PreToolUse", "tool_name": "Edit", "cwd": proj,
                                      "tool_input": {"file_path": sqlp, "new_string": "DROP TABLE users;"}})
-    check("AC8 R1 spec 없는 high-risk 차단", r.get("decision") == "block", f"({r.get('decision')})")
+    check("AC8 R1 spec 없는 high-risk 차단", permission_decision(r) == "deny", f"({permission_decision(r)})")
 
     # E2E-3b: R1이 Bash 명령도 검사 (H3)
     r = run_hook("pre_tool_use.py", {"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": proj,
                                      "tool_input": {"command": "psql -c 'DROP TABLE users'"}})
-    check("H3 R1 Bash 명령 검사", r.get("decision") == "block", f"({r.get('decision')})")
+    check("H3 R1 Bash 명령 검사", permission_decision(r) == "deny", f"({permission_decision(r)})")
 
     # E2E-4: N3 범위 이탈 경고 (AC4) — 요청은 auth.py인데 README를 수정
     run_hook("user_prompt_submit.py", {"hook_event_name": "UserPromptSubmit", "cwd": proj, "prompt": "auth.py 로그인 버그 고쳐줘"})
@@ -122,9 +144,11 @@ def main() -> int:
     check("AC1 ledger 변경 기록(파일 검증)", any("app.py" in str(s) for s in seen), f"(seen={len(seen)}건)")
 
     # E2E-5: fail-open — 깨진 JSON에도 세션 생존 (AC9)
-    for script in ("user_prompt_submit.py", "pre_tool_use.py", "post_tool_use.py", "stop.py"):
-        proc = subprocess.run([sys.executable, str(ADAPT / script)], input="{ broken", capture_output=True, text=True, encoding="utf-8")
-        ok = proc.returncode == 0 and "fail-open" in proc.stdout
+    for index, script in enumerate(("user_prompt_submit.py", "pre_tool_use.py", "post_tool_use.py", "stop.py")):
+        proc = subprocess.run([sys.executable, str(ADAPT / script)], input="{ broken", capture_output=True, text=True, encoding="utf-8", env=hook_environment(proj))
+        output = json.loads(proc.stdout)
+        visible = isinstance(output, dict) and "fail-open" in str(output.get("systemMessage", ""))
+        ok = proc.returncode == 0 and (visible if index == 0 else output == {})
         check(f"AC9 fail-open [{script}]", ok, f"(rc={proc.returncode})")
 
     # 발견A 회귀: Stop allow 경로는 additionalContext를 채우지 않는다 (반복 재호출 유발 방지)
@@ -149,7 +173,7 @@ def main() -> int:
     check("상태파일 .fable-lite/ 격리", not strays, f"(루트 잔존: {strays})")
 
     import shutil
-    shutil.rmtree(proj, ignore_errors=True)
+    shutil.rmtree(workspace, ignore_errors=True)
 
     passed = sum(1 for ok, _ in results if ok)
     print(f"\n=== show-me-the-work E2E 스모크: {passed}/{len(results)} ===")

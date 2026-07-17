@@ -153,7 +153,7 @@ After the plugin is registered in a marketplace, `/plugin marketplace add pinetr
 
 ```
 python -m pytest tests/ -q      # unit tests
-python eval/run_probes.py --strict  # deterministic probe suite; 15 pass, 0 fail, 3 manual
+python eval/run_probes.py --strict  # deterministic probe suite; 17 pass, 0 fail, 3 manual
 python eval/e2e_smoke.py        # full hook-chain smoke (real CC payload schema)
 ```
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,12 +18,16 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 
 def run_runner(output: Path) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    for key in ("CLAUDE_PLUGIN_DATA", "CLAUDE_PROJECT_DIR", "SMTW_TEST_FORCE_ENABLE"):
+        _ = environment.pop(key, None)
     return subprocess.run(
         [sys.executable, str(RUNNER), "--output", str(output)],
         check=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        env=environment,
     )
 
 
@@ -73,6 +78,19 @@ def test_probe_runner_writes_json_and_ascii_summary(
     assert report["result"] in {"PASS", "FAIL"}
 
 
+def test_probe_runner_is_green_without_external_activation_environment(
+    runner_execution: tuple[subprocess.CompletedProcess[str], Path, dict[str, JsonValue]],
+) -> None:
+    # Given/When: the probe runner starts in the same unconfigured environment as CI.
+    process, _, report = runner_execution
+
+    # Then: its own fixtures exercise active hooks and every deterministic probe passes.
+    summary = as_object(report["summary"])
+    assert process.returncode == 0, process.stderr
+    assert report["result"] == "PASS"
+    assert summary["fail"] == 0
+
+
 def test_probe_runner_reports_all_probe_ids_and_ab_shape(
     runner_execution: tuple[subprocess.CompletedProcess[str], Path, dict[str, JsonValue]],
 ) -> None:
@@ -81,14 +99,14 @@ def test_probe_runner_reports_all_probe_ids_and_ab_shape(
 
     results = as_list(report["results"])
     ids = {as_str(as_object(item)["id"]) for item in results}
-    assert ids == {f"PRB-{number:02d}" for number in range(1, 19)}
+    assert ids == {f"PRB-{number:02d}" for number in range(1, 21)}
 
     automatic = [as_object(item) for item in results if as_object(item)["status"] != "manual"]
     manual_ids = {
         as_str(as_object(item)["id"]) for item in results if as_object(item)["status"] == "manual"
     }
-    assert {"PRB-01", "PRB-04", "PRB-11"}.issubset(manual_ids)
-    assert {"PRB-03", "PRB-05", "PRB-08", "PRB-10", "PRB-16", "PRB-17"}.issubset(
+    assert manual_ids == {"PRB-01", "PRB-04", "PRB-11"}
+    assert {"PRB-03", "PRB-05", "PRB-08", "PRB-10", "PRB-16", "PRB-17", "PRB-19", "PRB-20"}.issubset(
         {as_str(item["id"]) for item in automatic}
     )
 
