@@ -33,7 +33,9 @@ def run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def run_hook(script: Path, payload: HookPayload | str, *argv: str) -> HookOutput:
-    raw_input = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    raw_input = (
+        payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    )
     process = subprocess.run(
         [sys.executable, str(script), *argv],
         input=raw_input,
@@ -63,7 +65,11 @@ def launcher_command_prefix() -> str:
 
 
 def ambiguous_prompt_payload(tmp_path: Path) -> HookPayload:
-    return {"cwd": str(tmp_path), "prompt": "이거 알아서 고쳐줘", "session_id": "s-intent"}
+    return {
+        "cwd": str(tmp_path),
+        "prompt": "이거 알아서 고쳐줘",
+        "session_id": "s-intent",
+    }
 
 
 def edit_payload(tmp_path: Path) -> HookPayload:
@@ -75,12 +81,16 @@ def edit_payload(tmp_path: Path) -> HookPayload:
     }
 
 
-def test_claude_intent_gate_blocks_edit_until_intent_cli_set_and_clears_old_intent(tmp_path: Path) -> None:
+def test_claude_intent_gate_blocks_edit_until_intent_cli_set_and_clears_old_intent(
+    tmp_path: Path,
+) -> None:
     state_dir = tmp_path / ".fable-lite"
     state_dir.mkdir()
     (state_dir / "intent.json").write_text("{}", encoding="utf-8")
 
-    prompt_result = run_hook(CLAUDE / "user_prompt_submit.py", ambiguous_prompt_payload(tmp_path))
+    prompt_result = run_hook(
+        CLAUDE / "user_prompt_submit.py", ambiguous_prompt_payload(tmp_path)
+    )
     pre_block = run_hook(CLAUDE / "pre_tool_use.py", edit_payload(tmp_path))
     set_result = run_cli(
         [
@@ -108,14 +118,19 @@ def test_claude_intent_gate_blocks_edit_until_intent_cli_set_and_clears_old_inte
     assert "intent-interview" in packs
     assert ledger["intent_required"] is True
     assert ledger["ambiguity_score"] == 4
-    assert pre_block["decision"] == "block"
-    assert "의도" in str(pre_block["reason"])
-    assert launcher_command_prefix() in str(pre_block["reason"])
+    pre_block_output = object_value(pre_block["hookSpecificOutput"])
+    assert pre_block_output["permissionDecision"] == "deny"
+    assert "의도" in str(pre_block_output["permissionDecisionReason"])
+    assert launcher_command_prefix() in str(
+        pre_block_output["permissionDecisionReason"]
+    )
     assert set_result.returncode == 0
     assert "decision" not in pre_allow
 
 
-def test_claude_intent_gate_blocks_at_most_twice_and_never_blocks_bash(tmp_path: Path) -> None:
+def test_claude_intent_gate_blocks_at_most_twice_and_never_blocks_bash(
+    tmp_path: Path,
+) -> None:
     run_hook(CLAUDE / "user_prompt_submit.py", ambiguous_prompt_payload(tmp_path))
     first = run_hook(CLAUDE / "pre_tool_use.py", edit_payload(tmp_path))
     second = run_hook(CLAUDE / "pre_tool_use.py", edit_payload(tmp_path))
@@ -131,21 +146,27 @@ def test_claude_intent_gate_blocks_at_most_twice_and_never_blocks_bash(tmp_path:
     )
     ledger = read_ledger(tmp_path)
 
-    assert first["decision"] == "block"
-    assert second["decision"] == "block"
+    first_output = object_value(first["hookSpecificOutput"])
+    second_output = object_value(second["hookSpecificOutput"])
+    assert first_output["permissionDecision"] == "deny"
+    assert second_output["permissionDecision"] == "deny"
     assert "decision" not in third
     assert "decision" not in bash
     assert ledger["intent_blocks"] == 2
 
 
-def test_codex_intent_gate_records_prompt_and_blocks_apply_patch(tmp_path: Path) -> None:
+def test_codex_intent_gate_records_prompt_and_blocks_apply_patch(
+    tmp_path: Path,
+) -> None:
     run_hook(CODEX / "user_prompt_submit.py", ambiguous_prompt_payload(tmp_path))
     result = run_hook(
         CODEX / "pre_tool_use.py",
         {
             "cwd": str(tmp_path),
             "tool_name": "apply_patch",
-            "tool_input": {"command": "*** Begin Patch\n*** Add File: app.py\n+print('ok')\n*** End Patch\n"},
+            "tool_input": {
+                "command": "*** Begin Patch\n*** Add File: app.py\n+print('ok')\n*** End Patch\n"
+            },
             "session_id": "s-intent",
         },
     )
@@ -189,4 +210,4 @@ def test_antigravity_intent_gate_records_prompt_and_blocks_edit(tmp_path: Path) 
 def test_intent_hooks_fail_open_on_malformed_payload() -> None:
     result = run_hook(CLAUDE / "pre_tool_use.py", "{not-json")
 
-    assert str(result["systemMessage"]).startswith("[smtw] fail-open")
+    assert str(result["systemMessage"]).startswith("[smtw] health: fail-open")
