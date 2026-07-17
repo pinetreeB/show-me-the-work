@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from adapters.claude_code import pre_tool_use, session_registry
+from adapters.claude_code.bootstrap import HookContext
+from adapters.claude_code.session_registry import load_turn, save_turn
 from claude_hook_support import (
     HookHarness,
     JsonObject,
@@ -21,6 +25,29 @@ def _prompt(root: Path, session_id: str, text: str = "현재 상태 알려줘") 
         "session_id": session_id,
         "prompt_id": f"prompt-{session_id}",
     }
+
+
+def _quick_context(root: Path, data_dir: Path, session_id: str) -> HookContext:
+    payload: JsonObject = {
+        "cwd": str(root),
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "app.py"},
+        "tool_use_id": "mutation",
+        "session_id": session_id,
+    }
+    return HookContext(
+        active=True,
+        payload=payload,
+        root=root,
+        data_dir=data_dir,
+        session_id=session_id,
+        agent="claude",
+        task_mode="quick",
+        turn_prompt="현재 상태 알려줘",
+        turn_prompt_id=f"prompt-{session_id}",
+        warning="",
+    )
 
 
 def test_quick_read_only_turn_never_creates_project_state(tmp_path: Path) -> None:
@@ -101,6 +128,89 @@ def test_quick_mutation_or_unknown_promotes_before_tool(
     assert result.output == {}
     assert ledger_path(root).exists()
     assert (root / ".fable-lite" / "snapshots").exists()
+
+
+def test_quick_promotion_survives_initializer_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: a quick turn whose normal-turn initialization raises after claim.
+    root = tmp_path / "project"
+    root.mkdir()
+    data_dir = tmp_path / "plugin-data"
+    session_id = "initializer-error"
+    context = _quick_context(root, data_dir, session_id)
+    _ = save_turn(
+        data_dir,
+        session_id,
+        context.agent,
+        context.turn_prompt,
+        context.turn_prompt_id,
+        "quick",
+    )
+    monkeypatch.setattr(pre_tool_use, "bootstrap", lambda _event: context)
+
+    def raise_initializer_error(_context: HookContext, _payload: JsonObject) -> None:
+        raise OSError("injected record_event failure")
+
+    monkeypatch.setattr(
+        pre_tool_use,
+        "_promote_project_turn",
+        raise_initializer_error,
+    )
+
+    # When: PreToolUse claims promotion and initialization fails.
+    assert pre_tool_use.main() == 0
+    output = json.loads(capsys.readouterr().out)
+
+    # Then: fail-open is visible, but the turn can never remain quick.
+    assert str(output["systemMessage"]).startswith("[smtw] health: fail-open")
+    turn = load_turn(data_dir, session_id, context.agent)
+    assert turn is not None
+    assert turn.mode == "normal"
+
+
+def test_quick_promotion_persistence_failure_denies_tool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: a claimed quick turn whose mode transition cannot be persisted.
+    root = tmp_path / "project"
+    root.mkdir()
+    data_dir = tmp_path / "plugin-data"
+    session_id = "persistence-error"
+    context = _quick_context(root, data_dir, session_id)
+    _ = save_turn(
+        data_dir,
+        session_id,
+        context.agent,
+        context.turn_prompt,
+        context.turn_prompt_id,
+        "quick",
+    )
+    monkeypatch.setattr(pre_tool_use, "bootstrap", lambda _event: context)
+    monkeypatch.setattr(
+        pre_tool_use,
+        "_promote_project_turn",
+        lambda _context, _payload: None,
+    )
+
+    def reject_persistence(_path: Path, _payload: object) -> None:
+        raise OSError("injected promotion persistence failure")
+
+    monkeypatch.setattr(session_registry, "_atomic_write", reject_persistence)
+
+    # When: PreToolUse cannot persist the quick-to-normal transition.
+    assert pre_tool_use.main() == 0
+    output = json.loads(capsys.readouterr().out)
+
+    # Then: this safety boundary denies instead of entering broad fail-open.
+    decision = output["hookSpecificOutput"]
+    assert isinstance(decision, dict)
+    assert decision["permissionDecision"] == "deny"
+    assert "promotion" in str(decision["permissionDecisionReason"]).casefold()
 
 
 def test_failed_partial_mutation_stays_observed_and_quiet(tmp_path: Path) -> None:

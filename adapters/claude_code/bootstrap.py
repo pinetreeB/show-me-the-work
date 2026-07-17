@@ -85,14 +85,16 @@ def bootstrap(event_name: str) -> HookContext:
         _string(payload.get("agent_id")) or _string(payload.get("agent")) or "claude"
     )
     data_dir = _plugin_data_dir(force)
+    if event_name == "UserPromptSubmit":
+        gc_stale(data_dir, session_id)
     record, registry_corrupt = load_session(data_dir, session_id)
     was_bound = registry_was_bound(data_dir, session_id)
     env_root = _environment_root(payload)
     if record is not None:
         fixed_root = Path(record.root)
-        if _is_exact_home(fixed_root):
-            return _inactive(payload, data_dir, session_id, agent)
         candidate = env_root or fixed_root
+        if _is_exact_home(candidate):
+            return _inactive(payload, data_dir, session_id, agent)
         bound = bind_session(
             data_dir,
             session_id,
@@ -101,12 +103,13 @@ def bootstrap(event_name: str) -> HookContext:
         )
         warning = ""
         if bound.root_mismatch and warn_once(data_dir, session_id, "root_mismatch"):
-            warning = "session root mismatch; keeping the original project root"
-        if event_name == "UserPromptSubmit":
-            gc_stale(data_dir, session_id)
+            warning = (
+                "session root mismatch; using CLAUDE_PROJECT_DIR for this hook "
+                "while keeping the registry latch unchanged"
+            )
         return _active(
             payload,
-            Path(bound.record.root),
+            env_root or Path(bound.record.root),
             data_dir,
             session_id,
             agent,
@@ -158,12 +161,17 @@ def bootstrap(event_name: str) -> HookContext:
     ):
         warnings.append("session registry was corrupt and has been reconstructed")
     if bound.root_mismatch and warn_once(data_dir, session_id, "root_mismatch"):
-        warnings.append("session root mismatch; keeping the original project root")
-    if event_name == "UserPromptSubmit":
-        gc_stale(data_dir, session_id)
+        warnings.append(
+            (
+                "session root mismatch; using CLAUDE_PROJECT_DIR for this hook "
+                "while keeping the registry latch unchanged"
+            )
+            if env_root is not None
+            else "session root mismatch; keeping the original project root"
+        )
     return _active(
         payload,
-        Path(bound.record.root),
+        env_root or Path(bound.record.root),
         data_dir,
         session_id,
         agent,
