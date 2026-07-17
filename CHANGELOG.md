@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.2.0] - 2026-07-17
+
+### Changed
+
+- **Claude Code adapter is now opt-in per project** ("Quiet Opt-in", spec: `docs/specs/v2.2-quiet-optin.md`). Hooks engage only when `<root>/.fable-lite/config.json` declares `{"schema_version": 1, "supervision": true}` (strict boolean). Inactive projects take a stdlib-only fast path: zero core imports, zero file writes, output exactly `{}`. Exact-home sessions are hard-off even with a config; projects under the home directory keep full supervision.
+- Project root resolution no longer trusts the drifting tool `cwd`: `CLAUDE_PROJECT_DIR` → write-once session registry latch (atomic, TTL-GC'd, cleaned by SessionEnd) → upward config search fallback. This eliminates the cd-drift false blocks (R1/Stop) observed in live sessions.
+- Message diet: informational systemMessages (`observed N change(s)`, `provenance incomplete`, `recorded verification`, `Stop gate allow`, home advisory) are silenced while ledger recording is preserved. Block reasons stay visible; scope warnings dedupe to once per turn; health warnings (fail-open, corrupt registry/config, root mismatch) dedupe to once per session and are never silenced. Scorecard line is display-opt-in.
+- Quick mode keeps full PostToolUse/PostToolUseFailure observation and atomically promotes the turn to normal before the first mutation-capable tool runs (promotion is exception-safe; if it cannot be persisted the tool is denied rather than fail-opened). Only provably read-only turns skip the heavy Stop reconcile, and they never claim "clean verified".
+- PreToolUse denials emit `hookSpecificOutput.permissionDecision: "deny"` instead of the deprecated top-level `decision: "block"`.
+- Test harness: suite is hermetic against shared plugin-data state (`SMTW_TEST_FORCE_ENABLE=1` isolates per test); verified green on two heterogeneous runner environments plus a hostile shared-state environment.
+
 ## [2.1.1] - 2026-07-16
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 **show-me-the-work** (`smtw`, Korean: **쇼미더워크**) is evidence-based AI work supervision: no executed proof, no credible "done."
 
-[![version](https://img.shields.io/badge/version-2.1.1-brightgreen.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.2.0-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > 🇰🇷 **한국어가 1차 문서입니다**: [`README.ko.md`](README.ko.md)
@@ -123,6 +123,22 @@ User state remains under `.fable-lite/`. The main ledger, goals, intent/contract
 
 **Requires Python 3.12+ on PATH in the target environment** — the hooks are stdlib-Python scripts, so a host without a resolvable `python` (e.g. a fresh worker box) must install it first. No third-party packages.
 
+Claude Code supervision is a quiet per-project opt-in. Create
+`<project>/.fable-lite/config.json` with exactly
+`{"schema_version":1,"supervision":true}` to enable it. A missing config,
+`false`, or a non-boolean value leaves every hook as a silent no-op; the exact
+user home directory is always disabled. `SMTW_TEST_FORCE_ENABLE=1` bypasses
+the config check only for automated adapter tests and must not be used for
+normal or production sessions.
+
+Initial `cwd fallback is best-effort`, not a security boundary: before Claude
+provides `CLAUDE_PROJECT_DIR` or a session root is latched, a forged hook
+payload/cwd can steer the initial upward config search. Once present, the env
+root is effective for that hook and the write-once latch remains unchanged.
+For a corrupt inactive config, a once-per-session warning and TTL cleanup may
+write only under global plugin data; the inactive project tree is never
+written.
+
 Recommended local-clone install:
 
 ```
@@ -137,7 +153,7 @@ After the plugin is registered in a marketplace, `/plugin marketplace add pinetr
 
 ```
 python -m pytest tests/ -q      # unit tests
-python eval/run_probes.py --strict  # deterministic probe suite; 15 pass, 0 fail, 3 manual
+python eval/run_probes.py --strict  # deterministic probe suite; 17 pass, 0 fail, 3 manual
 python eval/e2e_smoke.py        # full hook-chain smoke (real CC payload schema)
 ```
 

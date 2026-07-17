@@ -11,7 +11,10 @@ from core.contract import (
     namespaced_contract_path,
     record_contract_authored_event,
 )
-from core.destructive_guard import evaluate_r2_destructive_gate, parse_destructive_command
+from core.destructive_guard import (
+    evaluate_r2_destructive_gate,
+    parse_destructive_command,
+)
 from core.ledger import record_event
 
 
@@ -55,7 +58,7 @@ TRUNCATE_CASES: list[tuple[str, bool]] = [
     ('echo "" > "test/a.py"', True),
     ('Set-Content -Path file.txt -Value ""', True),
     ("type NUL > C:\\Users\\rotat\\fable-lite\\test.js", True),
-    ("echo \"old\" > $FILE", False),
+    ('echo "old" > $FILE', False),
     ("cat /dev/null | tee file.txt", False),
     ('eval "cat /dev/null > file.txt"', False),
     ('Out-File -FilePath (Join-Path $pwd "a.js")', False),
@@ -66,7 +69,9 @@ ALL_CORPUS_CASES = GIT_CASES + REMOVE_CASES + TRUNCATE_CASES
 
 
 @pytest.mark.parametrize("command,expect_resolved", ALL_CORPUS_CASES)
-def test_r2_corpus_parser_matches_expected_verdict(command: str, expect_resolved: bool) -> None:
+def test_r2_corpus_parser_matches_expected_verdict(
+    command: str, expect_resolved: bool
+) -> None:
     parsed = parse_destructive_command(command)
     assert parsed is not None, command
     assert parsed.category is not None
@@ -92,7 +97,9 @@ def test_r2_corpus_non_destructive_commands_are_not_matched() -> None:
 # --- R2 게이트 통합: attribution 주입 -----------------------------------------
 
 
-def _payload(tmp_path: Path, command: str, *, agent: str = "claude", session_id: str = "s1") -> dict:
+def _payload(
+    tmp_path: Path, command: str, *, agent: str = "claude", session_id: str = "s1"
+) -> dict:
     return {
         "project_root": str(tmp_path),
         "tool_name": "Bash",
@@ -172,7 +179,9 @@ def test_r2_allows_non_destructive_shell_commands(tmp_path: Path) -> None:
     assert result["decision"] == "allow"
 
 
-def test_r2_blocks_parse_unable_and_implicit_scope_without_touching_ledger(tmp_path: Path) -> None:
+def test_r2_blocks_parse_unable_and_implicit_scope_without_touching_ledger(
+    tmp_path: Path,
+) -> None:
     # 대상이 파싱 불능/암시적 범위이면 귀속 조회 없이 즉시 차단(ledger가 없어도 차단되어야 함).
     result = evaluate_r2_destructive_gate(_payload(tmp_path, "git reset --hard HEAD"))
     assert result["decision"] == "block"
@@ -253,7 +262,9 @@ def test_r2_allows_target_owned_by_settled_peer(tmp_path: Path) -> None:
     assert result["decision"] == "allow"
 
 
-def test_r2_fail_closed_when_attribution_health_reports_degraded(tmp_path: Path) -> None:
+def test_r2_fail_closed_when_attribution_health_reports_degraded(
+    tmp_path: Path,
+) -> None:
     def fake_lookup(ledger, canonical_path):
         return None
 
@@ -293,7 +304,10 @@ def test_r2_fail_closed_when_lookup_path_attribution_raises(tmp_path: Path) -> N
     result = evaluate_r2_destructive_gate(
         _payload(tmp_path, "rm src/config.json"),
         lookup_path_attribution=boom,
-        attribution_health=lambda ledger: {"degraded": False, "capacity_exceeded": False},
+        attribution_health=lambda ledger: {
+            "degraded": False,
+            "capacity_exceeded": False,
+        },
     )
     assert result["decision"] == "block"
 
@@ -318,11 +332,16 @@ def _healthy_fakes() -> dict:
     # 검증하기 위해, 귀속 조회는 항상 "정상/미추적"으로 가정하는 fake를 주입한다.
     return {
         "lookup_path_attribution": lambda ledger, canonical_path: None,
-        "attribution_health": lambda ledger: {"degraded": False, "capacity_exceeded": False},
+        "attribution_health": lambda ledger: {
+            "degraded": False,
+            "capacity_exceeded": False,
+        },
     }
 
 
-def test_r2_first_blocks_destructive_command_when_ledger_is_corrupt(tmp_path: Path) -> None:
+def test_r2_first_blocks_destructive_command_when_ledger_is_corrupt(
+    tmp_path: Path,
+) -> None:
     state_dir = tmp_path / ".fable-lite"
     state_dir.mkdir()
     (state_dir / "ledger.json").write_text("{not-json", encoding="utf-8")
@@ -336,7 +355,9 @@ def test_r2_first_blocks_destructive_command_when_ledger_is_corrupt(tmp_path: Pa
     assert result["decision"] == "block"
 
 
-def test_r2_first_durable_marker_keeps_blocking_after_ledger_self_heals(tmp_path: Path) -> None:
+def test_r2_first_durable_marker_keeps_blocking_after_ledger_self_heals(
+    tmp_path: Path,
+) -> None:
     # load_ledger()는 손상 파일을 예외 없이 삼키고 .corrupt-*.bak으로 옮긴 뒤 기본 ledger를
     # 반환한다 — 그 bak이 디스크에 남아있는 한 이후 모든 호출에서 degraded가 지속돼야
     # 한다(§6-3 durable marker, "첫 호출 뒤 소실 방지").
@@ -370,7 +391,9 @@ def test_r2_first_does_not_block_non_destructive_commands_when_ledger_is_corrupt
     assert result["decision"] == "allow"
 
 
-def test_r2_first_invocation_order_precedes_resolve_active_invocation(tmp_path: Path) -> None:
+def test_r2_first_invocation_order_precedes_resolve_active_invocation(
+    tmp_path: Path,
+) -> None:
     # adapters/*/pre_tool_use.py의 실제 R2-first 배선을 서브프로세스로 재현: 손상된
     # ledger.json 상태에서도 파괴 명령이면 fail-open으로 새지 않고 R2가 차단해야 한다
     # (mco-codex-r2.md RC1: resolve_active_invocation()의 LedgerSchemaError가
@@ -398,14 +421,18 @@ def test_r2_first_invocation_order_precedes_resolve_active_invocation(tmp_path: 
     )
     assert proc.returncode == 0
     result = json.loads(proc.stdout)
-    assert result.get("decision") == "block", result
-    assert "R2" in str(result.get("reason", ""))
+    hook_output = result.get("hookSpecificOutput")
+    assert isinstance(hook_output, dict), result
+    assert hook_output.get("permissionDecision") == "deny", result
+    assert "R2" in str(hook_output.get("permissionDecisionReason", ""))
 
 
 # --- 계약 네임스페이스(§5-1) ---------------------------------------------------
 
 
-def _exact_payload(tmp_path: Path, *, session_id: str = "s1", agent: str = "claude") -> dict:
+def _exact_payload(
+    tmp_path: Path, *, session_id: str = "s1", agent: str = "claude"
+) -> dict:
     return {
         "project_root": str(tmp_path),
         "tool_name": "Edit",
@@ -432,7 +459,9 @@ def _write_valid_contract(path: Path) -> None:
     )
 
 
-def _authoring_event_payload(tmp_path: Path, session_id: str, agent: str, namespaced: Path) -> dict:
+def _authoring_event_payload(
+    tmp_path: Path, session_id: str, agent: str, namespaced: Path
+) -> dict:
     return {
         "project_root": str(tmp_path),
         "file_paths": [str(namespaced)],
@@ -448,19 +477,25 @@ def test_r1_blocks_exact_identity_without_any_contract(tmp_path: Path) -> None:
     assert result["decision"] == "block"
 
 
-def test_r1_allows_own_namespaced_contract_with_matching_authored_event(tmp_path: Path) -> None:
+def test_r1_allows_own_namespaced_contract_with_matching_authored_event(
+    tmp_path: Path,
+) -> None:
     payload = _exact_payload(tmp_path)
     agent_key = "claude_code:s1:claude"
     namespaced = namespaced_contract_path(str(tmp_path), agent_key)
     _write_valid_contract(namespaced)
-    record_contract_authored_event(_authoring_event_payload(tmp_path, "s1", "claude", namespaced))
+    record_contract_authored_event(
+        _authoring_event_payload(tmp_path, "s1", "claude", namespaced)
+    )
 
     result = evaluate_pretool_contract(payload)
 
     assert result["decision"] == "allow"
 
 
-def test_r1_rejects_valid_looking_contract_without_matching_authored_event(tmp_path: Path) -> None:
+def test_r1_rejects_valid_looking_contract_without_matching_authored_event(
+    tmp_path: Path,
+) -> None:
     # 계약 파일 자체는 스키마상 유효해도 contract_authored 이벤트가 없으면(§6-5 교차 확인
     # 실패) 인정하지 않는다 — 타 identity 계약을 복사해 붙여넣는 시나리오의 재현 차단.
     payload = _exact_payload(tmp_path)
@@ -484,7 +519,9 @@ def test_r1_rejects_valid_looking_contract_without_matching_authored_event(tmp_p
     assert result["decision"] == "block"
 
 
-def test_r1_copying_another_identitys_contract_file_does_not_validate(tmp_path: Path) -> None:
+def test_r1_copying_another_identitys_contract_file_does_not_validate(
+    tmp_path: Path,
+) -> None:
     # agy 시나리오 C 재현: victim의 유효+감사된 계약을 attacker identity의 namespaced
     # 경로로 그대로 복사해도, attacker 자신의 감사 로그에는 대응 이벤트가 없어 무익화된다.
     victim_key = "claude_code:victim-session:claude"
@@ -561,7 +598,9 @@ def test_r1_legacy_fallback_disabled_when_another_exact_identity_is_active(
     assert result["decision"] == "block"
 
 
-def test_r1_legacy_synthetic_identity_keeps_legacy_path_unconditionally(tmp_path: Path) -> None:
+def test_r1_legacy_synthetic_identity_keeps_legacy_path_unconditionally(
+    tmp_path: Path,
+) -> None:
     # legacy_default 세션(attribution 없음)은 항상 기존 legacy 경로를 쓴다(설계 §5-1 마지막 줄) —
     # 기존 테스트(test_core_contracts.py)와의 하위 호환을 명시적으로 재확인.
     from core.contract import contract_path
@@ -642,7 +681,9 @@ def test_pretool_contract_wires_state_file_friction_before_r1(tmp_path: Path) ->
 # --- pre-attribution 창 보호(RC3) ---------------------------------------------
 
 
-def test_r2_blocks_target_matching_peer_open_invocation_candidate(tmp_path: Path) -> None:
+def test_r2_blocks_target_matching_peer_open_invocation_candidate(
+    tmp_path: Path,
+) -> None:
     # peer가 아직 PostTool 귀속(change event)을 남기기 전, 즉 lookup_path_attribution이
     # None(미추적)을 반환하는 창에서도 그 경로가 peer의 기록된 invocation candidate와
     # 일치하면 R2는 통과시키지 않는다(설계 §6-4 RC3 pre-attribution 창 보호).
