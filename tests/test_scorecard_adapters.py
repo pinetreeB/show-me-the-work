@@ -22,7 +22,12 @@ BASE_ALLOW_LINE = "[smtw] Stop gate allow."
 HostName: TypeAlias = Literal["claude_code", "codex_cli", "antigravity"]
 CacheState: TypeAlias = Literal["missing", "no_activity", "incomplete", "malformed"]
 HOSTS: tuple[HostName, ...] = ("claude_code", "codex_cli", "antigravity")
-CACHE_STATES: tuple[CacheState, ...] = ("missing", "no_activity", "incomplete", "malformed")
+CACHE_STATES: tuple[CacheState, ...] = (
+    "missing",
+    "no_activity",
+    "incomplete",
+    "malformed",
+)
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
@@ -109,7 +114,9 @@ def _run_stop(
     return result
 
 
-def _cache_entry(host: HostName, *, complete: bool = True, activity: bool = True) -> JsonObject:
+def _cache_entry(
+    host: HostName, *, complete: bool = True, activity: bool = True
+) -> JsonObject:
     return {
         "host": host,
         "session_id": _session_id(host),
@@ -187,15 +194,32 @@ def _captured_stop_payload(host: HostName, root: Path) -> JsonObject:
         )
         match host:
             case "claude_code":
-                from adapters.claude_code import common, stop
+                from adapters.claude_code import stop
+                from adapters.claude_code.bootstrap import HookContext
 
-                stack.enter_context(patch.object(common, "read_payload", return_value=payload))
-                stack.enter_context(patch.object(common, "emit", emit))
+                context = HookContext(
+                    active=True,
+                    payload=payload,
+                    root=root,
+                    data_dir=root / ".adapter-test",
+                    session_id=_session_id(host),
+                    agent="claude",
+                    task_mode="normal",
+                    turn_prompt="",
+                    turn_prompt_id="turn-scorecard",
+                    warning="",
+                )
+                stack.enter_context(
+                    patch.object(stop, "bootstrap", return_value=context)
+                )
+                stack.enter_context(patch.object(stop, "emit", emit))
                 assert stop.main() == 0
             case "codex_cli":
                 from adapters.codex_cli import common, stop
 
-                stack.enter_context(patch.object(common, "read_payload", return_value=payload))
+                stack.enter_context(
+                    patch.object(common, "read_payload", return_value=payload)
+                )
                 stack.enter_context(patch.object(common, "emit", emit))
                 stack.enter_context(
                     patch.object(stop, "_run_process_reaper", return_value=None)
@@ -213,7 +237,9 @@ def _captured_stop_payload(host: HostName, root: Path) -> JsonObject:
     return captured[0]
 
 
-def test_stop_when_raw_payload_has_no_agent_passes_canonical_identity(tmp_path: Path) -> None:
+def test_stop_when_raw_payload_has_no_agent_passes_canonical_identity(
+    tmp_path: Path,
+) -> None:
     # Given: each real host Stop payload has session/turn IDs but no agent field.
     roots: dict[HostName, Path] = {host: tmp_path / host for host in HOSTS}
     for root in roots.values():
@@ -270,7 +296,9 @@ def test_canonical_invocation_marks_synthesized_identity_for_all_hosts() -> None
     assert [item.scorecard_attribution for item in exact_invocations] == ["exact"] * 3
 
 
-def test_stop_allow_when_cache_has_activity_appends_exact_shared_line(tmp_path: Path) -> None:
+def test_stop_allow_when_cache_has_activity_appends_exact_shared_line(
+    tmp_path: Path,
+) -> None:
     # Given: every current canonical session has two blocks and one recovery scope.
     roots: dict[HostName, Path] = {host: tmp_path / host for host in HOSTS}
     for host, root in roots.items():
@@ -282,19 +310,32 @@ def test_stop_allow_when_cache_has_activity_appends_exact_shared_line(tmp_path: 
         host: _run_stop(host, roots[host]) for host in HOSTS
     }
 
-    # Then: message-capable hosts expose the shared line; agy's Stop allow contract is empty.
-    assert {
-        host: _scorecard_lines(result) for host, result in results.items()
-    } == {
-        "claude_code": [SCORECARD_LINE],
+    # Then: Claude is quiet by default; Codex retains its display and agy stays empty.
+    assert {host: _scorecard_lines(result) for host, result in results.items()} == {
+        "claude_code": [],
         "codex_cli": [SCORECARD_LINE],
         "antigravity": [],
     }
-    assert set(results["claude_code"]) == {"systemMessage"}
+    assert results["claude_code"] == {}
     assert set(results["codex_cli"]) == {"systemMessage"}
     assert results["antigravity"] == {}
-    messages = [_system_message(results[host]) for host in ("claude_code", "codex_cli")]
-    assert messages == [messages[0]] * len(messages)
+
+
+def test_claude_stop_scorecard_display_requires_explicit_opt_in(
+    tmp_path: Path,
+) -> None:
+    # Given: Claude has scorecard activity but default Stop output is quiet.
+    root = tmp_path / "claude-scorecard-opt-in"
+    root.mkdir()
+    _seed_cache(root, "claude_code", _cache_entry("claude_code"))
+
+    # When: the adapter runs with the explicit display opt-in.
+    result = _run_stop("claude_code", root, {SCORECARD_ENV: "1"})
+
+    # Then: the preserved scorecard line is visible only for that opt-in run.
+    assert _scorecard_lines(result) == [SCORECARD_LINE]
+    assert set(result) == {"systemMessage"}
+    assert _system_message(result) == SCORECARD_LINE
 
 
 def test_stop_allow_when_scorecard_is_disabled_omits_line(tmp_path: Path) -> None:
@@ -306,8 +347,7 @@ def test_stop_allow_when_scorecard_is_disabled_omits_line(tmp_path: Path) -> Non
 
     # When: every Stop host runs with Scorecard disabled.
     results: dict[HostName, JsonObject] = {
-        host: _run_stop(host, roots[host], {SCORECARD_ENV: "0"})
-        for host in HOSTS
+        host: _run_stop(host, roots[host], {SCORECARD_ENV: "0"}) for host in HOSTS
     }
 
     # Then: gate output remains available without a Scorecard line.

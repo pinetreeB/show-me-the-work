@@ -2,7 +2,7 @@
 
 **show-me-the-work**(짧은 표기 **smtw**, 쇼미더워크)는 "검증했다"는 말 대신 실제 실행 증거를 요구하는 AI 작업 감독 도구입니다.
 
-[![version](https://img.shields.io/badge/version-2.1.1-brightgreen.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.2.0-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## 🎯 이게 뭔가요? (비개발자·바이브코더를 위한 설명)
@@ -111,6 +111,21 @@ Claude Code 플러그인 manifest는 `.claude-plugin/plugin.json`에 있으며, 
 
 > **전제: 대상 환경에 Python 3.12+가 PATH에 있어야 합니다.** 훅이 stdlib Python 스크립트이므로, `python`이 없는 호스트(예: 새 워커 노트북)는 먼저 Python을 설치해야 합니다. 외부 패키지 의존은 없습니다.
 
+Claude Code 감독은 프로젝트별 quiet opt-in입니다.
+`<프로젝트>/.fable-lite/config.json`에
+`{"schema_version":1,"supervision":true}`를 정확히 두어야 활성화됩니다.
+config가 없거나 `false` 또는 비불리언 값이면 모든 훅이 조용히 no-op하며,
+사용자 홈 디렉토리 자체에서는 항상 비활성입니다.
+`SMTW_TEST_FORCE_ENABLE=1`은 어댑터 자동 테스트에서만 config 판정을
+우회하는 테스트 전용 스위치이며 일반·운영 세션에서 사용하면 안 됩니다.
+
+최초 `cwd 폴백은 best-effort`일 뿐 보안 신뢰 경계가 아닙니다. Claude가
+`CLAUDE_PROJECT_DIR`를 제공하거나 세션 루트가 latch되기 전에는 위조된 훅
+payload/cwd가 최초 상향 config 탐색을 다른 위치로 유도할 수 있습니다. env가
+있으면 이번 훅의 유효 루트는 env를 따르되 write-once latch는 바꾸지 않습니다.
+비활성 config가 손상된 경우 세션당 1회 경고와 TTL 정리는 전역 플러그인 데이터
+아래에만 쓸 수 있으며, 비활성 프로젝트 내부에는 어떤 상태도 쓰지 않습니다.
+
 권장 설치는 로컬 클론을 먼저 Claude Code marketplace에 등록하는 방식입니다.
 
 ```powershell
@@ -142,7 +157,7 @@ python eval/run_probes.py --output eval/results/probes-latest.json
 기본 결과 파일은 `eval/results/probes-latest.json`입니다. 콘솔 요약은 Windows CP949에서도 깨지지 않도록 ASCII만 출력합니다.
 
 ```text
-probes pass=15 fail=0 manual=3 total=18 result=PASS
+probes pass=17 fail=0 manual=3 total=20 result=PASS
 ```
 
 기본 러너는 실패 프로브가 있어도 JSON 리포트를 끝까지 쓰고 종료코드 0으로 끝납니다. 릴리스 게이트에서는 `--strict`를 사용해 실패가 있으면 non-zero로 종료합니다. 결과는 `summary.fail`과 `result` 필드에도 기록됩니다.

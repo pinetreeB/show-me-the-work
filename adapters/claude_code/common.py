@@ -47,7 +47,7 @@ def project_root(payload: Mapping[str, JsonValue]) -> str:
     if not candidate.is_absolute():
         candidate = base / candidate
     resolved = candidate.resolve()
-    if not _is_relative_to(resolved, base):
+    if not _is_relative_to(base, resolved):
         return str(base)
     return str(resolved)
 
@@ -82,7 +82,9 @@ def tool_file_paths(payload: Mapping[str, JsonValue]) -> list[str]:
         if text:
             return [text]
     response = tool_response(payload)
-    response_path = _string(response.get("filePath") or response.get("file_path") or response.get("path"))
+    response_path = _string(
+        response.get("filePath") or response.get("file_path") or response.get("path")
+    )
     return [response_path] if response_path else []
 
 
@@ -136,11 +138,22 @@ def canonical_invocation(
 
     identity_synthetic = not _string(payload.get("session_id"))
     session_id = _string(payload.get("session_id")) or "default"
-    agent = _string(payload.get("agent")) or "claude"
-    turn_id = _string(payload.get("turn_id")) or f"turn:{session_id}"
-    invocation_id = _string(
-        payload.get("tool_use_id") or payload.get("invocation_id") or payload.get("tool_call_id")
-    ) or f"{phase}:{session_id}:{tool_family_hint}"
+    agent = (
+        _string(payload.get("agent_id")) or _string(payload.get("agent")) or "claude"
+    )
+    turn_id = (
+        _string(payload.get("prompt_id"))
+        or _string(payload.get("turn_id"))
+        or f"turn:{session_id}"
+    )
+    invocation_id = (
+        _string(
+            payload.get("tool_use_id")
+            or payload.get("invocation_id")
+            or payload.get("tool_call_id")
+        )
+        or f"{phase}:{session_id}:{tool_family_hint}"
+    )
     return CanonicalInvocation(
         "claude_code",
         agent,
@@ -158,7 +171,12 @@ def canonical_invocation(
 
 
 def transcript_last_assistant_text(payload: Mapping[str, JsonValue]) -> str:
-    transcript = _string(payload.get("transcript_path") or payload.get("transcriptPath"))
+    current = _string(payload.get("last_assistant_message"))
+    if current:
+        return current
+    transcript = _string(
+        payload.get("transcript_path") or payload.get("transcriptPath")
+    )
     if not transcript:
         return ""
     path = Path(transcript)
@@ -191,7 +209,9 @@ def _json_value(value: object) -> bool:
     if isinstance(value, list):
         return all(_json_value(item) for item in value)
     if isinstance(value, dict):
-        return all(isinstance(key, str) and _json_value(item) for key, item in value.items())
+        return all(
+            isinstance(key, str) and _json_value(item) for key, item in value.items()
+        )
     return False
 
 

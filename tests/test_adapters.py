@@ -55,10 +55,12 @@ def test_adapters_handle_realistic_claude_code_nested_payloads(tmp_path: Path) -
             "session_id": "s1",
         },
     )
-    ledger = json.loads((tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8"))
+    ledger = json.loads(
+        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+    )
 
     assert "hookSpecificOutput" in prompt_result
-    assert "observed 1 change(s)." in str(post_result["systemMessage"])
+    assert post_result == {}
     assert ledger["changed_files_seen"] == ["app.py"]
 
 
@@ -112,13 +114,18 @@ def test_stop_fails_closed_when_mutated_turn_baseline_is_missing(
     assert "provenance" in str(result["reason"])
 
 
-def test_pretool_blocks_realistic_high_risk_edit_and_shell_payloads(tmp_path: Path) -> None:
+def test_pretool_blocks_realistic_high_risk_edit_and_shell_payloads(
+    tmp_path: Path,
+) -> None:
     edit_result = run_hook(
         "pre_tool_use.py",
         {
             "cwd": str(tmp_path),
             "tool_name": "Edit",
-            "tool_input": {"file_path": "migrations/001_init.sql", "new_string": "DROP TABLE users;"},
+            "tool_input": {
+                "file_path": "migrations/001_init.sql",
+                "new_string": "DROP TABLE users;",
+            },
             "session_id": "s1",
         },
     )
@@ -127,13 +134,17 @@ def test_pretool_blocks_realistic_high_risk_edit_and_shell_payloads(tmp_path: Pa
         {
             "cwd": str(tmp_path),
             "tool_name": "Bash",
-            "tool_input": {"command": "python manage.py migrate && psql -c 'DROP TABLE users'"},
+            "tool_input": {
+                "command": "python manage.py migrate && psql -c 'DROP TABLE users'"
+            },
             "session_id": "s1",
         },
     )
 
-    assert edit_result["decision"] == "block"
-    assert bash_result["decision"] == "block"
+    edit_deny = object_value(edit_result["hookSpecificOutput"])
+    bash_deny = object_value(bash_result["hookSpecificOutput"])
+    assert edit_deny["permissionDecision"] == "deny"
+    assert bash_deny["permissionDecision"] == "deny"
 
 
 def test_posttool_records_nested_shell_verification(tmp_path: Path) -> None:
@@ -147,9 +158,11 @@ def test_posttool_records_nested_shell_verification(tmp_path: Path) -> None:
             "session_id": "s1",
         },
     )
-    ledger = json.loads((tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8"))
+    ledger = json.loads(
+        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+    )
 
-    assert "recorded verification." in str(result["systemMessage"])
+    assert result == {}
     assert ledger["verification_results"][0]["success"] is True
     assert ledger["verification_results"][0]["evidence"] == "10 passed"
 
@@ -159,7 +172,11 @@ def test_fake_output_verification_cannot_unlock_changed_claude_turn(
 ) -> None:
     run_hook(
         "user_prompt_submit.py",
-        {"cwd": str(tmp_path), "prompt": "app.py 함수 이름을 바꿔줘", "session_id": "s1"},
+        {
+            "cwd": str(tmp_path),
+            "prompt": "app.py 함수 이름을 바꿔줘",
+            "session_id": "s1",
+        },
     )
     _ = (tmp_path / "app.py").write_text("changed", encoding="utf-8")
     run_hook(
@@ -203,10 +220,14 @@ def test_verified_remote_turn_recovers_after_fresh_remote_evidence(
 ) -> None:
     run_hook(
         "user_prompt_submit.py",
-        {"cwd": str(tmp_path), "prompt": "원격 서비스 설정을 갱신해줘", "session_id": "s1"},
+        {
+            "cwd": str(tmp_path),
+            "prompt": "원격 서비스 설정을 갱신해줘",
+            "session_id": "s1",
+        },
     )
     remote_command = (
-        'ssh -F none -o StrictHostKeyChecking=yes '
+        "ssh -F none -o StrictHostKeyChecking=yes "
         'deploy@example.com "touch remote-marker"'
     )
     remote_payload: HookPayload = {
@@ -232,7 +253,7 @@ def test_verified_remote_turn_recovers_after_fresh_remote_evidence(
     assert unverified["decision"] == "block"
 
     verify_command = (
-        'ssh -F none -o StrictHostKeyChecking=yes '
+        "ssh -F none -o StrictHostKeyChecking=yes "
         'deploy@example.com "python -m pytest tests/"'
     )
     verify_payload: HookPayload = {
@@ -265,7 +286,11 @@ def test_docs_only_local_change_does_not_exempt_unverified_remote_epoch(
     # Given: one successful remote mutation and a docs-only local edit in the same turn.
     run_hook(
         "user_prompt_submit.py",
-        {"cwd": str(tmp_path), "prompt": "원격 설정과 문서를 갱신해줘", "session_id": "s1"},
+        {
+            "cwd": str(tmp_path),
+            "prompt": "원격 설정과 문서를 갱신해줘",
+            "session_id": "s1",
+        },
     )
     remote_payload: HookPayload = {
         "cwd": str(tmp_path),
@@ -348,7 +373,9 @@ def test_remote_possible_command_records_epoch_while_local_observation_stays_ena
     assert stopped.get("decision") == "block"
 
 
-def test_failed_remote_attempt_still_requires_fresh_verification(tmp_path: Path) -> None:
+def test_failed_remote_attempt_still_requires_fresh_verification(
+    tmp_path: Path,
+) -> None:
     run_hook(
         "user_prompt_submit.py",
         {"cwd": str(tmp_path), "prompt": "원격 작업을 실행해줘", "session_id": "s1"},
@@ -425,7 +452,7 @@ def test_scope_too_large_turn_still_tracks_and_verifies_remote_mutation(
         {"cwd": str(tmp_path), "prompt": "원격 서비스를 갱신해줘", "session_id": "s1"},
     )
     remote_command = (
-        'ssh -F none -o StrictHostKeyChecking=yes '
+        "ssh -F none -o StrictHostKeyChecking=yes "
         'deploy@example.com "touch remote-marker"'
     )
     remote_payload: HookPayload = {
@@ -448,7 +475,7 @@ def test_scope_too_large_turn_still_tracks_and_verifies_remote_mutation(
     assert isinstance(turn.get("last_remote_mutation_seq"), int)
 
     verify_command = (
-        'ssh -F none -o StrictHostKeyChecking=yes '
+        "ssh -F none -o StrictHostKeyChecking=yes "
         'deploy@example.com "python -m pytest tests/"'
     )
     verify_payload: HookPayload = {
@@ -469,7 +496,9 @@ def test_scope_too_large_turn_still_tracks_and_verifies_remote_mutation(
         {"cwd": str(tmp_path), "session_id": "s1", "stop_hook_active": False},
     )
 
-    assert "recorded verification" in str(result.get("systemMessage", ""))
+    verified_ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert result == {}
+    assert verified_ledger["verification_results"]
     assert stopped.get("decision") != "block"
 
 
@@ -535,7 +564,9 @@ def test_scope_too_large_verification_freezes_remote_epoch_at_pretool(
     assert stopped["decision"] == "block"
 
 
-def test_goals_nudge_and_n2_pretool_gate_use_persisted_prompt_state(tmp_path: Path) -> None:
+def test_goals_nudge_and_n2_pretool_gate_use_persisted_prompt_state(
+    tmp_path: Path,
+) -> None:
     prompt_result = run_hook(
         "user_prompt_submit.py",
         {
@@ -558,8 +589,9 @@ def test_goals_nudge_and_n2_pretool_gate_use_persisted_prompt_state(tmp_path: Pa
 
     assert isinstance(context, str)
     assert "goals 체크포인트" in context
-    assert pre_result["decision"] == "block"
-    assert "goals" in str(pre_result["reason"]).lower()
+    deny = object_value(pre_result["hookSpecificOutput"])
+    assert deny["permissionDecision"] == "deny"
+    assert "goals" in str(deny["permissionDecisionReason"]).lower()
 
 
 def _write_transcript(tmp_path: Path, text: str) -> Path:
@@ -568,7 +600,10 @@ def _write_transcript(tmp_path: Path, text: str) -> Path:
         json.dumps(
             {
                 "type": "assistant",
-                "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": text}],
+                },
             },
             ensure_ascii=False,
         )
@@ -578,7 +613,9 @@ def _write_transcript(tmp_path: Path, text: str) -> Path:
     return transcript
 
 
-def test_stop_blocks_missing_n1_markers_when_investigation_turn_changed_files(tmp_path: Path) -> None:
+def test_stop_blocks_missing_n1_markers_when_investigation_turn_changed_files(
+    tmp_path: Path,
+) -> None:
     run_hook(
         "user_prompt_submit.py",
         {
@@ -601,7 +638,12 @@ def test_stop_blocks_missing_n1_markers_when_investigation_turn_changed_files(tm
     transcript = _write_transcript(tmp_path, "원인은 설정입니다. 고쳤습니다.")
     stop_result = run_hook(
         "stop.py",
-        {"cwd": str(tmp_path), "transcript_path": str(transcript), "stop_hook_active": False, "session_id": "s1"},
+        {
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+            "session_id": "s1",
+        },
     )
 
     assert stop_result["decision"] == "block"
@@ -609,7 +651,9 @@ def test_stop_blocks_missing_n1_markers_when_investigation_turn_changed_files(tm
     assert str(stop_result["reason"]).endswith("Show me the work.")
 
 
-def test_stop_allows_answer_only_investigation_turn_without_markers(tmp_path: Path) -> None:
+def test_stop_allows_answer_only_investigation_turn_without_markers(
+    tmp_path: Path,
+) -> None:
     # v1.1.3: 파일 변경이 없는 답변 전용 턴은 N1 마커 면제 — "이거 왜 안 돼?" 같은
     # 가벼운 질문에 가설 마커를 강제하지 않는다 (사용자 피드백).
     run_hook(
@@ -623,13 +667,20 @@ def test_stop_allows_answer_only_investigation_turn_without_markers(tmp_path: Pa
     transcript = _write_transcript(tmp_path, "원인은 설정입니다.")
     stop_result = run_hook(
         "stop.py",
-        {"cwd": str(tmp_path), "transcript_path": str(transcript), "stop_hook_active": False, "session_id": "s1"},
+        {
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+            "session_id": "s1",
+        },
     )
 
     assert stop_result.get("decision") != "block"
 
 
-def test_new_prompt_resets_turn_change_history_so_later_questions_are_exempt(tmp_path: Path) -> None:
+def test_new_prompt_resets_turn_change_history_so_later_questions_are_exempt(
+    tmp_path: Path,
+) -> None:
     # v1.1.3 agy Critical-1 고정: 이전 턴에 코드를 고쳤어도, 새 프롬프트(질문 턴)에서는
     # changed가 리셋되어 N1/검증 게이트가 걸리지 않아야 한다.
     run_hook(
@@ -648,12 +699,21 @@ def test_new_prompt_resets_turn_change_history_so_later_questions_are_exempt(tmp
     )
     run_hook(
         "user_prompt_submit.py",
-        {"cwd": str(tmp_path), "prompt": "근데 이 에러는 왜 나는 거야?", "session_id": "s1"},
+        {
+            "cwd": str(tmp_path),
+            "prompt": "근데 이 에러는 왜 나는 거야?",
+            "session_id": "s1",
+        },
     )
     transcript = _write_transcript(tmp_path, "이유는 이렇습니다.")
     stop_result = run_hook(
         "stop.py",
-        {"cwd": str(tmp_path), "transcript_path": str(transcript), "stop_hook_active": False, "session_id": "s1"},
+        {
+            "cwd": str(tmp_path),
+            "transcript_path": str(transcript),
+            "stop_hook_active": False,
+            "session_id": "s1",
+        },
     )
 
     assert stop_result.get("decision") != "block"
@@ -670,11 +730,15 @@ def test_hooks_fail_open_on_malformed_payload() -> None:
     )
 
     assert process.returncode == 0
-    assert json.loads(process.stdout)["systemMessage"].startswith("[smtw] fail-open")
+    assert json.loads(process.stdout)["systemMessage"].startswith(
+        "[smtw] health: fail-open"
+    )
 
 
 def test_plugin_manifest_and_hooks_json_exist() -> None:
-    plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    plugin = json.loads(
+        (ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
     hooks = json.loads((ADAPTERS / "hooks.json").read_text(encoding="utf-8"))
 
     assert plugin["name"] == "show-me-the-work"
@@ -695,19 +759,23 @@ def test_tool_success_falls_back_to_stdout_when_exit_code_missing() -> None:
     from adapters.claude_code.common import tool_success
 
     passed: HookPayload = {"tool_response": {"stdout": "3 passed in 0.02s"}}
-    failed: HookPayload = {"tool_response": {"stdout": "1 failed, 2 passed\nFAILED test_x"}}
+    failed: HookPayload = {
+        "tool_response": {"stdout": "1 failed, 2 passed\nFAILED test_x"}
+    }
     empty: HookPayload = {"tool_response": {"stdout": ""}}
     explicit_false: HookPayload = {
         "tool_response": {"success": False, "stdout": "3 passed"}
     }
 
     assert tool_success(passed) is True
-    assert tool_success(failed) is False       # 실패 신호 우선
-    assert tool_success(empty) is False        # 판정 불가 → 보수적 실패
+    assert tool_success(failed) is False  # 실패 신호 우선
+    assert tool_success(empty) is False  # 판정 불가 → 보수적 실패
     assert tool_success(explicit_false) is False  # 명시 실패 필드 신뢰
 
 
-def test_posttool_records_bash_script_and_make_test_as_verification(tmp_path: Path) -> None:
+def test_posttool_records_bash_script_and_make_test_as_verification(
+    tmp_path: Path,
+) -> None:
     # v1 릴리스 심사 H3 회귀: bash 스크립트 재실행·make test가 claude_code에서도 인식돼야 한다.
     bash_result = run_hook(
         "post_tool_use.py",
@@ -729,9 +797,13 @@ def test_posttool_records_bash_script_and_make_test_as_verification(tmp_path: Pa
             "session_id": "s1",
         },
     )
+    ledger = json.loads(
+        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+    )
 
-    assert "recorded verification." in str(bash_result["systemMessage"])
-    assert "recorded verification." in str(make_result["systemMessage"])
+    assert bash_result == {}
+    assert make_result == {}
+    assert len(ledger["verification_results"]) == 2
 
 
 def test_verification_command_recognizes_script_reruns_but_not_ops() -> None:
