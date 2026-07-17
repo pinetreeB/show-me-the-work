@@ -157,7 +157,7 @@ python eval/run_probes.py --output eval/results/probes-latest.json
 기본 결과 파일은 `eval/results/probes-latest.json`입니다. 콘솔 요약은 Windows CP949에서도 깨지지 않도록 ASCII만 출력합니다.
 
 ```text
-probes pass=15 fail=0 manual=3 total=18 result=PASS
+probes pass=17 fail=0 manual=3 total=20 result=PASS
 ```
 
 기본 러너는 실패 프로브가 있어도 JSON 리포트를 끝까지 쓰고 종료코드 0으로 끝납니다. 릴리스 게이트에서는 `--strict`를 사용해 실패가 있으면 non-zero로 종료합니다. 결과는 `summary.fail`과 `result` 필드에도 기록됩니다.

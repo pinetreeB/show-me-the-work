@@ -4,6 +4,7 @@ import argparse
 from collections.abc import Iterator
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -54,7 +55,9 @@ def _str(value: JsonValue | None) -> str:
 @contextmanager
 def _project() -> Iterator[Path]:
     with tempfile.TemporaryDirectory(prefix="fable-lite-probe-") as name:
-        yield Path(name)
+        root = Path(name) / "project"
+        root.mkdir()
+        yield root
 
 
 def _write(path: Path, text: str) -> None:
@@ -69,7 +72,20 @@ def _transcript(root: Path, text: str) -> Path:
     return path
 
 
-def _run_hook(script: str, payload: JsonObject) -> JsonObject:
+def _hook_environment(root: Path, force_enable: bool) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["CLAUDE_PLUGIN_DATA"] = str(root.parent / "plugin-data")
+    environment["CLAUDE_PROJECT_DIR"] = str(root)
+    environment["PYTHONUTF8"] = "1"
+    if force_enable:
+        environment["SMTW_TEST_FORCE_ENABLE"] = "1"
+    else:
+        _ = environment.pop("SMTW_TEST_FORCE_ENABLE", None)
+    return environment
+
+
+def _run_hook(script: str, payload: JsonObject, *, force_enable: bool = True) -> JsonObject:
+    root = Path(_str(payload.get("cwd")))
     process = subprocess.run(
         [sys.executable, str(ADAPTERS / script)],
         input=json.dumps(payload, ensure_ascii=False),
@@ -78,6 +94,7 @@ def _run_hook(script: str, payload: JsonObject) -> JsonObject:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=_hook_environment(root, force_enable),
     )
     return {
         "returncode": process.returncode,
@@ -87,7 +104,7 @@ def _run_hook(script: str, payload: JsonObject) -> JsonObject:
     }
 
 
-def _run_hook_raw(script: str, payload: str) -> JsonObject:
+def _run_hook_raw(script: str, payload: str, *, root: Path) -> JsonObject:
     process = subprocess.run(
         [sys.executable, str(ADAPTERS / script)],
         input=payload,
@@ -96,6 +113,7 @@ def _run_hook_raw(script: str, payload: str) -> JsonObject:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=_hook_environment(root, True),
     )
     return {
         "returncode": process.returncode,
@@ -129,6 +147,11 @@ def _ledger(root: Path) -> JsonObject:
 
 def _decision(hook: JsonObject) -> str:
     return _str(_object(hook.get("json")).get("decision"))
+
+
+def _permission_decision(hook: JsonObject) -> str:
+    data = _object(hook.get("json"))
+    return _str(_object(data.get("hookSpecificOutput")).get("permissionDecision"))
 
 
 def _gate_status(hook: JsonObject) -> str:
@@ -170,9 +193,10 @@ def _prb02() -> ProbeCheck:
     with _project() as root:
         _run_hook("user_prompt_submit.py", {"cwd": str(root), "prompt": "`index.html`에 파란색 버튼을 하나 추가해줘. 다 되면 바로 끝내."})
         _write(root / "index.html", "<button>blue</button>\n")
-        _run_hook("post_tool_use.py", {"cwd": str(root), "tool_name": "Edit", "tool_input": {"file_path": "index.html"}, "tool_response": {"filePath": "index.html", "success": True}})
+        post = _run_hook("post_tool_use.py", {"cwd": str(root), "tool_name": "Edit", "tool_input": {"file_path": "index.html"}, "tool_response": {"filePath": "index.html", "success": True}})
         stop = _run_hook("stop.py", {"cwd": str(root), "transcript_path": str(_transcript(root, "완료했습니다."))})
-        return _decision(stop) == "block", {"stop": _object(stop.get("json")), "ledger": _ledger(root)}
+        passed = _object(post.get("json")) == {} and _decision(stop) == "block"
+        return passed, {"post": _object(post.get("json")), "stop": _object(stop.get("json")), "ledger": _ledger(root)}
 
 
 def _prb03() -> ProbeCheck:
@@ -182,7 +206,7 @@ def _prb03() -> ProbeCheck:
         pre = _run_hook("pre_tool_use.py", {"cwd": str(root), "tool_name": "Edit", "tool_input": {"file_path": "profile.py"}})
         ledger = _ledger(root)
         context = json.dumps(_object(submit.get("json")), ensure_ascii=False)
-        passed = ledger.get("needs_goals") is True and "goals 체크포인트" in context and _decision(pre) == "block"
+        passed = ledger.get("needs_goals") is True and "goals 체크포인트" in context and _permission_decision(pre) == "deny"
         return passed, {"submit": _object(submit.get("json")), "pre": _object(pre.get("json")), "ledger": ledger}
 
 
@@ -193,14 +217,16 @@ def _prb05() -> ProbeCheck:
         post = _run_hook("post_tool_use.py", {"cwd": str(root), "tool_name": "Edit", "tool_input": {"file_path": "README.md"}, "tool_response": {"filePath": "README.md", "success": True}})
         ledger = _ledger(root)
         warnings = ledger.get("scope_warnings")
-        passed = "범위 이탈" in _message(post) and isinstance(warnings, list) and len(warnings) > 0
+        post_json = _object(post.get("json"))
+        context = _str(_object(post_json.get("hookSpecificOutput")).get("additionalContext"))
+        passed = "범위 이탈" in context and "systemMessage" not in post_json and isinstance(warnings, list) and len(warnings) > 0
         return passed, {"post": _object(post.get("json")), "ledger": ledger}
 
 
 def _prb06() -> ProbeCheck:
     with _project() as root:
-        debug = _run_hook("user_prompt_submit.py", {"cwd": str(root), "prompt": "결제 모듈 쪽에 자꾸 500 에러 나는데 버그 좀 고쳐줘."})
-        page = _run_hook("user_prompt_submit.py", {"cwd": str(root), "prompt": "로그인 페이지 만들어줘."})
+        debug = _run_hook("user_prompt_submit.py", {"cwd": str(root), "prompt": "결제 모듈 쪽에 자꾸 500 에러 나는데 버그 좀 고쳐줘.", "prompt_id": "prb06-debug", "session_id": "prb06"})
+        page = _run_hook("user_prompt_submit.py", {"cwd": str(root), "prompt": "로그인 페이지 만들어줘.", "prompt_id": "prb06-page", "session_id": "prb06"})
         debug_text = json.dumps(_object(debug.get("json")), ensure_ascii=False)
         page_text = json.dumps(_object(page.get("json")), ensure_ascii=False)
         passed = "조사 팩" in debug_text and "RUN" in page_text and "show-me-the-work 활성화" in debug_text
@@ -215,21 +241,31 @@ def _prb07() -> ProbeCheck:
 def _prb08() -> ProbeCheck:
     with _project() as root:
         pre = _run_hook("pre_tool_use.py", {"cwd": str(root), "tool_name": "Edit", "tool_input": {"file_path": "migrations/001.sql", "new_string": "DROP TABLE users;"}})
-        return _decision(pre) == "block", {"pre": _object(pre.get("json"))}
+        return _permission_decision(pre) == "deny", {"pre": _object(pre.get("json"))}
 
 
 def _prb09() -> ProbeCheck:
     with _project() as root:
         _write(root / ".fable-lite" / "contract.json", json.dumps({"restated_goal": "DB migrate", "acceptance": ["tables updated"], "evidence": ["assumed pass"]}, ensure_ascii=False))
         pre = _run_hook("pre_tool_use.py", {"cwd": str(root), "tool_name": "Edit", "tool_input": {"file_path": "migrations/002.sql", "new_string": "DROP TABLE users;"}})
-        return _decision(pre) == "block", {"pre": _object(pre.get("json"))}
+        return _permission_decision(pre) == "deny", {"pre": _object(pre.get("json"))}
 
 
 def _prb10() -> ProbeCheck:
     scripts = ["user_prompt_submit.py", "pre_tool_use.py", "post_tool_use.py", "stop.py"]
-    observed = {script: _run_hook_raw(script, "{ broken") for script in scripts}
-    passed = all(_str(_object(result.get("json")).get("systemMessage")).startswith("[smtw] fail-open") for result in observed.values())
-    return passed, _json_object(observed)
+    with _project() as root:
+        observed = {script: _run_hook_raw(script, "{ broken", root=root) for script in scripts}
+        messages = [_str(_object(result.get("json")).get("systemMessage")) for result in observed.values()]
+        passed = (
+            all(result.get("returncode") == 0 for result in observed.values())
+            and sum(message.startswith("[smtw] health: fail-open") for message in messages) == 1
+            and not (root / ".fable-lite").exists()
+        )
+        return passed, _json_object({
+            **observed,
+            "visible_warning_count": sum(bool(message) for message in messages),
+            "project_state_exists": (root / ".fable-lite").exists(),
+        })
 
 
 def _prb12() -> ProbeCheck:
@@ -289,15 +325,93 @@ def _prb17() -> ProbeCheck:
 
 
 def _prb18() -> ProbeCheck:
-    files = [ROOT / "README.ko.md", ADAPTERS / "user_prompt_submit.py", ADAPTERS / "pre_tool_use.py", ADAPTERS / "post_tool_use.py", ADAPTERS / "stop.py"]
-    observed = {
-        path.name: (
-            any(brand in path.read_text(encoding="utf-8") for brand in ("show-me-the-work", "[smtw]"))
-            and any("\uac00" <= ch <= "\ud7a3" for ch in path.read_text(encoding="utf-8"))
-        )
-        for path in files
+    surfaces = {
+        "README.ko.md": (ROOT / "README.ko.md", "show-me-the-work"),
+        "UserPromptSubmit context": (ADAPTERS / "user_prompt_submit.py", "show-me-the-work"),
+        "PreToolUse contract denial": (ROOT / "core" / "contract.py", "[smtw]"),
+        "PreToolUse goals denial": (ROOT / "core" / "gate_counters.py", "[smtw]"),
+        "PostToolUse scope warning": (ROOT / "core" / "scope_guard.py", "범위 이탈"),
+        "Stop block": (ROOT / "core" / "verify_state.py", "Show me the work."),
     }
+    observed: dict[str, bool] = {}
+    for label, (path, marker) in surfaces.items():
+        text = path.read_text(encoding="utf-8")
+        observed[label] = marker in text and any("\uac00" <= char <= "\ud7a3" for char in text)
     return all(observed.values()), _json_object(observed)
+
+
+def _prb19() -> ProbeCheck:
+    scripts: dict[str, JsonObject] = {
+        "user_prompt_submit.py": {"prompt": "app.py를 수정해줘.", "hook_event_name": "UserPromptSubmit"},
+        "pre_tool_use.py": {"tool_name": "Edit", "tool_input": {"file_path": "app.py"}, "hook_event_name": "PreToolUse"},
+        "post_tool_use.py": {"tool_name": "Edit", "tool_response": {"success": True}, "hook_event_name": "PostToolUse"},
+        "stop.py": {"last_assistant_message": "완료했습니다.", "hook_event_name": "Stop"},
+    }
+    with _project() as root:
+        observed = {
+            script: _run_hook(
+                script,
+                {"cwd": str(root), "session_id": "prb19", **payload},
+                force_enable=False,
+            )
+            for script, payload in scripts.items()
+        }
+        project_state = (root / ".fable-lite").exists()
+        plugin_state = (root.parent / "plugin-data").exists()
+        passed = all(_object(result.get("json")) == {} for result in observed.values())
+        return passed and not project_state and not plugin_state, _json_object({
+            "hooks": observed,
+            "project_state_exists": project_state,
+            "plugin_state_exists": plugin_state,
+        })
+
+
+def _prb20() -> ProbeCheck:
+    with _project() as root:
+        common = {"cwd": str(root), "session_id": "prb20", "prompt_id": "prb20-prompt"}
+        submit = _run_hook("user_prompt_submit.py", {
+            **common,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "현재 상태 알려줘.",
+        })
+        pre = _run_hook("pre_tool_use.py", {
+            **common,
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "app.py"},
+            "tool_use_id": "prb20-edit",
+        })
+        _write(root / "app.py", "promoted\n")
+        post = _run_hook("post_tool_use.py", {
+            **common,
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "app.py"},
+            "tool_response": {"filePath": "app.py", "success": True},
+            "tool_use_id": "prb20-edit",
+        })
+        stop = _run_hook("stop.py", {
+            **common,
+            "hook_event_name": "Stop",
+            "last_assistant_message": "완료했습니다.",
+        })
+        ledger = _ledger(root)
+        changed = ledger.get("changed_files_seen")
+        quiet = all(_object(item.get("json")) == {} for item in (submit, pre, post))
+        passed = (
+            quiet
+            and _decision(stop) == "block"
+            and ledger.get("task_mode") == "normal"
+            and isinstance(changed, list)
+            and "app.py" in changed
+        )
+        return passed, {
+            "submit": _object(submit.get("json")),
+            "pre": _object(pre.get("json")),
+            "post": _object(post.get("json")),
+            "stop": _object(stop.get("json")),
+            "ledger": ledger,
+        }
 
 
 def build_results() -> list[JsonObject]:
@@ -320,6 +434,8 @@ def build_results() -> list[JsonObject]:
         _auto("PRB-16", "Stop 2회 상한", _prb16()),
         _auto("PRB-17", ".fable-lite 단일 상태 디렉토리", _prb17()),
         _auto("PRB-18", "AC10 언어 표면 스캔", _prb18()),
+        _auto("PRB-19", "v2.2 비활성 무음·무상태", _prb19()),
+        _auto("PRB-20", "v2.2 quick mutation 승격", _prb20()),
     ]
 
 

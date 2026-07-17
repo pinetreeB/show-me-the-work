@@ -45,16 +45,16 @@
                 "changed_files_seen": [
                   "index.html"
                 ],
-                "current_snapshot_id": "blake2b-256:a737455eca3caf14944514b21ca0e98443f58d0db5c61a9e2bb118c3980f66cc",
+                "current_snapshot_id": "blake2b-256:308e12b9d57ea148e30debedfd25f5704ec8bb6141f401435a9fa1939782a951",
                 "event_seq": 5,
-                "finish_requested_at": "2026-07-16T09:10:33.998650+00:00",
+                "finish_requested_at": "2026-07-17T09:20:11.877216+00:00",
                 "finish_requested_seq": 4,
                 "finish_state": "finish_requested",
                 "goals_blocks": 0,
                 "intent_blocks": 0,
                 "intent_required": false,
                 "last_change_seq": 2,
-                "last_event_at": "2026-07-16T09:10:34.139216+00:00",
+                "last_event_at": "2026-07-17T09:20:12.069943+00:00",
                 "needs_goals": false,
                 "packs": [
                   "verification-grounding"
@@ -86,7 +86,7 @@
                 "scope_warnings": [],
                 "scorecard_observed": true,
                 "start_seq": 1,
-                "started_at": "2026-07-16T09:10:32.903146+00:00",
+                "started_at": "2026-07-17T09:20:11.087002+00:00",
                 "stop_blocks": 0,
                 "task_mode": "normal",
                 "turn_id": "turn:default",
@@ -115,7 +115,7 @@
                 "attribution_status": "exclusive",
                 "commit_state": "uncommitted",
                 "confidence": "1.0",
-                "current_snapshot_id": "blake2b-256:a737455eca3caf14944514b21ca0e98443f58d0db5c61a9e2bb118c3980f66cc",
+                "current_snapshot_id": "blake2b-256:308e12b9d57ea148e30debedfd25f5704ec8bb6141f401435a9fa1939782a951",
                 "event": "change",
                 "event_id": "post_tool:default:edit:change:edit",
                 "host": "claude_code",
@@ -137,11 +137,11 @@
                     "requires_verification": true
                   }
                 ],
-                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-j3jgfhbe",
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-3ol3xp2d\\project",
                 "schema_version": 2,
                 "seq": 2,
                 "session_id": "default",
-                "snapshot_after": "blake2b-256:a737455eca3caf14944514b21ca0e98443f58d0db5c61a9e2bb118c3980f66cc",
+                "snapshot_after": "blake2b-256:308e12b9d57ea148e30debedfd25f5704ec8bb6141f401435a9fa1939782a951",
                 "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
                 "source": "edit",
                 "source_confidence": "1.0",
@@ -152,7 +152,7 @@
                 "attribution_status": "exclusive",
                 "commit_state": "committed",
                 "confidence": "1.0",
-                "current_snapshot_id": "blake2b-256:a737455eca3caf14944514b21ca0e98443f58d0db5c61a9e2bb118c3980f66cc",
+                "current_snapshot_id": "blake2b-256:308e12b9d57ea148e30debedfd25f5704ec8bb6141f401435a9fa1939782a951",
                 "event": "change",
                 "event_id": "post_tool:default:edit:change:edit",
                 "host": "claude_code",
@@ -174,11 +174,11 @@
                     "requires_verification": true
                   }
                 ],
-                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-j3jgfhbe",
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-3ol3xp2d\\project",
                 "schema_version": 2,
                 "seq": 2,
                 "session_id": "default",
-                "snapshot_after": "blake2b-256:a737455eca3caf14944514b21ca0e98443f58d0db5c61a9e2bb118c3980f66cc",
+                "snapshot_after": "blake2b-256:308e12b9d57ea148e30debedfd25f5704ec8bb6141f401435a9fa1939782a951",
                 "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
                 "source": "edit",
                 "source_confidence": "1.0",
@@ -186,7 +186,7 @@
               }
             ],
             "manifest_generation": 3,
-            "manifest_snapshot_id": "blake2b-256:a737455eca3caf14944514b21ca0e98443f58d0db5c61a9e2bb118c3980f66cc",
+            "manifest_snapshot_id": "blake2b-256:308e12b9d57ea148e30debedfd25f5704ec8bb6141f401435a9fa1939782a951",
             "needs_goals": false,
             "packs": [
               "verification-grounding"
@@ -198,7 +198,7 @@
             "scope_warnings": [],
             "scorecard_cache": {
               "claude_code:default:claude": {
-                "activated_at": "2026-07-16T09:10:34.150605+00:00",
+                "activated_at": "2026-07-17T09:20:12.080882+00:00",
                 "agent": "claude",
                 "blocked_attempts": 1,
                 "by_reason": {
@@ -211,23 +211,23 @@
                 },
                 "cap_allows": 0,
                 "complete": true,
-                "first_occurred_at": "2026-07-16T09:10:34.150605+00:00",
+                "first_occurred_at": "2026-07-17T09:20:12.080882+00:00",
                 "host": "claude_code",
-                "last_occurred_at": "2026-07-16T09:10:34.150605+00:00",
+                "last_occurred_at": "2026-07-17T09:20:12.080882+00:00",
                 "latest_turn_id": "turn:default",
                 "observed": true,
                 "recovered_scope_keys": [],
                 "recovered_scopes": 0,
                 "resolved_attempts": 0,
                 "seen_event_ids": [
-                  "f1bedf1e-c667-4ba3-912c-c5f5f7247124"
+                  "55fdf9ad-65a7-4982-98b8-631c20ab51d5"
                 ],
                 "session_id": "default",
                 "unresolved_block_ids": [
-                  "f1bedf1e-c667-4ba3-912c-c5f5f7247124"
+                  "55fdf9ad-65a7-4982-98b8-631c20ab51d5"
                 ],
                 "unresolved_reasons": {
-                  "f1bedf1e-c667-4ba3-912c-c5f5f7247124": "stop.verification_missing"
+                  "55fdf9ad-65a7-4982-98b8-631c20ab51d5": "stop.verification_missing"
                 }
               }
             },
@@ -238,6 +238,7 @@
             "verification_commands": [],
             "verification_results": []
           },
+          "post": {},
           "stop": {
             "decision": "block",
             "reason": "[smtw] Stop gate: 변경 파일이 있지만 성공한 검증 증거가 없습니다. 가장 좁은 테스트/실행 관측을 수행하고 evidence를 기록하세요. / Changed files require observed successful verification.\nShow me the work."
@@ -278,7 +279,7 @@
                 "intent_blocks": 0,
                 "intent_required": false,
                 "last_change_seq": 0,
-                "last_event_at": "2026-07-16T09:10:34.929071+00:00",
+                "last_event_at": "2026-07-17T09:20:12.641290+00:00",
                 "needs_goals": true,
                 "packs": [
                   "verification-grounding",
@@ -293,7 +294,7 @@
                 "scope_warnings": [],
                 "scorecard_observed": true,
                 "start_seq": 1,
-                "started_at": "2026-07-16T09:10:34.929071+00:00",
+                "started_at": "2026-07-17T09:20:12.641290+00:00",
                 "stop_blocks": 0,
                 "task_mode": "deep",
                 "turn_id": "turn:default",
@@ -327,7 +328,7 @@
             "scope_warnings": [],
             "scorecard_cache": {
               "claude_code:default:claude": {
-                "activated_at": "2026-07-16T09:10:35.483465+00:00",
+                "activated_at": "2026-07-17T09:20:13.096595+00:00",
                 "agent": "claude",
                 "blocked_attempts": 1,
                 "by_reason": {
@@ -340,23 +341,23 @@
                 },
                 "cap_allows": 0,
                 "complete": true,
-                "first_occurred_at": "2026-07-16T09:10:35.483465+00:00",
+                "first_occurred_at": "2026-07-17T09:20:13.096595+00:00",
                 "host": "claude_code",
-                "last_occurred_at": "2026-07-16T09:10:35.483465+00:00",
+                "last_occurred_at": "2026-07-17T09:20:13.096595+00:00",
                 "latest_turn_id": "turn:default",
                 "observed": true,
                 "recovered_scope_keys": [],
                 "recovered_scopes": 0,
                 "resolved_attempts": 0,
                 "seen_event_ids": [
-                  "5e5c4480-32dd-4566-b3c5-8b1eaedd4fea"
+                  "c02668e4-0437-48e7-9e3f-e39942ce0c80"
                 ],
                 "session_id": "default",
                 "unresolved_block_ids": [
-                  "5e5c4480-32dd-4566-b3c5-8b1eaedd4fea"
+                  "c02668e4-0437-48e7-9e3f-e39942ce0c80"
                 ],
                 "unresolved_reasons": {
-                  "5e5c4480-32dd-4566-b3c5-8b1eaedd4fea": "pretool.goals_missing"
+                  "c02668e4-0437-48e7-9e3f-e39942ce0c80": "pretool.goals_missing"
                 }
               }
             },
@@ -368,8 +369,11 @@
             "verification_results": []
           },
           "pre": {
-            "decision": "block",
-            "reason": "[smtw] N2: 2+ 스토리 작업은 `.fable-lite/goals.json` 체크포인트가 먼저 필요합니다. goals plan을 작성하거나 명시 확인 후 다시 시도하세요. / Multi-story work requires a goals checkpoint first."
+            "hookSpecificOutput": {
+              "hookEventName": "PreToolUse",
+              "permissionDecision": "deny",
+              "permissionDecisionReason": "[smtw] N2: 2+ 스토리 작업은 `.fable-lite/goals.json` 체크포인트가 먼저 필요합니다. goals plan을 작성하거나 명시 확인 후 다시 시도하세요. / Multi-story work requires a goals checkpoint first."
+            }
           },
           "submit": {
             "hookSpecificOutput": {
@@ -428,13 +432,13 @@
                 "changed_files_seen": [
                   "README.md"
                 ],
-                "current_snapshot_id": "blake2b-256:173d2e5be162f2af238a982594f7da9076daa21cc719ddb063b3cfd86a76a9b6",
+                "current_snapshot_id": "blake2b-256:f8f0dba6d824bd9cad78155c3a20a72c8475418effe1886f85de33a555f32baf",
                 "event_seq": 4,
                 "goals_blocks": 0,
                 "intent_blocks": 0,
                 "intent_required": false,
                 "last_change_seq": 0,
-                "last_event_at": "2026-07-16T09:10:37.119603+00:00",
+                "last_event_at": "2026-07-17T09:20:14.620328+00:00",
                 "needs_goals": false,
                 "packs": [
                   "investigation"
@@ -465,7 +469,7 @@
                   "범위 이탈 가능성: 요청 범위 밖 파일 수정이 감지되었습니다. 근본원인 수정을 위한 사이드파일이면 무시 가능하지만 근거를 남기세요. / Potential scope drift detected; root-cause side-file edits may be valid with evidence."
                 ],
                 "start_seq": 1,
-                "started_at": "2026-07-16T09:10:36.278372+00:00",
+                "started_at": "2026-07-17T09:20:13.883176+00:00",
                 "stop_blocks": 0,
                 "task_mode": "deep",
                 "turn_id": "turn:default",
@@ -494,7 +498,7 @@
                 "attribution_status": "exclusive",
                 "commit_state": "uncommitted",
                 "confidence": "1.0",
-                "current_snapshot_id": "blake2b-256:173d2e5be162f2af238a982594f7da9076daa21cc719ddb063b3cfd86a76a9b6",
+                "current_snapshot_id": "blake2b-256:f8f0dba6d824bd9cad78155c3a20a72c8475418effe1886f85de33a555f32baf",
                 "event": "change",
                 "event_id": "post_tool:default:edit:change:edit",
                 "host": "claude_code",
@@ -516,11 +520,11 @@
                     "requires_verification": false
                   }
                 ],
-                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-208ur3sw",
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-7cjay9t5\\project",
                 "schema_version": 2,
                 "seq": 2,
                 "session_id": "default",
-                "snapshot_after": "blake2b-256:173d2e5be162f2af238a982594f7da9076daa21cc719ddb063b3cfd86a76a9b6",
+                "snapshot_after": "blake2b-256:f8f0dba6d824bd9cad78155c3a20a72c8475418effe1886f85de33a555f32baf",
                 "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
                 "source": "edit",
                 "source_confidence": "1.0",
@@ -531,7 +535,7 @@
                 "attribution_status": "exclusive",
                 "commit_state": "committed",
                 "confidence": "1.0",
-                "current_snapshot_id": "blake2b-256:173d2e5be162f2af238a982594f7da9076daa21cc719ddb063b3cfd86a76a9b6",
+                "current_snapshot_id": "blake2b-256:f8f0dba6d824bd9cad78155c3a20a72c8475418effe1886f85de33a555f32baf",
                 "event": "change",
                 "event_id": "post_tool:default:edit:change:edit",
                 "host": "claude_code",
@@ -553,11 +557,11 @@
                     "requires_verification": false
                   }
                 ],
-                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-208ur3sw",
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-7cjay9t5\\project",
                 "schema_version": 2,
                 "seq": 2,
                 "session_id": "default",
-                "snapshot_after": "blake2b-256:173d2e5be162f2af238a982594f7da9076daa21cc719ddb063b3cfd86a76a9b6",
+                "snapshot_after": "blake2b-256:f8f0dba6d824bd9cad78155c3a20a72c8475418effe1886f85de33a555f32baf",
                 "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
                 "source": "edit",
                 "source_confidence": "1.0",
@@ -565,7 +569,7 @@
               }
             ],
             "manifest_generation": 2,
-            "manifest_snapshot_id": "blake2b-256:173d2e5be162f2af238a982594f7da9076daa21cc719ddb063b3cfd86a76a9b6",
+            "manifest_snapshot_id": "blake2b-256:f8f0dba6d824bd9cad78155c3a20a72c8475418effe1886f85de33a555f32baf",
             "needs_goals": false,
             "packs": [
               "investigation"
@@ -586,8 +590,7 @@
             "hookSpecificOutput": {
               "additionalContext": "범위 이탈 가능성: 요청 범위 밖 파일 수정이 감지되었습니다. 근본원인 수정을 위한 사이드파일이면 무시 가능하지만 근거를 남기세요. / Potential scope drift detected; root-cause side-file edits may be valid with evidence.",
               "hookEventName": "PostToolUse"
-            },
-            "systemMessage": "범위 이탈 가능성: 요청 범위 밖 파일 수정이 감지되었습니다. 근본원인 수정을 위한 사이드파일이면 무시 가능하지만 근거를 남기세요. / Potential scope drift detected; root-cause side-file edits may be valid with evidence."
+            }
           }
         },
         "status": "pass"
@@ -639,7 +642,7 @@
         "observed": {
           "returncode": 0,
           "stderr_tail": "C:\\Python312\\Lib\\site-packages\\requests\\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.0.1)/charset_normalizer (3.4.4) doesn't match a supported version!\n  warnings.warn(\n",
-          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 36 items\n\ntests\\test_core_contracts.py ....................................        [100%]\n\n============================= 36 passed in 1.32s ==============================\n"
+          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 36 items\n\ntests\\test_core_contracts.py ....................................        [100%]\n\n============================= 36 passed in 0.63s ==============================\n"
         },
         "status": "pass"
       },
@@ -659,8 +662,11 @@
         "mode": "on",
         "observed": {
           "pre": {
-            "decision": "block",
-            "reason": "[smtw] R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. / High-risk edits require a valid task contract first."
+            "hookSpecificOutput": {
+              "hookEventName": "PreToolUse",
+              "permissionDecision": "deny",
+              "permissionDecisionReason": "[smtw] R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. / High-risk edits require a valid task contract first."
+            }
           }
         },
         "status": "pass"
@@ -681,8 +687,11 @@
         "mode": "on",
         "observed": {
           "pre": {
-            "decision": "block",
-            "reason": "[smtw] R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. / High-risk edits require a valid task contract first."
+            "hookSpecificOutput": {
+              "hookEventName": "PreToolUse",
+              "permissionDecision": "deny",
+              "permissionDecisionReason": "[smtw] R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. / High-risk edits require a valid task contract first."
+            }
           }
         },
         "status": "pass"
@@ -703,37 +712,33 @@
         "mode": "on",
         "observed": {
           "post_tool_use.py": {
-            "json": {
-              "systemMessage": "[smtw] fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes"
-            },
+            "json": {},
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"[smtw] fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes\"}"
+            "stdout": "{}"
           },
           "pre_tool_use.py": {
-            "json": {
-              "systemMessage": "[smtw] fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes"
-            },
+            "json": {},
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"[smtw] fail-open(게이트 오류, 통과 처리): malformed JSON payload: Expecting property name enclosed in double quotes\"}"
+            "stdout": "{}"
           },
+          "project_state_exists": false,
           "stop.py": {
-            "json": {
-              "systemMessage": "[smtw] fail-open: malformed JSON payload: Expecting property name enclosed in double quotes"
-            },
+            "json": {},
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"[smtw] fail-open: malformed JSON payload: Expecting property name enclosed in double quotes\"}"
+            "stdout": "{}"
           },
           "user_prompt_submit.py": {
             "json": {
-              "systemMessage": "[smtw] fail-open: malformed JSON payload: Expecting property name enclosed in double quotes"
+              "systemMessage": "[smtw] health: fail-open: malformed JSON payload: Expecting property name enclosed in double quotes"
             },
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"[smtw] fail-open: malformed JSON payload: Expecting property name enclosed in double quotes\"}"
-          }
+            "stdout": "{\"systemMessage\": \"[smtw] health: fail-open: malformed JSON payload: Expecting property name enclosed in double quotes\"}"
+          },
+          "visible_warning_count": 1
         },
         "status": "pass"
       },
@@ -761,7 +766,7 @@
         "observed": {
           "returncode": 0,
           "stderr_tail": "C:\\Python312\\Lib\\site-packages\\requests\\__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (7.0.1)/charset_normalizer (3.4.4) doesn't match a supported version!\n  warnings.warn(\n",
-          "stdout_tail": "===== warnings summary ===============================\ntests/test_adapters.py::test_fake_output_verification_cannot_unlock_changed_claude_turn\n  C:\\Python312\\Lib\\site-packages\\_pytest\\threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-24 (_readerthread)\n  \n  Traceback (most recent call last):\n    File \"C:\\Python312\\Lib\\threading.py\", line 1075, in _bootstrap_inner\n      self.run()\n    File \"C:\\Python312\\Lib\\threading.py\", line 1012, in run\n      self._target(*self._args, **self._kwargs)\n    File \"C:\\Python312\\Lib\\subprocess.py\", line 1599, in _readerthread\n      buffer.append(fh.read())\n                    ^^^^^^^^^\n    File \"<frozen codecs>\", line 322, in decode\n  UnicodeDecodeError: 'utf-8' codec can't decode byte 0xb0 in position 8: invalid start byte\n  \n  Enable tracemalloc to get traceback where the object was allocated.\n  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.\n    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n======================= 59 passed, 1 warning in 45.71s ========================\n"
+          "stdout_tail": "============================= test session starts =============================\nplatform win32 -- Python 3.12.8, pytest-9.0.3, pluggy-1.6.0\nrootdir: C:\\Users\\rotat\\fable-lite\nconfigfile: pyproject.toml\nplugins: anyio-4.12.1, hydra-core-1.3.2, langsmith-0.7.22, asyncio-1.3.0, typeguard-4.5.1\nasyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 59 items\n\ntests\\test_adapters.py .....................                             [ 35%]\ntests\\test_core_contracts.py ....................................        [ 96%]\ntests\\test_goals_cli.py ..                                               [100%]\n\n============================= 59 passed in 33.45s =============================\n"
         },
         "status": "pass"
       },
@@ -780,9 +785,7 @@
       "fable_lite": {
         "mode": "on",
         "observed": {
-          "stop": {
-            "systemMessage": "[smtw] Stop gate allow."
-          }
+          "stop": {}
         },
         "status": "pass"
       },
@@ -802,20 +805,16 @@
         "mode": "on",
         "observed": {
           "english": {
-            "json": {
-              "systemMessage": "[smtw] Stop gate allow."
-            },
+            "json": {},
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"[smtw] Stop gate allow.\"}"
+            "stdout": "{}"
           },
           "korean": {
-            "json": {
-              "systemMessage": "[smtw] Stop gate allow."
-            },
+            "json": {},
             "returncode": 0,
             "stderr": "",
-            "stdout": "{\"systemMessage\": \"[smtw] Stop gate allow.\"}"
+            "stdout": "{}"
           }
         },
         "status": "pass"
@@ -861,16 +860,16 @@
                 "changed_files_seen": [
                   "app.py"
                 ],
-                "current_snapshot_id": "blake2b-256:fe568fa422d3d18930fa0b9faf06b579a3caaf7b97175697f417f9edb9ea8b27",
+                "current_snapshot_id": "blake2b-256:3b292136a5d38fc41c593072f032af7118a54af9f38c0a08249181983543874e",
                 "event_seq": 5,
-                "finish_requested_at": "2026-07-16T09:11:41.535977+00:00",
+                "finish_requested_at": "2026-07-17T09:20:59.988500+00:00",
                 "finish_requested_seq": 4,
                 "finish_state": "finish_requested",
                 "goals_blocks": 0,
                 "intent_blocks": 0,
                 "intent_required": true,
                 "last_change_seq": 2,
-                "last_event_at": "2026-07-16T09:11:41.740785+00:00",
+                "last_event_at": "2026-07-17T09:21:00.090036+00:00",
                 "needs_goals": false,
                 "packs": [
                   "investigation",
@@ -903,7 +902,7 @@
                 "scope_warnings": [],
                 "scorecard_observed": true,
                 "start_seq": 1,
-                "started_at": "2026-07-16T09:11:40.711932+00:00",
+                "started_at": "2026-07-17T09:20:59.279813+00:00",
                 "stop_blocks": 0,
                 "task_mode": "deep",
                 "turn_id": "turn:default",
@@ -932,7 +931,7 @@
                 "attribution_status": "exclusive",
                 "commit_state": "uncommitted",
                 "confidence": "1.0",
-                "current_snapshot_id": "blake2b-256:fe568fa422d3d18930fa0b9faf06b579a3caaf7b97175697f417f9edb9ea8b27",
+                "current_snapshot_id": "blake2b-256:3b292136a5d38fc41c593072f032af7118a54af9f38c0a08249181983543874e",
                 "event": "change",
                 "event_id": "post_tool:default:edit:change:edit",
                 "host": "claude_code",
@@ -954,11 +953,11 @@
                     "requires_verification": true
                   }
                 ],
-                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-ngde1h2t",
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-2z82yivn\\project",
                 "schema_version": 2,
                 "seq": 2,
                 "session_id": "default",
-                "snapshot_after": "blake2b-256:fe568fa422d3d18930fa0b9faf06b579a3caaf7b97175697f417f9edb9ea8b27",
+                "snapshot_after": "blake2b-256:3b292136a5d38fc41c593072f032af7118a54af9f38c0a08249181983543874e",
                 "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
                 "source": "edit",
                 "source_confidence": "1.0",
@@ -969,7 +968,7 @@
                 "attribution_status": "exclusive",
                 "commit_state": "committed",
                 "confidence": "1.0",
-                "current_snapshot_id": "blake2b-256:fe568fa422d3d18930fa0b9faf06b579a3caaf7b97175697f417f9edb9ea8b27",
+                "current_snapshot_id": "blake2b-256:3b292136a5d38fc41c593072f032af7118a54af9f38c0a08249181983543874e",
                 "event": "change",
                 "event_id": "post_tool:default:edit:change:edit",
                 "host": "claude_code",
@@ -991,11 +990,11 @@
                     "requires_verification": true
                   }
                 ],
-                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-ngde1h2t",
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-2z82yivn\\project",
                 "schema_version": 2,
                 "seq": 2,
                 "session_id": "default",
-                "snapshot_after": "blake2b-256:fe568fa422d3d18930fa0b9faf06b579a3caaf7b97175697f417f9edb9ea8b27",
+                "snapshot_after": "blake2b-256:3b292136a5d38fc41c593072f032af7118a54af9f38c0a08249181983543874e",
                 "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
                 "source": "edit",
                 "source_confidence": "1.0",
@@ -1003,7 +1002,7 @@
               }
             ],
             "manifest_generation": 3,
-            "manifest_snapshot_id": "blake2b-256:fe568fa422d3d18930fa0b9faf06b579a3caaf7b97175697f417f9edb9ea8b27",
+            "manifest_snapshot_id": "blake2b-256:3b292136a5d38fc41c593072f032af7118a54af9f38c0a08249181983543874e",
             "needs_goals": false,
             "packs": [
               "investigation",
@@ -1016,7 +1015,7 @@
             "scope_warnings": [],
             "scorecard_cache": {
               "claude_code:default:claude": {
-                "activated_at": "2026-07-16T09:11:41.757317+00:00",
+                "activated_at": "2026-07-17T09:21:00.099852+00:00",
                 "agent": "claude",
                 "blocked_attempts": 1,
                 "by_reason": {
@@ -1029,23 +1028,23 @@
                 },
                 "cap_allows": 0,
                 "complete": true,
-                "first_occurred_at": "2026-07-16T09:11:41.757317+00:00",
+                "first_occurred_at": "2026-07-17T09:21:00.099852+00:00",
                 "host": "claude_code",
-                "last_occurred_at": "2026-07-16T09:11:41.757317+00:00",
+                "last_occurred_at": "2026-07-17T09:21:00.099852+00:00",
                 "latest_turn_id": "turn:default",
                 "observed": true,
                 "recovered_scope_keys": [],
                 "recovered_scopes": 0,
                 "resolved_attempts": 0,
                 "seen_event_ids": [
-                  "0ac00538-4561-4daf-99ea-9b2d227a6e9d"
+                  "faec3b16-9e58-485b-bb86-b4e107f16398"
                 ],
                 "session_id": "default",
                 "unresolved_block_ids": [
-                  "0ac00538-4561-4daf-99ea-9b2d227a6e9d"
+                  "faec3b16-9e58-485b-bb86-b4e107f16398"
                 ],
                 "unresolved_reasons": {
-                  "0ac00538-4561-4daf-99ea-9b2d227a6e9d": "stop.investigation_markers"
+                  "faec3b16-9e58-485b-bb86-b4e107f16398": "stop.investigation_markers"
                 }
               }
             },
@@ -1106,7 +1105,7 @@
                 "attribution_status": "exclusive",
                 "commit_state": "uncommitted",
                 "confidence": "1.0",
-                "current_snapshot_id": "blake2b-256:242f880e7ae8d3753a6651245ca16156484dedc4f660c3017bc61de3f4630c57",
+                "current_snapshot_id": "blake2b-256:97ea12b617183f4bf6f9e37c3dc53707771e13f3accca6c227a5d9356fd5509d",
                 "event": "change",
                 "event_id": "post_tool:default:edit:change:edit",
                 "host": "claude_code",
@@ -1128,11 +1127,11 @@
                     "requires_verification": true
                   }
                 ],
-                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-2lg3xyoy",
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-usmaeai4\\project",
                 "schema_version": 2,
                 "seq": 2,
                 "session_id": "default",
-                "snapshot_after": "blake2b-256:242f880e7ae8d3753a6651245ca16156484dedc4f660c3017bc61de3f4630c57",
+                "snapshot_after": "blake2b-256:97ea12b617183f4bf6f9e37c3dc53707771e13f3accca6c227a5d9356fd5509d",
                 "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
                 "source": "edit",
                 "source_confidence": "1.0",
@@ -1143,7 +1142,7 @@
                 "attribution_status": "exclusive",
                 "commit_state": "committed",
                 "confidence": "1.0",
-                "current_snapshot_id": "blake2b-256:242f880e7ae8d3753a6651245ca16156484dedc4f660c3017bc61de3f4630c57",
+                "current_snapshot_id": "blake2b-256:97ea12b617183f4bf6f9e37c3dc53707771e13f3accca6c227a5d9356fd5509d",
                 "event": "change",
                 "event_id": "post_tool:default:edit:change:edit",
                 "host": "claude_code",
@@ -1165,11 +1164,11 @@
                     "requires_verification": true
                   }
                 ],
-                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-2lg3xyoy",
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-usmaeai4\\project",
                 "schema_version": 2,
                 "seq": 2,
                 "session_id": "default",
-                "snapshot_after": "blake2b-256:242f880e7ae8d3753a6651245ca16156484dedc4f660c3017bc61de3f4630c57",
+                "snapshot_after": "blake2b-256:97ea12b617183f4bf6f9e37c3dc53707771e13f3accca6c227a5d9356fd5509d",
                 "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
                 "source": "edit",
                 "source_confidence": "1.0",
@@ -1177,7 +1176,7 @@
               }
             ],
             "manifest_generation": 5,
-            "manifest_snapshot_id": "blake2b-256:242f880e7ae8d3753a6651245ca16156484dedc4f660c3017bc61de3f4630c57",
+            "manifest_snapshot_id": "blake2b-256:97ea12b617183f4bf6f9e37c3dc53707771e13f3accca6c227a5d9356fd5509d",
             "needs_goals": false,
             "packs": [
               "investigation"
@@ -1189,7 +1188,7 @@
             "scope_warnings": [],
             "scorecard_cache": {
               "claude_code:default:claude": {
-                "activated_at": "2026-07-16T09:11:43.628317+00:00",
+                "activated_at": "2026-07-17T09:21:01.669950+00:00",
                 "agent": "claude",
                 "blocked_attempts": 2,
                 "by_reason": {
@@ -1202,27 +1201,27 @@
                 },
                 "cap_allows": 1,
                 "complete": true,
-                "first_occurred_at": "2026-07-16T09:11:43.628317+00:00",
+                "first_occurred_at": "2026-07-17T09:21:01.669950+00:00",
                 "host": "claude_code",
-                "last_occurred_at": "2026-07-16T09:11:44.584740+00:00",
+                "last_occurred_at": "2026-07-17T09:21:03.222709+00:00",
                 "latest_turn_id": "turn:default",
                 "observed": true,
                 "recovered_scope_keys": [],
                 "recovered_scopes": 0,
                 "resolved_attempts": 0,
                 "seen_event_ids": [
-                  "06e4d3b5-b954-4889-8af5-8965d01f5f4c",
-                  "31b81464-eb56-4092-9397-e04f8f23de6e",
-                  "8a27cf09-e28f-4216-8cce-c8e80fbe90ec"
+                  "93465e3e-b4c3-45c5-ad53-5b19697461ac",
+                  "2a31b549-af9d-4b27-a3ac-7d1e2ee053c0",
+                  "0041f98b-5181-4055-baef-48591dc16f76"
                 ],
                 "session_id": "default",
                 "unresolved_block_ids": [
-                  "06e4d3b5-b954-4889-8af5-8965d01f5f4c",
-                  "31b81464-eb56-4092-9397-e04f8f23de6e"
+                  "93465e3e-b4c3-45c5-ad53-5b19697461ac",
+                  "2a31b549-af9d-4b27-a3ac-7d1e2ee053c0"
                 ],
                 "unresolved_reasons": {
-                  "06e4d3b5-b954-4889-8af5-8965d01f5f4c": "stop.verification_missing",
-                  "31b81464-eb56-4092-9397-e04f8f23de6e": "stop.verification_missing"
+                  "2a31b549-af9d-4b27-a3ac-7d1e2ee053c0": "stop.verification_missing",
+                  "93465e3e-b4c3-45c5-ad53-5b19697461ac": "stop.verification_missing"
                 }
               }
             },
@@ -1278,11 +1277,12 @@
       "fable_lite": {
         "mode": "on",
         "observed": {
+          "PostToolUse scope warning": true,
+          "PreToolUse contract denial": true,
+          "PreToolUse goals denial": true,
           "README.ko.md": true,
-          "post_tool_use.py": true,
-          "pre_tool_use.py": true,
-          "stop.py": true,
-          "user_prompt_submit.py": true
+          "Stop block": true,
+          "UserPromptSubmit context": true
         },
         "status": "pass"
       },
@@ -1290,13 +1290,311 @@
       "kind": "deterministic",
       "status": "pass",
       "title": "AC10 언어 표면 스캔"
+    },
+    {
+      "baseline": {
+        "expected": "hook not invoked; no gate output or ledger mutation",
+        "mode": "off",
+        "observed": "not_run",
+        "status": "pass"
+      },
+      "fable_lite": {
+        "mode": "on",
+        "observed": {
+          "hooks": {
+            "post_tool_use.py": {
+              "json": {},
+              "returncode": 0,
+              "stderr": "",
+              "stdout": "{}"
+            },
+            "pre_tool_use.py": {
+              "json": {},
+              "returncode": 0,
+              "stderr": "",
+              "stdout": "{}"
+            },
+            "stop.py": {
+              "json": {},
+              "returncode": 0,
+              "stderr": "",
+              "stdout": "{}"
+            },
+            "user_prompt_submit.py": {
+              "json": {},
+              "returncode": 0,
+              "stderr": "",
+              "stdout": "{}"
+            }
+          },
+          "plugin_state_exists": false,
+          "project_state_exists": false
+        },
+        "status": "pass"
+      },
+      "id": "PRB-19",
+      "kind": "deterministic",
+      "status": "pass",
+      "title": "v2.2 비활성 무음·무상태"
+    },
+    {
+      "baseline": {
+        "expected": "hook not invoked; no gate output or ledger mutation",
+        "mode": "off",
+        "observed": "not_run",
+        "status": "pass"
+      },
+      "fable_lite": {
+        "mode": "on",
+        "observed": {
+          "ledger": {
+            "active_turns": {
+              "claude_code:prb20:claude": {
+                "agent": "claude",
+                "ambiguity_score": 0,
+                "baseline_snapshot_id": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
+                "baseline_status": "ready",
+                "blocks": {
+                  "stop": 1
+                },
+                "change_audit": [
+                  {
+                    "after": "blake2b-256:7767c7dc9aa18ca3848b27d71e76ce294b4f5d6b26577a8add095f7d4352943e",
+                    "attribution": "external",
+                    "canonical_key": "app.py",
+                    "change_event_id": "prb20-edit:change:edit",
+                    "change_id": "blake2b-256:b1f055f2acd5db8dafe6ac6a585731d4f954f6d5d1535111b6584488cec57dbd",
+                    "path": "app.py"
+                  }
+                ],
+                "change_kinds": [
+                  "code"
+                ],
+                "changed_files_seen": [
+                  "app.py"
+                ],
+                "current_snapshot_id": "blake2b-256:edee9f3392069bb0de2b403381404ff7a91ddc3ef78ee8ca64ffb069c70e617c",
+                "event_seq": 6,
+                "finish_requested_at": "2026-07-17T09:21:07.157748+00:00",
+                "finish_requested_seq": 5,
+                "finish_state": "finish_requested",
+                "goals_blocks": 0,
+                "intent_blocks": 0,
+                "intent_required": false,
+                "invocations": {
+                  "prb20-edit": {
+                    "candidate_paths": [
+                      "app.py"
+                    ],
+                    "completed_at": "2026-07-17T09:21:06.744349+00:00",
+                    "completed_seq": 3,
+                    "started_at": "2026-07-17T09:21:06.083478+00:00",
+                    "started_seq": 2,
+                    "status": "closed"
+                  }
+                },
+                "last_change_seq": 3,
+                "last_event_at": "2026-07-17T09:21:07.289821+00:00",
+                "needs_goals": false,
+                "packs": [],
+                "path_baselines": {
+                  "app.py": null
+                },
+                "path_revisions": {
+                  "app.py": {
+                    "after": "blake2b-256:7767c7dc9aa18ca3848b27d71e76ce294b4f5d6b26577a8add095f7d4352943e",
+                    "attribution": "external",
+                    "change_event_id": "prb20-edit:change:edit",
+                    "change_id": "blake2b-256:b1f055f2acd5db8dafe6ac6a585731d4f954f6d5d1535111b6584488cec57dbd",
+                    "manifest_generation": 2,
+                    "path": "app.py",
+                    "requires_verification": true,
+                    "revision_seq": 3
+                  }
+                },
+                "pending_change_ids": [
+                  "blake2b-256:b1f055f2acd5db8dafe6ac6a585731d4f954f6d5d1535111b6584488cec57dbd"
+                ],
+                "prompt": "현재 상태 알려줘.",
+                "provenance_incomplete": false,
+                "provenance_mutation_capable": true,
+                "provenance_status": "complete",
+                "provenance_status_reason": "",
+                "requires_investigation_compliance": false,
+                "scope_warnings": [],
+                "scorecard_observed": true,
+                "start_seq": 1,
+                "started_at": "2026-07-17T09:21:06.040938+00:00",
+                "stop_blocks": 0,
+                "task_mode": "normal",
+                "turn_id": "prb20-prompt",
+                "verification_commands": [],
+                "verification_results": []
+              }
+            },
+            "agent": "claude",
+            "ambiguity_score": 0,
+            "attribution_capacity_exceeded": false,
+            "attribution_degraded": false,
+            "change_kinds": [
+              "code"
+            ],
+            "changed_files_seen": [
+              "app.py"
+            ],
+            "event_seq": 6,
+            "goals_blocks": 0,
+            "intent_blocks": 0,
+            "intent_required": false,
+            "last_change_seq": 3,
+            "manifest_event_journal": [
+              {
+                "agent": "claude",
+                "attribution_status": "exclusive",
+                "commit_state": "uncommitted",
+                "confidence": "1.0",
+                "current_snapshot_id": "blake2b-256:edee9f3392069bb0de2b403381404ff7a91ddc3ef78ee8ca64ffb069c70e617c",
+                "event": "change",
+                "event_id": "prb20-edit:change:edit",
+                "host": "claude_code",
+                "invocation_id": "prb20-edit",
+                "manifest_generation": 2,
+                "observed_at": "post_tool",
+                "observed_by": [
+                  "claude_code:prb20:claude"
+                ],
+                "owner": "claude_code:prb20:claude",
+                "paths": [
+                  {
+                    "after": "blake2b-256:7767c7dc9aa18ca3848b27d71e76ce294b4f5d6b26577a8add095f7d4352943e",
+                    "before": null,
+                    "change_id": "blake2b-256:b1f055f2acd5db8dafe6ac6a585731d4f954f6d5d1535111b6584488cec57dbd",
+                    "kind": "code",
+                    "op": "create",
+                    "path": "app.py",
+                    "requires_verification": true
+                  }
+                ],
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-lrvvqos8\\project",
+                "schema_version": 2,
+                "seq": 3,
+                "session_id": "prb20",
+                "snapshot_after": "blake2b-256:edee9f3392069bb0de2b403381404ff7a91ddc3ef78ee8ca64ffb069c70e617c",
+                "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
+                "source": "edit",
+                "source_confidence": "1.0",
+                "turn_id": "prb20-prompt"
+              },
+              {
+                "agent": "claude",
+                "attribution_status": "exclusive",
+                "commit_state": "committed",
+                "confidence": "1.0",
+                "current_snapshot_id": "blake2b-256:edee9f3392069bb0de2b403381404ff7a91ddc3ef78ee8ca64ffb069c70e617c",
+                "event": "change",
+                "event_id": "prb20-edit:change:edit",
+                "host": "claude_code",
+                "invocation_id": "prb20-edit",
+                "manifest_generation": 2,
+                "observed_at": "post_tool",
+                "observed_by": [
+                  "claude_code:prb20:claude"
+                ],
+                "owner": "claude_code:prb20:claude",
+                "paths": [
+                  {
+                    "after": "blake2b-256:7767c7dc9aa18ca3848b27d71e76ce294b4f5d6b26577a8add095f7d4352943e",
+                    "before": null,
+                    "change_id": "blake2b-256:b1f055f2acd5db8dafe6ac6a585731d4f954f6d5d1535111b6584488cec57dbd",
+                    "kind": "code",
+                    "op": "create",
+                    "path": "app.py",
+                    "requires_verification": true
+                  }
+                ],
+                "project_root": "C:\\Users\\Public\\Documents\\ESTsoft\\CreatorTemp\\fable-lite-probe-lrvvqos8\\project",
+                "schema_version": 2,
+                "seq": 3,
+                "session_id": "prb20",
+                "snapshot_after": "blake2b-256:edee9f3392069bb0de2b403381404ff7a91ddc3ef78ee8ca64ffb069c70e617c",
+                "snapshot_before": "blake2b-256:1dae58ba6177dc7db46aba11a4b17d76ade83c2469fc41ef2fb28d0b2db3dd01",
+                "source": "edit",
+                "source_confidence": "1.0",
+                "turn_id": "prb20-prompt"
+              }
+            ],
+            "manifest_generation": 3,
+            "manifest_snapshot_id": "blake2b-256:edee9f3392069bb0de2b403381404ff7a91ddc3ef78ee8ca64ffb069c70e617c",
+            "needs_goals": false,
+            "packs": [],
+            "path_attribution": {},
+            "prompt": "현재 상태 알려줘.",
+            "requires_investigation_compliance": false,
+            "schema_version": 2,
+            "scope_warnings": [],
+            "scorecard_cache": {
+              "claude_code:prb20:claude": {
+                "activated_at": "2026-07-17T09:21:07.297657+00:00",
+                "agent": "claude",
+                "blocked_attempts": 1,
+                "by_reason": {
+                  "stop.verification_missing": {
+                    "blocked_attempts": 1,
+                    "cap_allows": 0,
+                    "recovered_scopes": 0,
+                    "resolved_attempts": 0
+                  }
+                },
+                "cap_allows": 0,
+                "complete": true,
+                "first_occurred_at": "2026-07-17T09:21:07.297657+00:00",
+                "host": "claude_code",
+                "last_occurred_at": "2026-07-17T09:21:07.297657+00:00",
+                "latest_turn_id": "prb20-prompt",
+                "observed": true,
+                "recovered_scope_keys": [],
+                "recovered_scopes": 0,
+                "resolved_attempts": 0,
+                "seen_event_ids": [
+                  "abc8dbd4-f0a8-482f-9e6b-1e1c09e3a887"
+                ],
+                "session_id": "prb20",
+                "unresolved_block_ids": [
+                  "abc8dbd4-f0a8-482f-9e6b-1e1c09e3a887"
+                ],
+                "unresolved_reasons": {
+                  "abc8dbd4-f0a8-482f-9e6b-1e1c09e3a887": "stop.verification_missing"
+                }
+              }
+            },
+            "scorecard_evicted_keys": [],
+            "scorecard_journal_offset": 355,
+            "stop_blocks": 1,
+            "task_mode": "normal",
+            "verification_commands": [],
+            "verification_results": []
+          },
+          "post": {},
+          "pre": {},
+          "stop": {
+            "decision": "block",
+            "reason": "[smtw] Stop gate: 변경 파일이 있지만 성공한 검증 증거가 없습니다. 가장 좁은 테스트/실행 관측을 수행하고 evidence를 기록하세요. / Changed files require observed successful verification.\nShow me the work."
+          },
+          "submit": {}
+        },
+        "status": "pass"
+      },
+      "id": "PRB-20",
+      "kind": "deterministic",
+      "status": "pass",
+      "title": "v2.2 quick mutation 승격"
     }
   ],
   "schema": "fable-lite.probes.v1",
   "summary": {
     "fail": 0,
     "manual": 3,
-    "pass": 15,
-    "total": 18
+    "pass": 17,
+    "total": 20
   }
 }
