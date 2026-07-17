@@ -9,6 +9,7 @@ from importlib import import_module
 import json
 import os
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -31,6 +32,8 @@ else:
     _remove_lock = _atomic_file.remove_lock
 
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+GC_MAX_ENTRIES = 128
+GC_TIME_BUDGET_SECONDS = 0.025
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +60,10 @@ class TurnRecord:
     mode: str
     context_emitted: bool
     updated_at: str
+
+
+class QuickPromotionPersistenceError(RuntimeError):
+    pass
 
 
 def session_digest(session_id: str) -> str:
@@ -148,8 +155,18 @@ def promote_quick(
         if record is None or record.mode != "quick":
             yield False
             return
-        yield True
-        _atomic_write(path, asdict(replace(record, mode="normal", updated_at=_now())))
+        try:
+            yield True
+        finally:
+            try:
+                _atomic_write(
+                    path,
+                    asdict(replace(record, mode="normal", updated_at=_now())),
+                )
+            except (OSError, TypeError, ValueError) as exc:
+                raise QuickPromotionPersistenceError(
+                    "quick promotion could not be persisted"
+                ) from exc
 
 
 def mark_context_emitted(
@@ -187,17 +204,26 @@ def warn_once(data_dir: Path, session_id: str, code: str) -> bool:
 def gc_stale(data_dir: Path, keep_session_id: str) -> None:
     keep = registry_path(data_dir, keep_session_id)
     cutoff = datetime.now(timezone.utc).timestamp() - SESSION_TTL_SECONDS
+    deadline = monotonic() + GC_TIME_BUDGET_SECONDS
+    checked = 0
     for directory in ("sessions", "turns", "warnings"):
         parent = data_dir / directory
         if not parent.exists():
             continue
-        for path in parent.glob("*.json"):
-            if path == keep:
-                continue
-            existed = path.exists()
-            _remove_if_stale(path, cutoff)
-            if existed and not path.exists():
-                _remove_lock(path)
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                if checked >= GC_MAX_ENTRIES or monotonic() >= deadline:
+                    return
+                checked += 1
+                if not entry.name.endswith(".json"):
+                    continue
+                path = Path(entry.path)
+                if path == keep:
+                    continue
+                existed = path.exists()
+                _remove_if_stale(path, cutoff)
+                if existed and not path.exists():
+                    _remove_lock(path)
 
 
 def cleanup_session(data_dir: Path, session_id: str) -> None:

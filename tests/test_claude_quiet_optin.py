@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import time
 
 import pytest
 
@@ -192,6 +194,55 @@ def test_corrupt_ledger_warns_once_and_is_recovered(tmp_path: Path) -> None:
     assert str(first.output.get("systemMessage", "")).startswith("[smtw] health:")
     assert "systemMessage" not in second.output
     assert list(ledger.parent.glob("ledger.json.corrupt-*.bak"))
+
+
+def test_inactive_corrupt_config_garbage_collects_global_warnings_only(
+    tmp_path: Path,
+) -> None:
+    # Given: an inactive corrupt config and a stale global warning artifact.
+    root = tmp_path / "project"
+    root.mkdir()
+    config = write_config(root)
+    config.write_text("{", encoding="utf-8")
+    data_dir = tmp_path / "plugin-data"
+    stale_warning = data_dir / "warnings" / "stale.json"
+    stale_warning.parent.mkdir(parents=True)
+    stale_warning.write_text("{}", encoding="utf-8")
+    stale_time = time.time() - 8 * 24 * 60 * 60
+    os.utime(stale_warning, (stale_time, stale_time))
+    project_files_before = sorted(
+        path.relative_to(root) for path in root.rglob("*") if path.is_file()
+    )
+
+    # When: inactive UserPromptSubmit emits its one health warning.
+    result = HookHarness(root, root, data_dir).run(
+        "user_prompt_submit.py",
+        _prompt(root, "inactive-corrupt", "app.py 수정"),
+    )
+
+    # Then: stale global state is bounded without any new project-local write.
+    project_files_after = sorted(
+        path.relative_to(root) for path in root.rglob("*") if path.is_file()
+    )
+    assert str(result.output.get("systemMessage", "")).startswith("[smtw] health:")
+    assert stale_warning.exists() is False
+    assert project_files_after == project_files_before
+    assert ledger_path(root).exists() is False
+
+
+def test_docs_disclose_initial_cwd_fallback_trust_boundary() -> None:
+    # Given: the v2.2 spec and both operator-facing READMEs.
+    root = Path(__file__).resolve().parents[1]
+    spec = (root / "docs" / "specs" / "v2.2-quiet-optin.md").read_text(
+        encoding="utf-8"
+    )
+    english = (root / "README.md").read_text(encoding="utf-8")
+    korean = (root / "README.ko.md").read_text(encoding="utf-8")
+
+    # Then: each document states that initial cwd fallback is only best-effort.
+    assert "cwd fallback is best-effort" in spec
+    assert "cwd fallback is best-effort" in english
+    assert "cwd 폴백은 best-effort" in korean
 
 
 def test_stop_prefers_last_assistant_message_over_transcript(tmp_path: Path) -> None:

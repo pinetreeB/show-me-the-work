@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         promote_quick_turn,
         response,
     )
+    from adapters.claude_code.session_registry import QuickPromotionPersistenceError
 else:
     _bootstrap_module = import_module(
         "adapters.claude_code.bootstrap" if __package__ else "bootstrap"
@@ -27,6 +28,10 @@ else:
     fail_open = _bootstrap_module.fail_open
     promote_quick_turn = _bootstrap_module.promote_quick_turn
     response = _bootstrap_module.response
+    _registry_module = import_module(
+        "adapters.claude_code.session_registry" if __package__ else "session_registry"
+    )
+    QuickPromotionPersistenceError = _registry_module.QuickPromotionPersistenceError
 
 
 def _deny(reason: str) -> JsonObject:
@@ -174,9 +179,12 @@ def main() -> int:
             )
             if read_only:
                 return emit(response(context, {}))
-            with promote_quick_turn(context) as claimed:
-                if claimed:
-                    _promote_project_turn(context, payload)
+            try:
+                with promote_quick_turn(context) as claimed:
+                    if claimed:
+                        _promote_project_turn(context, payload)
+            except QuickPromotionPersistenceError as exc:
+                return emit(response(context, _deny(f"[smtw] health: {exc}")))
 
         from core.adapter_observation import begin_invocation, resolve_active_invocation
 

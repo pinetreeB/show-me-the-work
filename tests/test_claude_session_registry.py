@@ -6,7 +6,11 @@ import os
 from pathlib import Path
 import time
 
+import pytest
+
+from adapters.claude_code import session_registry
 from adapters.claude_code.session_registry import (
+    gc_stale,
     load_turn,
     promote_quick,
     save_turn,
@@ -179,7 +183,90 @@ def test_user_prompt_gc_and_session_end_remove_registry(tmp_path: Path) -> None:
     assert "SessionEnd" in entries
 
 
-def test_concurrent_same_session_root_is_write_once(tmp_path: Path) -> None:
+def test_gc_stale_checks_at_most_one_bounded_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: more global warning entries than one GC batch permits.
+    data_dir = tmp_path / "plugin-data"
+    warnings = data_dir / "warnings"
+    warnings.mkdir(parents=True)
+    for index in range(session_registry.GC_MAX_ENTRIES + 5):
+        (warnings / f"{index:04d}.json").write_text("{}", encoding="utf-8")
+    checked: list[Path] = []
+    monkeypatch.setattr(session_registry, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(
+        session_registry,
+        "_remove_if_stale",
+        lambda path, _cutoff: checked.append(path),
+    )
+
+    # When: one UserPromptSubmit GC pass runs.
+    gc_stale(data_dir, "current")
+
+    # Then: it never starts work beyond the configured entry batch.
+    assert len(checked) == session_registry.GC_MAX_ENTRIES
+
+
+def test_gc_stale_stops_starting_work_after_time_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: pending global entries and a monotonic clock crossing the deadline.
+    data_dir = tmp_path / "plugin-data"
+    warnings = data_dir / "warnings"
+    warnings.mkdir(parents=True)
+    for index in range(3):
+        (warnings / f"{index:04d}.json").write_text("{}", encoding="utf-8")
+    checked: list[Path] = []
+    clock = iter((0.0, 0.0, 1.0))
+    monkeypatch.setattr(session_registry, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(
+        session_registry,
+        "_remove_if_stale",
+        lambda path, _cutoff: checked.append(path),
+    )
+
+    # When: one entry is checked and the cooperative deadline expires.
+    gc_stale(data_dir, "current")
+
+    # Then: no second filesystem operation starts after the time budget.
+    assert len(checked) == 1
+
+
+def test_session_end_emits_latched_root_mismatch_warning(tmp_path: Path) -> None:
+    # Given: an active session latched to one root ends with a different env root.
+    latched_root = tmp_path / "latched"
+    env_root = tmp_path / "from-env"
+    for root in (latched_root, env_root):
+        root.mkdir()
+        write_config(root)
+    data_dir = tmp_path / "plugin-data"
+    session_id = "session-end-mismatch"
+    _ = HookHarness(latched_root, latched_root, data_dir).run(
+        "user_prompt_submit.py",
+        _prompt(latched_root, session_id),
+    )
+
+    # When: SessionEnd bootstraps the mismatch and cleans session state.
+    ended = HookHarness(env_root, env_root, data_dir).run(
+        "session_end.py",
+        {
+            "cwd": str(env_root),
+            "hook_event_name": "SessionEnd",
+            "reason": "clear",
+            "session_id": session_id,
+        },
+    )
+
+    # Then: cleanup completes without discarding the one health warning.
+    assert str(ended.output.get("systemMessage", "")).startswith("[smtw] health:")
+    assert registry_path(data_dir, session_id).exists() is False
+
+
+def test_concurrent_same_session_latch_stays_write_once_with_env_roots(
+    tmp_path: Path,
+) -> None:
     # Given: two enabled roots racing to bind the same session id.
     roots = (tmp_path / "one", tmp_path / "two")
     for root in roots:
@@ -200,12 +287,45 @@ def test_concurrent_same_session_root_is_write_once(tmp_path: Path) -> None:
             )
         )
 
-    # Then: one canonical root wins permanently and the loser never creates ledger.
+    # Then: one canonical root wins permanently while each explicit env root is used.
     registry = read_json(registry_path(data_dir, session_id))
     winning_root = Path(str(registry["root"]))
     assert winning_root in roots
-    assert sum(ledger_path(root).exists() for root in roots) == 1
+    assert all(ledger_path(root).exists() for root in roots)
     assert sum("systemMessage" in result.output for result in results) == 1
+
+
+def test_env_root_is_effective_without_rebinding_existing_latch(
+    tmp_path: Path,
+) -> None:
+    # Given: one session is already latched to an enabled project.
+    latched_root = tmp_path / "latched"
+    env_root = tmp_path / "from-env"
+    for root in (latched_root, env_root):
+        root.mkdir()
+        write_config(root)
+    data_dir = tmp_path / "plugin-data"
+    session_id = "env-root-precedence"
+    _ = HookHarness(latched_root, latched_root, data_dir).run(
+        "user_prompt_submit.py",
+        _prompt(latched_root, session_id),
+    )
+    original = read_json(registry_path(data_dir, session_id))
+    second_prompt = _prompt(env_root, session_id)
+    second_prompt["prompt_id"] = "prompt-env-root"
+    third_prompt = _prompt(env_root, session_id)
+    third_prompt["prompt_id"] = "prompt-env-root-again"
+    harness = HookHarness(env_root, env_root, data_dir)
+
+    # When: later hooks carry a different authoritative CLAUDE_PROJECT_DIR.
+    first_mismatch = harness.run("user_prompt_submit.py", second_prompt)
+    repeated_mismatch = harness.run("user_prompt_submit.py", third_prompt)
+
+    # Then: hooks use env, the registry stays write-once, and warning is once.
+    assert ledger_path(env_root).exists()
+    assert read_json(registry_path(data_dir, session_id))["root"] == original["root"]
+    assert "systemMessage" in first_mismatch.output
+    assert "systemMessage" not in repeated_mismatch.output
 
 
 def test_concurrent_sessions_and_subagents_keep_identity_separate(

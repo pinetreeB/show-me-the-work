@@ -131,6 +131,14 @@ user home directory is always disabled. `SMTW_TEST_FORCE_ENABLE=1` bypasses
 the config check only for automated adapter tests and must not be used for
 normal or production sessions.
 
+Initial `cwd fallback is best-effort`, not a security boundary: before Claude
+provides `CLAUDE_PROJECT_DIR` or a session root is latched, a forged hook
+payload/cwd can steer the initial upward config search. Once present, the env
+root is effective for that hook and the write-once latch remains unchanged.
+For a corrupt inactive config, a once-per-session warning and TTL cleanup may
+write only under global plugin data; the inactive project tree is never
+written.
+
 Recommended local-clone install:
 
 ```
