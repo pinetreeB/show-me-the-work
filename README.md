@@ -123,6 +123,14 @@ User state remains under `.fable-lite/`. The main ledger, goals, intent/contract
 
 **Requires Python 3.12+ on PATH in the target environment** — the hooks are stdlib-Python scripts, so a host without a resolvable `python` (e.g. a fresh worker box) must install it first. No third-party packages.
 
+Claude Code supervision is a quiet per-project opt-in. Create
+`<project>/.fable-lite/config.json` with exactly
+`{"schema_version":1,"supervision":true}` to enable it. A missing config,
+`false`, or a non-boolean value leaves every hook as a silent no-op; the exact
+user home directory is always disabled. `SMTW_TEST_FORCE_ENABLE=1` bypasses
+the config check only for automated adapter tests and must not be used for
+normal or production sessions.
+
 Recommended local-clone install:
 
 ```

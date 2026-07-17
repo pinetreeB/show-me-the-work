@@ -111,6 +111,14 @@ Claude Code 플러그인 manifest는 `.claude-plugin/plugin.json`에 있으며, 
 
 > **전제: 대상 환경에 Python 3.12+가 PATH에 있어야 합니다.** 훅이 stdlib Python 스크립트이므로, `python`이 없는 호스트(예: 새 워커 노트북)는 먼저 Python을 설치해야 합니다. 외부 패키지 의존은 없습니다.
 
+Claude Code 감독은 프로젝트별 quiet opt-in입니다.
+`<프로젝트>/.fable-lite/config.json`에
+`{"schema_version":1,"supervision":true}`를 정확히 두어야 활성화됩니다.
+config가 없거나 `false` 또는 비불리언 값이면 모든 훅이 조용히 no-op하며,
+사용자 홈 디렉토리 자체에서는 항상 비활성입니다.
+`SMTW_TEST_FORCE_ENABLE=1`은 어댑터 자동 테스트에서만 config 판정을
+우회하는 테스트 전용 스위치이며 일반·운영 세션에서 사용하면 안 됩니다.
+
 권장 설치는 로컬 클론을 먼저 Claude Code marketplace에 등록하는 방식입니다.
 
 ```powershell
