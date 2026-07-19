@@ -437,6 +437,12 @@ def _human_coordination(result: JsonObject) -> str:
         f"Coordination Scorecard · complete={str(result['complete']).lower()}",
         _human_period(result.get("period")),
     ]
+    period = result.get("period")
+    if isinstance(period, dict) and period.get("mode") != "all":
+        lines.append(
+            "참고: 기간·세션 필터는 entered/recovered를 독립적으로 적용하므로 "
+            "대응 이벤트가 선택 범위 밖일 수 있습니다."
+        )
     rows = result.get("coordination")
     if not isinstance(rows, list) or not rows:
         return "\n".join([*lines, "표시할 coordination 이벤트가 없습니다."])

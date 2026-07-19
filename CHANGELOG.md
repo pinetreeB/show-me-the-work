@@ -11,6 +11,10 @@
 - PreToolUse denials emit `hookSpecificOutput.permissionDecision: "deny"` instead of the deprecated top-level `decision: "block"`.
 - Test harness: suite is hermetic against shared plugin-data state (`SMTW_TEST_FORCE_ENABLE=1` isolates per test); verified green on two heterogeneous runner environments plus a hostile shared-state environment.
 
+### Known Limitations
+
+- Turn bootstrap baseline persistence, ledger transition, and coordination observation use separate transactions to avoid lock re-entry; coordination IDs enforce one recovered observation per actor and turn, but the three operations are not a single atomic transaction.
+
 ## [2.1.1] - 2026-07-16
 
 ### Fixed
