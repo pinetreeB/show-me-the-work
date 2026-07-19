@@ -11,6 +11,11 @@ from core.adapter_observation import CanonicalInvocation, begin_invocation
 from core.ledger import JsonValue, load_ledger, record_event
 from core.provenance_lifecycle import ProvenanceLifecycle, adjust_snapshot_for_peer_activity
 from core.provenance_turn_resume import TurnBootstrapError
+from core.scorecard_coordination import (
+    CoordinationOutcome,
+    CoordinationReason,
+    load_coordination_journal,
+)
 from core.provenance_types import (
     EntryKind,
     ManifestEntry,
@@ -317,3 +322,40 @@ def test_pretool_peer_rescue_atomically_recovers_missing_turn_without_posttool(
     # And: even if PostToolUse fails open and records nothing, Stop is not stale-incomplete.
     decision = evaluate_without_io(ledger, caller)
     assert decision["decision"] == "allow"
+    coordination = load_coordination_journal(tmp_path)
+    assert coordination.complete is True
+    assert [item.actor.agent_key for item in coordination.events] == [
+        "host:caller-session:caller",
+        "host:caller-session:caller",
+    ]
+    assert [item.actor_turn_id for item in coordination.events] == [
+        "caller-turn",
+        "caller-turn",
+    ]
+    assert [item.outcome for item in coordination.events] == [
+        CoordinationOutcome.ENTERED,
+        CoordinationOutcome.RECOVERED,
+    ]
+    assert [item.reason_code for item in coordination.events] == [
+        CoordinationReason.TURN_NOT_STARTED,
+        CoordinationReason.COMPLETE,
+    ]
+
+    # A routine later invocation must not inflate the one recovery observation.
+    _ = begin_invocation(
+        tmp_path,
+        CanonicalInvocation(
+            "host",
+            "caller",
+            "caller-session",
+            "caller-turn",
+            "edit-2",
+            "pre_tool",
+            "edit",
+            ("later.py",),
+            "",
+            True,
+            "",
+        ),
+    )
+    assert len(load_coordination_journal(tmp_path).events) == 2
