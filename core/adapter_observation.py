@@ -406,6 +406,9 @@ def _record_invocation(
     if baseline_snapshot_id:
         payload["baseline_status"] = "ready"
         payload["baseline_snapshot_id"] = baseline_snapshot_id
+        payload["provenance_incomplete"] = False
+        payload["provenance_status"] = ProvenanceStatus.COMPLETE.value
+        payload["provenance_status_reason"] = ""
     _ = record_event(payload)
 
 

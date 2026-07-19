@@ -20,6 +20,7 @@ from core.provenance_types import (
     Snapshot,
 )
 from core.verification_covers import active_turn
+from core.verify_state import evaluate_without_io
 
 
 def _snapshot(
@@ -247,3 +248,72 @@ def test_followup_hook_preserves_turn_not_started_without_keyerror_chain(
     assert turn["baseline_status"] == "missing"
     assert turn["provenance_status_reason"] == "turn_not_started"
     assert turn["provenance_mutation_capable"] is True
+
+
+def test_pretool_peer_rescue_atomically_recovers_missing_turn_without_posttool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: prompt bootstrap failed, while a recorded peer owns the unstable path.
+    caller = {
+        "project_root": str(tmp_path),
+        "host": "host",
+        "session_id": "caller-session",
+        "agent": "caller",
+        "turn_id": "caller-turn",
+        "attribution": "exact",
+    }
+    _ = record_event(
+        caller
+        | {
+            "event": "prompt",
+            "prompt": "mutate app.py",
+            "baseline_snapshot_id": "snapshot:unavailable",
+            "current_snapshot_id": "snapshot:unavailable",
+            "provenance_incomplete": True,
+            "provenance_status": "incomplete",
+            "provenance_status_reason": "observation_error",
+        }
+    )
+    _record_peer_window(tmp_path, "hot.py")
+    unstable = _snapshot(
+        tmp_path,
+        entries=(),
+        issues=(ScanIssue("hot.py", "unstable_path"),),
+    )
+    monkeypatch.setattr(lifecycle_module, "scan_snapshot", lambda *_args: unstable)
+    invocation = CanonicalInvocation(
+        "host",
+        "caller",
+        "caller-session",
+        "caller-turn",
+        "edit-1",
+        "pre_tool",
+        "edit",
+        ("app.py",),
+        "",
+        True,
+        "",
+    )
+
+    # When: the mutation PreTool full bootstrap succeeds with peer exclusions.
+    report = begin_invocation(tmp_path, invocation)
+    ledger = load_ledger({"project_root": str(tmp_path)})
+    turn = active_turn(ledger, caller)
+
+    # Then: the owning invocation event stores baseline recovery and candidates together.
+    assert report.incomplete is False
+    assert report.snapshot_id
+    assert turn is not None
+    assert turn["baseline_status"] == "ready"
+    assert turn["baseline_snapshot_id"] == report.snapshot_id
+    assert turn["provenance_incomplete"] is False
+    assert turn["provenance_status"] == "complete"
+    assert turn["provenance_status_reason"] == ""
+    invocations = turn["invocations"]
+    assert isinstance(invocations, dict)
+    assert invocations["edit-1"]["candidate_paths"] == ["app.py"]
+
+    # And: even if PostToolUse fails open and records nothing, Stop is not stale-incomplete.
+    decision = evaluate_without_io(ledger, caller)
+    assert decision["decision"] == "allow"
