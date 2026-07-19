@@ -106,7 +106,7 @@ Non-document file changes require a fresh successful verification in every task 
 |---|---|
 | Claude Code | live hook chain confirmed |
 | Codex CLI | live hook chain confirmed |
-| Antigravity | payload-injection conformance confirmed; live firing on host 1.1.1 is not confirmed |
+| Antigravity | payload-injection conformance confirmed; hooks.json matches the official host schema and parses/loads on host 1.1.2+ (5 handlers), but host execution of config-path hooks remains unconfirmed |
 
 ### State and honest limits
 
@@ -148,6 +148,27 @@ claude plugin marketplace add <path-to-show-me-the-work>
 ```
 
 After the plugin is registered in a marketplace, `/plugin marketplace add pinetreeB/show-me-the-work` can replace the local path step.
+
+### Project-scope install (true zero cost elsewhere)
+
+A user-scope (global) install still starts a Python interpreter for every hook
+event in every project — inactive projects exit immediately with `{}`, but the
+interpreter startup itself remains. For genuinely zero cost outside supervised
+projects, install the plugin at project scope so its hooks load only inside the
+chosen project:
+
+```
+claude plugin install show-me-the-work@show-me-the-work --scope project
+```
+
+This records `"enabledPlugins": {"show-me-the-work@show-me-the-work": true}` in
+the project's `.claude/settings.json`, which can be committed and shared. Use
+`--scope local` instead for a personal, uncommitted variant
+(`.claude/settings.local.json`). The reverse direction also works: keep a
+user-scope install and switch it off for one project by setting the same key to
+`false` in that project's `.claude/settings.local.json`. Either way, supervision
+additionally requires the per-project `.fable-lite/config.json` opt-in described
+above.
 
 ## Verify
 
