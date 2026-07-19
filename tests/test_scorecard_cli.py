@@ -88,6 +88,39 @@ def _write_agent_events(
     )
 
 
+def _write_coordination_journal(
+    root: Path, events: list[dict[str, JsonValue]]
+) -> None:
+    path = root / ".fable-lite" / "scorecard" / "coordination.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(f"{json.dumps(event, ensure_ascii=False)}\n" for event in events),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def _coordination_event(occurred_at: datetime) -> dict[str, JsonValue]:
+    return {
+        "scorecard_coord_schema_version": 1,
+        "event": "coordination_transition",
+        "event_id": "coordination-cli-boundary",
+        "actor": {
+            "host": "codex_cli",
+            "session_id": "coordination-session",
+            "agent": "codex",
+        },
+        "actor_turn_id": "coordination-turn",
+        "subject_agent_key": None,
+        "category": "r2_deny",
+        "outcome": "blocked",
+        "reason_code": "peer_unsettled",
+        "evidence_refs": [],
+        "attribution": "exact",
+        "occurred_at": occurred_at.isoformat(),
+    }
+
+
 def _verification(
     occurred_at: datetime,
     *,
@@ -145,7 +178,36 @@ def test_scorecard_cli_sc_cli_01_help_exposes_documented_options(tmp_path: Path)
 
     # Then: every SSOT option is registered on the scorecard parser.
     assert result.returncode == 0, result.stderr
-    assert all(option in result.stdout for option in ("--root", "--session", "--days", "--all", "--json"))
+    expected = ("--root", "--session", "--days", "--all", "--view", "--json")
+    assert all(option in result.stdout for option in expected)
+
+
+def test_scorecard_cli_real_agents_and_coordination_boundaries(
+    tmp_path: Path,
+) -> None:
+    _write_coordination_journal(tmp_path, [_coordination_event(datetime.now(UTC))])
+
+    agents_json = _json_result(
+        _run_scorecard(tmp_path, "--view", "agents", "--json")
+    )
+    coordination_json = _json_result(
+        _run_scorecard(tmp_path, "--view", "coordination", "--json")
+    )
+    agents_human = _run_scorecard(tmp_path, "--view", "agents")
+    coordination_human = _run_scorecard(tmp_path, "--view", "coordination")
+
+    assert isinstance(agents_json, dict)
+    assert agents_json["view"] == "agents"
+    assert agents_json["agents"][0]["r2_denies"] == 1
+    assert isinstance(coordination_json, dict)
+    assert coordination_json["view"] == "coordination"
+    assert coordination_json["coordination"][0]["reason_code"] == "peer_unsettled"
+    assert agents_human.returncode == 0, agents_human.stderr
+    assert "에이전트 품질 Scorecard" in agents_human.stdout
+    assert coordination_human.returncode == 0, coordination_human.stderr
+    assert "Coordination Scorecard" in coordination_human.stdout
+    assert "entered/recovered" in coordination_human.stdout
+    assert "선택 범위 밖" in coordination_human.stdout
 
 
 def test_scorecard_cli_sc_cli_02_separates_agents_unattributed_and_cap(

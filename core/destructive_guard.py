@@ -9,6 +9,7 @@ from typing import Final, TypeAlias
 
 from .ledger import JsonObject, JsonValue, load_ledger, state_dir
 from .provenance_policy import canonical_manifest_key
+from .scorecard_coordination import CoordinationReason
 
 _STATE_DIR_NAME: Final[str] = Path(state_dir(".")).name
 
@@ -57,6 +58,17 @@ PATH_FLAGS: Final[frozenset[str]] = frozenset({"-path", "-literalpath", "-filepa
 CATEGORY_GIT: Final[str] = "git_destructive"
 CATEGORY_REMOVE: Final[str] = "os_remove"
 CATEGORY_TRUNCATE: Final[str] = "truncate_redirect"
+
+R2_COORDINATION_REASON_MAP: Final[dict[str, CoordinationReason]] = {
+    "ledger_degraded": CoordinationReason.ATTRIBUTION_DEGRADED,
+    "attribution_health_unavailable": CoordinationReason.ATTRIBUTION_DEGRADED,
+    "attribution_degraded_or_capacity_exceeded": CoordinationReason.ATTRIBUTION_DEGRADED,
+    "canonicalization_unavailable": CoordinationReason.UNRESOLVABLE_TARGET,
+    "state_dir_protected": CoordinationReason.STATE_DIR_PROTECTED,
+    "attribution_lookup_unavailable": CoordinationReason.ATTRIBUTION_DEGRADED,
+    "peer_unsettled_revision": CoordinationReason.PEER_UNSETTLED,
+    "peer_open_invocation_candidate": CoordinationReason.PEER_UNSETTLED,
+}
 
 _STRIP_RE = re.compile(r"[^A-Za-z0-9.-]+")
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z-]*")
@@ -552,12 +564,22 @@ def _peer_open_invocation_candidates(ledger: JsonObject, caller_agent_key: str) 
 def _block(reason_code: str) -> Decision:
     return {
         "decision": "block",
+        "coordination_reason_code": _coordination_reason_for_block(
+            reason_code
+        ).value,
         "reason": (
             f"[smtw] R2: 파괴 조치가 차단되었습니다({reason_code}). "
             "귀속을 확정할 수 없거나(파싱 불능/암시적 전체 범위) 타 에이전트의 미정산 변경 "
             f"대상이라 fail-closed로 차단합니다. {RESOLUTION_PROCEDURES}"
         ),
     }
+
+
+def _coordination_reason_for_block(reason_code: str) -> CoordinationReason:
+    return R2_COORDINATION_REASON_MAP.get(
+        reason_code,
+        CoordinationReason.UNRESOLVABLE_TARGET,
+    )
 
 
 def _allow(message: str) -> Decision:
