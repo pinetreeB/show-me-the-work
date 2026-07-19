@@ -124,6 +124,9 @@ def _run_hook_raw(script: str, payload: str, *, root: Path) -> JsonObject:
 
 
 def _run_pytest(paths: list[str]) -> JsonObject:
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONUTF8"] = "1"
     process = subprocess.run(
         [sys.executable, "-m", "pytest", *paths],
         cwd=ROOT,
@@ -132,6 +135,7 @@ def _run_pytest(paths: list[str]) -> JsonObject:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=environment,
     )
     return {
         "returncode": process.returncode,
