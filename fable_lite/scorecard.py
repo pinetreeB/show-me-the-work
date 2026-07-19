@@ -8,12 +8,19 @@ from pathlib import Path
 from core.ledger_schema import JsonObject, JsonValue
 from core.scorecard import (
     Attribution,
+    GateAction,
     GateTransition,
     ScorecardAggregate,
     ScorecardSchemaError,
     SessionIdentity,
     aggregate_transitions,
     empty_aggregate,
+)
+from core.scorecard_coordination import (
+    CoordinationCategory,
+    CoordinationEvent,
+    CoordinationOutcome,
+    load_coordination_journal,
 )
 from core.scorecard_store import load_scorecard_journal
 
@@ -34,12 +41,22 @@ def add_scorecard_parser(
     view.add_argument("--session")
     view.add_argument("--days", type=int)
     view.add_argument("--all", action="store_true")
+    parser.add_argument(
+        "--view",
+        choices=("sessions", "agents", "coordination"),
+        default="sessions",
+    )
     parser.add_argument("--json", action="store_true")
     parser.set_defaults(func=run_scorecard)
 
 
 def run_scorecard(args: argparse.Namespace) -> int:
     root = Path(str(args.root)).resolve()
+    selected_view = str(getattr(args, "view", "sessions"))
+    if selected_view == "agents":
+        return _run_agents_view(root, args)
+    if selected_view == "coordination":
+        return _run_coordination_view(root, args)
     replay = load_scorecard_journal(root)
     groups: dict[str, list[GateTransition]] = {}
     for transition in replay.transitions:
@@ -255,3 +272,186 @@ def _human_period(value: JsonValue | None) -> str:
 
 def _integer(value: JsonValue | None) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _run_agents_view(root: Path, args: argparse.Namespace) -> int:
+    gate_replay = load_scorecard_journal(root)
+    coordination_replay = load_coordination_journal(root)
+    transitions = _filtered_transitions(list(gate_replay.transitions), args)
+    events = _filtered_coordination_events(list(coordination_replay.events), args)
+    rows: dict[str, JsonObject] = {}
+    sessions: dict[str, set[str]] = {}
+    for transition in transitions:
+        key = f"{transition.identity.host}:{transition.identity.agent}"
+        row = rows.setdefault(key, _empty_agent_row(transition.identity))
+        sessions.setdefault(key, set()).add(transition.identity.session_id)
+        if transition.action is GateAction.BLOCK:
+            row["blocked_attempts"] = _integer(row.get("blocked_attempts")) + 1
+        elif transition.action is GateAction.RECOVER:
+            row["recovered_scopes"] = _integer(row.get("recovered_scopes")) + 1
+        elif transition.action is GateAction.CAP_ALLOW:
+            row["cap_allows"] = _integer(row.get("cap_allows")) + 1
+    for event in events:
+        key = f"{event.actor.host}:{event.actor.agent}"
+        row = rows.setdefault(key, _empty_agent_row(event.actor))
+        sessions.setdefault(key, set()).add(event.actor.session_id)
+        if event.category is CoordinationCategory.R2_DENY:
+            row["r2_denies"] = _integer(row.get("r2_denies")) + 1
+        elif event.category is CoordinationCategory.TURN_BOOTSTRAP:
+            field = (
+                "turn_bootstrap_entered"
+                if event.outcome is CoordinationOutcome.ENTERED
+                else "turn_bootstrap_recovered"
+            )
+            row[field] = _integer(row.get(field)) + 1
+    ordered: list[JsonObject] = []
+    for key in sorted(rows):
+        row = rows[key]
+        row["sessions"] = len(sessions.get(key, set()))
+        row["complete"] = gate_replay.complete and coordination_replay.complete
+        ordered.append(row)
+    result: JsonObject = {
+        "view": "agents",
+        "complete": gate_replay.complete and coordination_replay.complete,
+        "period": _period_json(args),
+        "agents": ordered,
+    }
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    else:
+        print(_human_agents(result))
+    return 0
+
+
+def _run_coordination_view(root: Path, args: argparse.Namespace) -> int:
+    replay = load_coordination_journal(root)
+    events = _filtered_coordination_events(list(replay.events), args)
+    grouped: dict[tuple[str, str, str, str, str], JsonObject] = {}
+    for event in events:
+        key = (
+            event.actor.agent_key,
+            event.subject_agent_key or "",
+            event.category.value,
+            event.outcome.value,
+            event.reason_code.value,
+        )
+        row = grouped.setdefault(
+            key,
+            {
+                "host": event.actor.host,
+                "session_id": event.actor.session_id,
+                "agent": event.actor.agent,
+                "subject_agent_key": event.subject_agent_key,
+                "category": event.category.value,
+                "outcome": event.outcome.value,
+                "reason_code": event.reason_code.value,
+                "count": 0,
+                "first_observed_at": event.occurred_at.isoformat(),
+                "last_observed_at": event.occurred_at.isoformat(),
+            },
+        )
+        row["count"] = _integer(row.get("count")) + 1
+        row["last_observed_at"] = event.occurred_at.isoformat()
+    result: JsonObject = {
+        "view": "coordination",
+        "complete": replay.complete,
+        "period": _period_json(args),
+        "coordination": [grouped[key] for key in sorted(grouped)],
+    }
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    else:
+        print(_human_coordination(result))
+    return 0
+
+
+def _empty_agent_row(identity: SessionIdentity) -> JsonObject:
+    return {
+        "host": identity.host,
+        "agent": identity.agent,
+        "sessions": 0,
+        "complete": True,
+        "blocked_attempts": 0,
+        "recovered_scopes": 0,
+        "cap_allows": 0,
+        "r2_denies": 0,
+        "turn_bootstrap_entered": 0,
+        "turn_bootstrap_recovered": 0,
+    }
+
+
+def _filtered_transitions(
+    transitions: list[GateTransition], args: argparse.Namespace
+) -> list[GateTransition]:
+    if args.session:
+        return [
+            item for item in transitions if item.identity.session_id == args.session
+        ]
+    if args.all:
+        return transitions
+    cutoff = datetime.now(UTC) - timedelta(days=args.days or DEFAULT_DAYS)
+    return [item for item in transitions if item.occurred_at >= cutoff]
+
+
+def _filtered_coordination_events(
+    events: list[CoordinationEvent], args: argparse.Namespace
+) -> list[CoordinationEvent]:
+    if args.session:
+        return [item for item in events if item.actor.session_id == args.session]
+    if args.all:
+        return events
+    cutoff = datetime.now(UTC) - timedelta(days=args.days or DEFAULT_DAYS)
+    return [item for item in events if item.occurred_at >= cutoff]
+
+
+def _period_json(args: argparse.Namespace) -> JsonObject:
+    if args.session:
+        return {"mode": "session", "session_id": str(args.session)}
+    if args.all:
+        return {"mode": "all"}
+    return {"mode": "days", "days": int(args.days or DEFAULT_DAYS)}
+
+
+def _human_agents(result: JsonObject) -> str:
+    lines = [
+        f"에이전트 품질 Scorecard · complete={str(result['complete']).lower()}",
+        _human_period(result.get("period")),
+    ]
+    agents = result.get("agents")
+    if not isinstance(agents, list) or not agents:
+        return "\n".join([*lines, "표시할 에이전트가 없습니다."])
+    for row in agents:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"{row.get('host')} / {row.get('agent')} · 세션 {row.get('sessions')} · "
+            f"차단 {row.get('blocked_attempts')} · 회복 {row.get('recovered_scopes')} · "
+            f"cap {row.get('cap_allows')} · R2 deny {row.get('r2_denies')} · "
+            f"bootstrap {row.get('turn_bootstrap_entered')}/{row.get('turn_bootstrap_recovered')}"
+        )
+    return "\n".join(lines)
+
+
+def _human_coordination(result: JsonObject) -> str:
+    lines = [
+        f"Coordination Scorecard · complete={str(result['complete']).lower()}",
+        _human_period(result.get("period")),
+    ]
+    period = result.get("period")
+    if isinstance(period, dict) and period.get("mode") != "all":
+        lines.append(
+            "참고: 기간·세션 필터는 entered/recovered를 독립적으로 적용하므로 "
+            "대응 이벤트가 선택 범위 밖일 수 있습니다."
+        )
+    rows = result.get("coordination")
+    if not isinstance(rows, list) or not rows:
+        return "\n".join([*lines, "표시할 coordination 이벤트가 없습니다."])
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"{row.get('host')} / {row.get('session_id')} / {row.get('agent')} · "
+            f"subject={row.get('subject_agent_key') or '-'} · {row.get('category')} · "
+            f"{row.get('outcome')} · {row.get('reason_code')} · count={row.get('count')}"
+        )
+    return "\n".join(lines)

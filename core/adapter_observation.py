@@ -118,6 +118,7 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
     if report := _scope_too_large_report(root, invocation):
         _record_invocation(root, invocation, _covers(root, invocation))
         return report
+    bootstrap_recovery = _baseline_missing(root, invocation)
     try:
         lifecycle = ProvenanceLifecycle(root)
         lifecycle.resume_turn(
@@ -154,7 +155,13 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
         report = _incomplete_report(error_kind=type(exc).__name__)
         _record_status(root, invocation, report)
         return report
-    _record_invocation(root, invocation, covers, started.snapshot_id)
+    _record_invocation(
+        root,
+        invocation,
+        covers,
+        started.snapshot_id,
+        bootstrap_recovery=bootstrap_recovery,
+    )
     return ObservationReport(started.snapshot_id, "", (), False, False)
 
 
@@ -276,6 +283,64 @@ def resolve_active_invocation(root: Path, invocation: CanonicalInvocation) -> Ca
     return _active_invocation(root, invocation)
 
 
+def record_r2_deny_after_resolution(
+    root: Path,
+    invocation: CanonicalInvocation,
+    coordination_reason_code: str,
+) -> bool:
+    """Resolve the audit identity after R2 decides, without affecting that decision."""
+    try:
+        from .scorecard import Attribution, SessionIdentity
+        from .scorecard_coordination import (
+            CoordinationCategory,
+            CoordinationOutcome,
+            CoordinationReason,
+            new_coordination_event,
+            stable_coordination_event_id,
+            try_record_coordination_event,
+        )
+
+        resolved = resolve_active_invocation(root, invocation)
+        actor = SessionIdentity(
+            resolved.host,
+            resolved.session_id,
+            resolved.agent,
+        )
+        reason = CoordinationReason(coordination_reason_code)
+        evidence_refs = (
+            (f"invocation:{resolved.invocation_id}",)
+            if resolved.invocation_id
+            else ()
+        )
+        attribution = (
+            Attribution.LEGACY_DEFAULT
+            if resolved.scorecard_attribution == Attribution.LEGACY_DEFAULT.value
+            else Attribution.EXACT
+        )
+        event_id = stable_coordination_event_id(
+            root,
+            actor,
+            resolved.turn_id,
+            CoordinationCategory.R2_DENY,
+            CoordinationOutcome.BLOCKED,
+            reason,
+            evidence_refs,
+        )
+        event = new_coordination_event(
+            actor,
+            resolved.turn_id,
+            CoordinationCategory.R2_DENY,
+            CoordinationOutcome.BLOCKED,
+            reason,
+            evidence_refs=evidence_refs,
+            attribution=attribution,
+            event_id=event_id,
+        )
+        return try_record_coordination_event(root, event)
+    except Exception:  # noqa: BLE001 - audit I/O cannot undo an R2 denial.
+        return False
+
+
 def restart_blocked_turn(root: Path, invocation: CanonicalInvocation) -> None:
     ledger = load_ledger({"project_root": str(root)})
     turns = ledger.get("active_turns")
@@ -389,6 +454,8 @@ def _record_invocation(
     invocation: CanonicalInvocation,
     covers: JsonObject | None,
     baseline_snapshot_id: str = "",
+    *,
+    bootstrap_recovery: bool = False,
 ) -> None:
     payload = _ledger_payload(root, invocation) | {
         "event": "invocation",
@@ -406,6 +473,11 @@ def _record_invocation(
     if baseline_snapshot_id:
         payload["baseline_status"] = "ready"
         payload["baseline_snapshot_id"] = baseline_snapshot_id
+    if bootstrap_recovery:
+        payload["provenance_incomplete"] = False
+        payload["provenance_status"] = ProvenanceStatus.COMPLETE.value
+        payload["provenance_status_reason"] = ""
+        payload["turn_bootstrap_recovered"] = True
     _ = record_event(payload)
 
 
@@ -500,6 +572,14 @@ def _active_invocation(root: Path, invocation: CanonicalInvocation) -> Canonical
     if len(parts) != 3 or not isinstance(turn_id, str) or not turn_id:
         return invocation
     return replace(invocation, session_id=parts[1], turn_id=turn_id)
+
+
+def _baseline_missing(root: Path, invocation: CanonicalInvocation) -> bool:
+    turn = active_turn(
+        load_ledger({"project_root": str(root)}),
+        _ledger_payload(root, invocation),
+    )
+    return turn is not None and turn.get("baseline_status") == "missing"
 
 
 def _with_shell_candidates(invocation: CanonicalInvocation) -> CanonicalInvocation:

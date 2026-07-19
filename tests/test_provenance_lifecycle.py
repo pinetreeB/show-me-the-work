@@ -12,6 +12,7 @@ import pytest
 
 from core.provenance import ScanIssue, Snapshot, snapshot_workspace_with_options
 from core.provenance_lifecycle import ProvenanceLifecycle
+from core.provenance_lifecycle_types import ObservationResult
 from core.provenance_turn_resume import MissingTurnBaselineError
 from core.provenance_types import (
     DEFAULT_MAX_SCAN_BYTES,
@@ -249,6 +250,37 @@ def test_pretool_resume_full_bootstraps_after_workspace_store_failure(
     assert workspace_current_path(tmp_path).is_file()
     assert recovered.turn_baseline_path("codex", "turn-bootstrap").is_file()
     assert recovered.active_turns[0].mutation_capable is True
+
+
+def test_pretool_resume_accepts_complete_with_exclusions_bootstrap(
+    tmp_path: Path,
+) -> None:
+    # Given: the first full bootstrap is rescued by auditable peer exclusions.
+    lifecycle = ProvenanceLifecycle(tmp_path)
+    rescued = ObservationResult(
+        None,
+        (),
+        (),
+        False,
+        True,
+        0,
+        True,
+        False,
+        ProvenanceStatus.COMPLETE_WITH_EXCLUSIONS,
+        ProvenanceReason.PEER_ACTIVITY,
+    )
+
+    # When: PreToolUse retries the missing turn baseline.
+    with patch.object(lifecycle, "start_turn", return_value=rescued) as start:
+        lifecycle.resume_turn(
+            "codex",
+            "turn-peer-rescued",
+            True,
+            allow_full_bootstrap=True,
+        )
+
+    # Then: the same complete-status helper contract accepts the rescued result.
+    start.assert_called_once_with("codex", "turn-peer-rescued", True)
 
 
 def test_scope_policy_change_forces_turn_start_full_scan(tmp_path: Path) -> None:

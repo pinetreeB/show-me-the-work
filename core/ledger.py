@@ -119,12 +119,14 @@ def record_event(payload: Mapping[str, JsonValue]) -> JsonObject:
             _ = migrate_v1_ledger(root)
         except LedgerMigrationError:
             return load_ledger(payload)
+    event_payload: dict[str, JsonValue]
+    saved = False
     with ledger_transaction(root):
         existed_before_load = destination.exists()
         ledger = load_ledger(payload)
         if not existed_before_load:
             ledger = default_v2_ledger()
-        event_payload: dict[str, JsonValue] = dict(payload)
+        event_payload = dict(payload)
         _ = event_payload.pop("event_seq", None)
         _decorate_design_prompt(root, event_payload)
         event_payload["seq"] = sequence_value(ledger.get("event_seq")) + 1
@@ -132,9 +134,112 @@ def record_event(payload: Mapping[str, JsonValue]) -> JsonObject:
             _ = apply_v2_event(ledger, event_payload)
         else:
             _ = apply_v1_event(ledger, event_payload)
-        save_ledger(payload, ledger)
+        saved = save_ledger(payload, ledger)
         append_agent_event(root, _agent(payload), event_payload)
-        return ledger
+    if saved:
+        _record_coordination_after_event(root, event_payload)
+    return ledger
+
+
+def _record_coordination_after_event(
+    root: str, payload: Mapping[str, JsonValue]
+) -> None:
+    event = payload.get("event")
+    entered = event == "prompt" and _missing_bootstrap(payload)
+    recovered = event == "invocation" and _recovered_bootstrap(payload)
+    if not entered and not recovered:
+        return
+    try:
+        from .scorecard import Attribution, SessionIdentity
+        from .scorecard_coordination import (
+            CoordinationCategory,
+            CoordinationOutcome,
+            CoordinationReason,
+            new_coordination_event,
+            stable_coordination_event_id,
+            try_record_coordination_event,
+        )
+
+        actor = SessionIdentity(
+            _required_event_string(payload, "host"),
+            _required_event_string(payload, "session_id"),
+            _required_event_string(payload, "agent"),
+        )
+        turn_id = _required_event_string(payload, "turn_id")
+        outcome = (
+            CoordinationOutcome.ENTERED
+            if entered
+            else CoordinationOutcome.RECOVERED
+        )
+        reason = (
+            CoordinationReason.TURN_NOT_STARTED
+            if entered
+            else CoordinationReason.COMPLETE
+        )
+        invocation_id = payload.get("invocation_id")
+        evidence_refs = (
+            (f"invocation:{invocation_id}",)
+            if recovered and isinstance(invocation_id, str) and invocation_id
+            else ()
+        )
+        attribution_value = payload.get("attribution")
+        attribution = (
+            Attribution.LEGACY_DEFAULT
+            if attribution_value == Attribution.LEGACY_DEFAULT.value
+            else Attribution.EXACT
+        )
+        event_id = stable_coordination_event_id(
+            root,
+            actor,
+            turn_id,
+            CoordinationCategory.TURN_BOOTSTRAP,
+            outcome,
+            reason,
+            evidence_refs,
+        )
+        coordination = new_coordination_event(
+            actor,
+            turn_id,
+            CoordinationCategory.TURN_BOOTSTRAP,
+            outcome,
+            reason,
+            evidence_refs=evidence_refs,
+            attribution=attribution,
+            event_id=event_id,
+        )
+        _ = try_record_coordination_event(root, coordination)
+    except Exception:  # noqa: BLE001 - coordination is fail-open observability.
+        return
+
+
+def _missing_bootstrap(payload: Mapping[str, JsonValue]) -> bool:
+    if payload.get("provenance_incomplete") is True:
+        return True
+    baseline = payload.get("baseline_snapshot_id")
+    return "baseline_snapshot_id" in payload and (
+        not isinstance(baseline, str)
+        or not baseline
+        or baseline == "snapshot:unavailable"
+    )
+
+
+def _recovered_bootstrap(payload: Mapping[str, JsonValue]) -> bool:
+    return (
+        payload.get("turn_bootstrap_recovered") is True
+        and payload.get("baseline_status") == "ready"
+        and payload.get("provenance_incomplete") is False
+        and payload.get("provenance_status") == "complete"
+        and payload.get("provenance_status_reason") == ""
+    )
+
+
+def _required_event_string(
+    payload: Mapping[str, JsonValue], field: str
+) -> str:
+    value = payload.get(field)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"missing coordination identity field: {field}")
+    return value
 
 
 def _decorate_design_prompt(root: str, payload: dict[str, JsonValue]) -> None:

@@ -168,6 +168,13 @@ def main() -> int:
             }
         )
         if r2_result["decision"] == "block":
+            from core.adapter_observation import record_r2_deny_after_resolution
+
+            _ = record_r2_deny_after_resolution(
+                context.root,
+                invocation,
+                str(r2_result.get("coordination_reason_code", "")),
+            )
             return emit(response(context, _deny(str(r2_result["reason"]))))
 
         if context.task_mode == "quick":

@@ -306,10 +306,7 @@ class ProvenanceLifecycle:
             current = self._state.current
             if current is None:
                 result = self.start_turn(agent, turn_id, mutation_capable)
-                if (
-                    result.status is ProvenanceStatus.COMPLETE
-                    and not result.incomplete
-                ):
+                if _complete_observation(result.status) and not result.incomplete:
                     return
                 raise TurnBootstrapError(
                     result.status,
