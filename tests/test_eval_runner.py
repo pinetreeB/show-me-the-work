@@ -6,8 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import TypeAlias
+from unittest.mock import patch
 
 import pytest
+
+from eval import run_probes
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +92,25 @@ def test_probe_runner_is_green_without_external_activation_environment(
     assert process.returncode == 0, process.stderr
     assert report["result"] == "PASS"
     assert summary["fail"] == 0
+
+
+def test_probe_pytest_child_is_forced_to_utf8_without_changing_returncode() -> None:
+    completed = subprocess.CompletedProcess(
+        [sys.executable, "-m", "pytest"],
+        7,
+        stdout="한글 실패",
+        stderr="",
+    )
+
+    with patch.object(run_probes.subprocess, "run", return_value=completed) as invoked:
+        result = run_probes._run_pytest(["tests/example.py"])
+
+    environment = invoked.call_args.kwargs["env"]
+    assert environment["PYTHONIOENCODING"] == "utf-8"
+    assert environment["PYTHONUTF8"] == "1"
+    assert invoked.call_args.kwargs["encoding"] == "utf-8"
+    assert result["returncode"] == 7
+    assert result["stdout_tail"] == "한글 실패"
 
 
 def test_probe_runner_reports_all_probe_ids_and_ab_shape(
