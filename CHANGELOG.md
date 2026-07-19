@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.3.0] - 2026-07-19
+
+### Fixed
+
+- `resume_turn` bootstrap retry treated `COMPLETE_WITH_EXCLUSIONS` as failure (strict `is COMPLETE` comparison), defeating the F3 peer-activity rescue exactly in its target scenario — concurrent multi-agent boot on a fresh store. Bootstrap success now uses the shared completion helper, and `begin_invocation` no longer drops `candidate_paths` registration on the recovery path. Reproduced 100% by two independent probes before the fix.
+- `turn_not_started` recovery is now explicit: an invocation that successfully full-bootstraps a missing baseline records `baseline_status=ready`, `provenance_incomplete=false`, `provenance_status=complete`, and an empty status reason in one ledger write, instead of depending on a later PostToolUse to accidentally overwrite the stale state (which a PostToolUse fail-open could leave behind forever). Failed bootstraps keep the conservative `turn_not_started` state unchanged.
+- Windows long-path atomic writes: on hosts with `LongPathsEnabled=0` (the Windows default), session-registry warning paths past the 260-character boundary made `os.replace` fail and silently degraded PostToolUse into a health fail-open, losing scope warnings. `atomic_write` now normalizes to absolute paths and applies the `\\?\` extended-path prefix when either side crosses the boundary, preserving the open→flush→fsync→replace contract. Verified on the reproducing host with default temp paths (704 tests green without workarounds); 259/260/262-boundary and deep-warning regressions added.
+- Probe runner now forces UTF-8 on the child pytest process so Korean failure tails are no longer mojibake; PASS/FAIL stays returncode-based.
+
+### Added
+
+- Scorecard coordination journal: a separate append-only `.fable-lite/scorecard/coordination.jsonl` (existing `gates.jsonl`, its closed `ReasonCode` enum, and default CLI output are unchanged). This wave records two categories — `r2_deny` (all eight destructive-guard block sites mapped onto four closed reason codes, plus the pre-resolution parse branch) and `turn_bootstrap` (`entered`/`recovered` pairs closed per actor and turn). Recording is laundering-resistant by construction: the R2 verdict itself stays fail-closed on the raw identity, while the journal entry is written only after `resolve_active_invocation()` settles the real identity, as fire-and-forget I/O that can never affect the gate decision (a read-only journal directory does not bypass R2). Remaining categories are reserved in the enum but not yet recorded.
+- Scorecard CLI views: `python -m fable_lite scorecard --view sessions|agents|coordination` — `sessions` is the unchanged default; `agents` compares actors side by side; `coordination` renders the new journal. Root-level cross views stay a CLI read-time join; the core `SessionIdentity` model is unchanged and nothing new is auto-pushed into Stop output (quiet policy preserved).
+- READMEs: project-scope plugin install path for true zero cost outside supervised projects (`claude plugin install ... --scope project`, per-project disable via `.claude/settings.local.json`), and the Antigravity host-status wording updated to the current facts (official-schema hooks.json parses and loads on host 1.1.2+; host execution of config-path hooks still unconfirmed).
+
+### Known Limitations
+
+- Turn bootstrap baseline persistence, ledger transition, and coordination observation use separate transactions to avoid lock re-entry; coordination IDs enforce one recovered observation per actor and turn, but the three operations are not a single atomic transaction.
+- Coordination `--days`/`--session` filters apply to `entered` and `recovered` events independently; the CLI prints a hint when a counterpart may fall outside the selected window.
+
 ## [2.2.0] - 2026-07-17
 
 ### Changed
@@ -10,10 +30,6 @@
 - Quick mode keeps full PostToolUse/PostToolUseFailure observation and atomically promotes the turn to normal before the first mutation-capable tool runs (promotion is exception-safe; if it cannot be persisted the tool is denied rather than fail-opened). Only provably read-only turns skip the heavy Stop reconcile, and they never claim "clean verified".
 - PreToolUse denials emit `hookSpecificOutput.permissionDecision: "deny"` instead of the deprecated top-level `decision: "block"`.
 - Test harness: suite is hermetic against shared plugin-data state (`SMTW_TEST_FORCE_ENABLE=1` isolates per test); verified green on two heterogeneous runner environments plus a hostile shared-state environment.
-
-### Known Limitations
-
-- Turn bootstrap baseline persistence, ledger transition, and coordination observation use separate transactions to avoid lock re-entry; coordination IDs enforce one recovered observation per actor and turn, but the three operations are not a single atomic transaction.
 
 ## [2.1.1] - 2026-07-16
 
