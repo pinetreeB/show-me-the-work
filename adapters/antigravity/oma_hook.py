@@ -78,6 +78,13 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
         }
     )
     if r2_result.get("decision") == "block":
+        from core.adapter_observation import record_r2_deny_after_resolution
+
+        _ = record_r2_deny_after_resolution(
+            Path(root),
+            invocation,
+            str(r2_result.get("coordination_reason_code", "")),
+        )
         return emit({"decision": "deny", "reason": str(r2_result.get("reason", ""))})
 
     from core.adapter_observation import begin_invocation, resolve_active_invocation
