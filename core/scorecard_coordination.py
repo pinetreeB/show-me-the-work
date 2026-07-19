@@ -79,7 +79,7 @@ class CoordinationReason(StrEnum):
     QUICK_PROMOTION = "quick_promotion"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class CoordinationSchemaError(ValueError):
     field: str
     requirement: str
@@ -299,6 +299,9 @@ def stable_coordination_event_id(
     reason_code: CoordinationReason,
     evidence_refs: tuple[str, ...] = (),
 ) -> str:
+    identity_evidence = (
+        () if category is CoordinationCategory.TURN_BOOTSTRAP else evidence_refs
+    )
     key = "|".join(
         (
             str(Path(project_root).resolve()),
@@ -307,7 +310,7 @@ def stable_coordination_event_id(
             category.value,
             outcome.value,
             reason_code.value,
-            *evidence_refs,
+            *identity_evidence,
         )
     )
     return str(uuid5(NAMESPACE_URL, key))

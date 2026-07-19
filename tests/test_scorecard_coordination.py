@@ -31,6 +31,8 @@ from core.scorecard_coordination import (
     new_coordination_event,
     parse_coordination_event,
     record_coordination_event,
+    stable_coordination_event_id,
+    try_record_coordination_event,
 )
 from fable_lite.scorecard import run_scorecard
 
@@ -98,6 +100,81 @@ def test_coordination_writer_serializes_concurrent_lines_atomically(
     assert all(isinstance(json.loads(line), dict) for line in raw_lines)
 
 
+def test_turn_bootstrap_recovery_deduplicates_per_actor_and_turn(
+    tmp_path: Path,
+) -> None:
+    actor = SessionIdentity("codex_cli", "same-session", "codex")
+    references = ("invocation:first", "invocation:second")
+    event_ids = [
+        stable_coordination_event_id(
+            tmp_path,
+            actor,
+            "same-turn",
+            CoordinationCategory.TURN_BOOTSTRAP,
+            CoordinationOutcome.RECOVERED,
+            CoordinationReason.COMPLETE,
+            (reference,),
+        )
+        for reference in references
+    ]
+    events = [
+        new_coordination_event(
+            actor,
+            "same-turn",
+            CoordinationCategory.TURN_BOOTSTRAP,
+            CoordinationOutcome.RECOVERED,
+            CoordinationReason.COMPLETE,
+            evidence_refs=(reference,),
+            event_id=event_id,
+        )
+        for reference, event_id in zip(references, event_ids, strict=True)
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(lambda item: try_record_coordination_event(tmp_path, item), events)
+        )
+
+    replay = load_coordination_journal(tmp_path)
+    r2_ids = {
+        stable_coordination_event_id(
+            tmp_path,
+            actor,
+            "same-turn",
+            CoordinationCategory.R2_DENY,
+            CoordinationOutcome.BLOCKED,
+            CoordinationReason.PEER_UNSETTLED,
+            (reference,),
+        )
+        for reference in references
+    }
+    assert event_ids[0] == event_ids[1]
+    assert sorted(results) == [False, True]
+    assert len(replay.events) == 1
+    assert replay.events[0].outcome is CoordinationOutcome.RECOVERED
+    assert len(r2_ids) == 2
+
+
+def test_coordination_conflict_preserves_schema_error_across_transaction(
+    tmp_path: Path,
+) -> None:
+    first = _event("conflict")
+    conflicting = new_coordination_event(
+        first.actor,
+        first.actor_turn_id,
+        first.category,
+        first.outcome,
+        first.reason_code,
+        evidence_refs=("invocation:other",),
+        event_id=first.event_id,
+        occurred_at=first.occurred_at,
+    )
+    assert record_coordination_event(tmp_path, first) is True
+
+    with pytest.raises(CoordinationSchemaError, match="event_id"):
+        record_coordination_event(tmp_path, conflicting)
+
+
 def test_coordination_replay_keeps_valid_events_and_marks_malformed_incomplete(
     tmp_path: Path,
 ) -> None:
@@ -114,6 +191,29 @@ def test_coordination_replay_keeps_valid_events_and_marks_malformed_incomplete(
 
     assert replay.complete is False
     assert [item.actor.session_id for item in replay.events] == ["first", "second"]
+
+
+def test_coordination_replay_quarantines_valid_json_with_invalid_schema(
+    tmp_path: Path,
+) -> None:
+    first = coordination_event_json(_event("first-schema"))
+    malformed = coordination_event_json(_event("missing-reason"))
+    del malformed["reason_code"]
+    second = coordination_event_json(_event("second-schema"))
+    path = coordination_journal_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    _ = path.write_text(
+        "\n".join(json.dumps(item) for item in (first, malformed, second)) + "\n",
+        encoding="utf-8",
+    )
+
+    replay = load_coordination_journal(tmp_path)
+
+    assert replay.complete is False
+    assert [item.actor.session_id for item in replay.events] == [
+        "first-schema",
+        "second-schema",
+    ]
 
 
 def test_r2_eight_static_block_points_map_to_four_closed_reasons() -> None:
