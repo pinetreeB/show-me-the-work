@@ -7,10 +7,25 @@ from pathlib import Path
 from typing import Final, cast
 
 from .adapter_change_events import record_observed_changes
-from .ledger import JsonObject, capture_verification_covers, load_ledger, record_event
+from .ledger import (
+    JsonObject,
+    capture_verification_covers,
+    load_ledger,
+    record_event,
+    record_event_if_current_turn,
+)
+from .provenance_manifest import (
+    ManifestStoreError,
+    TurnBootstrapStatus,
+    TurnEventCommit,
+    TurnEventCommitStatus,
+    ensure_turn_bootstrap,
+    record_turn_event_if_ready,
+)
 from .provenance_lifecycle import ProvenanceLifecycle
 from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
+from .ledger_v2 import turn_is_closed
 from .project_root import is_user_home_root
 from .provenance_store import SnapshotStoreError
 from .provenance_turn_resume import MissingTurnBaselineError, TurnBootstrapError
@@ -33,6 +48,7 @@ from .verification_covers import active_turn
 
 
 OBSERVABLE_FAMILIES: Final = frozenset({"edit", "shell"})
+INVOCATION_COMMIT_RETRIES: Final = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +65,8 @@ class CanonicalInvocation:
     success: bool
     evidence: str
     identity_synthetic: bool = False
+    turn_synthetic: bool = False
+    identity_conflict: bool = False
 
     @property
     def agent_key(self) -> str:
@@ -57,6 +75,10 @@ class CanonicalInvocation:
     @property
     def scorecard_attribution(self) -> str:
         return "legacy_default" if self.identity_synthetic else "exact"
+
+    @property
+    def mutation_capable(self) -> bool:
+        return _mutation_capable(self)
 
     def as_dict(self) -> JsonObject:
         return {
@@ -107,7 +129,15 @@ def start_turn(root: Path, invocation: CanonicalInvocation) -> ObservationReport
             )
     except (KeyError, OSError, SnapshotStoreError) as exc:
         return _incomplete_report(error_kind=type(exc).__name__)
-    return _report(result, result.snapshot.snapshot_id if result.snapshot is not None else "")
+    baseline_snapshot_id = next(
+        (
+            turn.baseline.snapshot_id
+            for turn in lifecycle.active_turns
+            if turn.agent == invocation.agent_key and turn.turn_id == invocation.turn_id
+        ),
+        "",
+    )
+    return _report(result, baseline_snapshot_id)
 
 
 def begin_invocation(root: Path, invocation: CanonicalInvocation) -> ObservationReport:
@@ -115,17 +145,87 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
         _record_invocation(root, invocation, _covers(root, invocation))
         return report
     invocation = _with_shell_candidates(_active_invocation(root, invocation))
+    if invocation.identity_conflict:
+        return ObservationReport(
+            "",
+            "",
+            (),
+            True,
+            False,
+            ProvenanceStatus.INCOMPLETE,
+            ProvenanceReason.TURN_NOT_STARTED,
+            error_kind="StaleTurn",
+        )
     if report := _scope_too_large_report(root, invocation):
         _record_invocation(root, invocation, _covers(root, invocation))
         return report
-    bootstrap_recovery = _baseline_missing(root, invocation)
+    baseline_missing_hint = _baseline_missing(root, invocation)
     try:
+        lifecycle = ProvenanceLifecycle(root)
+        bootstrap_identity = _ledger_payload(root, invocation)
+        if _mutation_capable(invocation):
+            bootstrap_identity["provenance_mutation_capable"] = True
+        bootstrap = ensure_turn_bootstrap(
+            root,
+            bootstrap_identity,
+            lifecycle.current_snapshot,
+            baseline_missing_hint=baseline_missing_hint,
+        )
+        if bootstrap.status is TurnBootstrapStatus.CANDIDATE_REQUIRED:
+            with scan_progress(lifecycle.observed_file_count):
+                prepared = lifecycle.start_turn(
+                    invocation.agent_key,
+                    invocation.turn_id,
+                    _mutation_capable(invocation),
+                    event_agent=invocation.agent,
+                    host=invocation.host,
+                    session_id=invocation.session_id,
+                    invocation_id=invocation.invocation_id,
+                    observed_at=invocation.phase,
+                )
+            if prepared.incomplete or prepared.snapshot is None:
+                report = _report(prepared, "")
+                _record_status(root, invocation, report)
+                return report
+            bootstrap = ensure_turn_bootstrap(
+                root,
+                bootstrap_identity,
+                prepared.snapshot,
+                baseline_missing_hint=baseline_missing_hint,
+            )
+        if bootstrap.status is TurnBootstrapStatus.STALE_TURN:
+            return ObservationReport(
+                "",
+                "",
+                (),
+                True,
+                False,
+                ProvenanceStatus.INCOMPLETE,
+                ProvenanceReason.TURN_NOT_STARTED,
+                error_kind="StaleTurn",
+            )
+        if (
+            bootstrap.status is TurnBootstrapStatus.DEGRADED
+            or bootstrap.baseline is None
+        ):
+            report = ObservationReport(
+                "",
+                "",
+                (),
+                True,
+                False,
+                ProvenanceStatus.INCOMPLETE,
+                ProvenanceReason.BASELINE_STATE_MISMATCH,
+                error_kind="BaselineStateMismatch",
+            )
+            _record_status(root, invocation, report)
+            return report
         lifecycle = ProvenanceLifecycle(root)
         lifecycle.resume_turn(
             invocation.agent_key,
             invocation.turn_id,
             _mutation_capable(invocation),
-            allow_full_bootstrap=True,
+            require_ledger_turn=True,
         )
         with scan_progress(lifecycle.observed_file_count):
             started = lifecycle.begin_invocation(
@@ -138,6 +238,10 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
                 session_id=invocation.session_id,
                 observed_at=invocation.phase,
             )
+        if lifecycle.incomplete:
+            report = _incomplete_report(error_kind="CandidateBaselineAdvanceError")
+            _record_status(root, invocation, report)
+            return report
         covers = _covers(root, invocation)
     except TurnBootstrapError as exc:
         report = ObservationReport(
@@ -151,17 +255,76 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
         )
         _record_status(root, invocation, report)
         return report
-    except (KeyError, OSError, SnapshotStoreError) as exc:
+    except (KeyError, OSError, ManifestStoreError, SnapshotStoreError) as exc:
         report = _incomplete_report(error_kind=type(exc).__name__)
         _record_status(root, invocation, report)
         return report
-    _record_invocation(
-        root,
-        invocation,
-        covers,
-        started.snapshot_id,
-        bootstrap_recovery=bootstrap_recovery,
+    persisted_baseline_id = next(
+        (
+            turn.baseline.snapshot_id
+            for turn in lifecycle.active_turns
+            if turn.agent == invocation.agent_key and turn.turn_id == invocation.turn_id
+        ),
+        "",
     )
+    commit = (
+        _record_invocation(root, invocation, covers, persisted_baseline_id)
+        if persisted_baseline_id
+        else TurnEventCommit(TurnEventCommitStatus.DEGRADED)
+    )
+    if commit.status is not TurnEventCommitStatus.RECORDED:
+        if commit.status is TurnEventCommitStatus.STALE_TURN:
+            return ObservationReport(
+                "",
+                "",
+                (),
+                True,
+                False,
+                ProvenanceStatus.INCOMPLETE,
+                ProvenanceReason.TURN_NOT_STARTED,
+                error_kind="StaleTurn",
+            )
+        if commit.status is TurnEventCommitStatus.DEGRADED:
+            try:
+                final_bootstrap = ensure_turn_bootstrap(
+                    root,
+                    bootstrap_identity,
+                    None,
+                    require_existing_turn=True,
+                )
+            except ManifestStoreError:
+                final_bootstrap = None
+            if (
+                final_bootstrap is not None
+                and final_bootstrap.status is TurnBootstrapStatus.STALE_TURN
+            ):
+                return ObservationReport(
+                    "",
+                    "",
+                    (),
+                    True,
+                    False,
+                    ProvenanceStatus.INCOMPLETE,
+                    ProvenanceReason.TURN_NOT_STARTED,
+                    error_kind="StaleTurn",
+                )
+            reason = ProvenanceReason.BASELINE_STATE_MISMATCH
+            error_kind = "InvocationBaselineRace"
+        else:
+            reason = ProvenanceReason.OBSERVATION_ERROR
+            error_kind = "InvocationCommitRetryExhausted"
+        report = ObservationReport(
+            "",
+            "",
+            (),
+            True,
+            False,
+            ProvenanceStatus.INCOMPLETE,
+            reason,
+            error_kind=error_kind,
+        )
+        _record_status(root, invocation, report)
+        return report
     return ObservationReport(started.snapshot_id, "", (), False, False)
 
 
@@ -175,7 +338,12 @@ def observe_post_tool(root: Path, invocation: CanonicalInvocation) -> Observatio
         return report
     try:
         lifecycle = ProvenanceLifecycle(root)
-        lifecycle.resume_turn(invocation.agent_key, invocation.turn_id, _mutation_capable(invocation))
+        lifecycle.resume_turn(
+            invocation.agent_key,
+            invocation.turn_id,
+            _mutation_capable(invocation),
+            require_ledger_turn=True,
+        )
         started = lifecycle.begin_invocation(
             invocation.agent_key,
             invocation.turn_id,
@@ -189,6 +357,10 @@ def observe_post_tool(root: Path, invocation: CanonicalInvocation) -> Observatio
         )
         with scan_progress(lifecycle.observed_file_count):
             result = lifecycle.post_tool(started, _source(invocation))
+    except TurnBootstrapError as exc:
+        report = _turn_bootstrap_error_report(exc)
+        _record_status(root, invocation, report)
+        return report
     except (KeyError, OSError, SnapshotStoreError) as exc:
         report = _incomplete_report(error_kind=type(exc).__name__)
         _record_status(root, invocation, report)
@@ -208,7 +380,12 @@ def finish_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRepor
         return report
     try:
         lifecycle = ProvenanceLifecycle(root)
-        lifecycle.resume_turn(invocation.agent_key, invocation.turn_id, _mutation_capable(invocation))
+        lifecycle.resume_turn(
+            invocation.agent_key,
+            invocation.turn_id,
+            _mutation_capable(invocation),
+            require_ledger_turn=True,
+        )
         with scan_progress(lifecycle.observed_file_count):
             result = lifecycle.reconcile_turn(
                 invocation.agent_key,
@@ -219,6 +396,10 @@ def finish_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRepor
                 invocation_id=invocation.invocation_id,
                 observed_at=invocation.phase,
             )
+    except TurnBootstrapError as exc:
+        report = _turn_bootstrap_error_report(exc, True)
+        _record_status(root, invocation, report)
+        return report
     except MissingTurnBaselineError:
         ledger = load_ledger({"project_root": str(root)})
         turns = ledger.get("active_turns")
@@ -253,6 +434,7 @@ def reconcile_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRe
             invocation.agent_key,
             invocation.turn_id,
             _mutation_capable(invocation),
+            require_ledger_turn=True,
         )
         with scan_progress(lifecycle.observed_file_count):
             result = lifecycle.reconcile_turn(
@@ -264,6 +446,10 @@ def reconcile_turn(root: Path, invocation: CanonicalInvocation) -> ObservationRe
                 invocation_id=invocation.invocation_id,
                 observed_at=invocation.phase,
             )
+    except TurnBootstrapError as exc:
+        report = _turn_bootstrap_error_report(exc, True)
+        _record_status(root, invocation, report)
+        return report
     except (KeyError, OSError, SnapshotStoreError) as exc:
         report = _incomplete_report(True, error_kind=type(exc).__name__)
         _record_status(root, invocation, report)
@@ -344,7 +530,11 @@ def record_r2_deny_after_resolution(
 def restart_blocked_turn(root: Path, invocation: CanonicalInvocation) -> None:
     ledger = load_ledger({"project_root": str(root)})
     turns = ledger.get("active_turns")
-    if not isinstance(turns, dict) or not isinstance(turns.get(invocation.agent_key), dict):
+    turn = turns.get(invocation.agent_key) if isinstance(turns, dict) else None
+    if (
+        not isinstance(turn, dict)
+        or turn.get("turn_id") != invocation.turn_id
+    ):
         return
     _ = start_turn(root, invocation)
 
@@ -454,9 +644,7 @@ def _record_invocation(
     invocation: CanonicalInvocation,
     covers: JsonObject | None,
     baseline_snapshot_id: str = "",
-    *,
-    bootstrap_recovery: bool = False,
-) -> None:
+) -> TurnEventCommit:
     payload = _ledger_payload(root, invocation) | {
         "event": "invocation",
         "candidate_paths": list(invocation.candidate_paths),
@@ -472,19 +660,27 @@ def _record_invocation(
         payload["covers"] = covers
     if baseline_snapshot_id:
         payload["baseline_status"] = "ready"
-        payload["baseline_snapshot_id"] = baseline_snapshot_id
-    if bootstrap_recovery:
-        payload["provenance_incomplete"] = False
-        payload["provenance_status"] = ProvenanceStatus.COMPLETE.value
-        payload["provenance_status_reason"] = ""
-        payload["turn_bootstrap_recovered"] = True
-    _ = record_event(payload)
+        expected = baseline_snapshot_id
+        for _attempt in range(INVOCATION_COMMIT_RETRIES):
+            payload["baseline_snapshot_id"] = expected
+            committed = record_turn_event_if_ready(root, payload, expected)
+            if committed.status is not TurnEventCommitStatus.RETRY:
+                return committed
+            if not committed.baseline_snapshot_id:
+                return committed
+            expected = committed.baseline_snapshot_id
+        return TurnEventCommit(TurnEventCommitStatus.RETRY, expected)
+    return TurnEventCommit(
+        TurnEventCommitStatus.RECORDED
+        if record_event_if_current_turn(payload, allow_missing=True)
+        else TurnEventCommitStatus.STALE_TURN
+    )
 
 
 def _record_finish_requested(root: Path, invocation: CanonicalInvocation) -> None:
     if load_ledger({"project_root": str(root)}).get("schema_version") != 2:
         return
-    _ = record_event(
+    _ = record_event_if_current_turn(
         _ledger_payload(root, invocation)
         | {
             "event": "finish_requested",
@@ -526,13 +722,15 @@ def _record_status(root: Path, invocation: CanonicalInvocation, report: Observat
         payload["provenance_rebase_count"] = report.rebase_count
     if report.error_kind:
         payload["provenance_error_kind"] = report.error_kind
+    if report.status_reason is ProvenanceReason.BASELINE_STATE_MISMATCH:
+        payload["baseline_status"] = "degraded"
     if _mutation_capable(invocation, classification):
         payload["provenance_mutation_capable"] = True
     target_ids = _remote_target_ids(invocation, classification)
     if target_ids and not is_verification_command(invocation.command_hint):
         payload["provenance_remote_mutation"] = True
         payload["remote_target_ids"] = list(target_ids)
-    _ = record_event(payload)
+    _ = record_event_if_current_turn(payload)
 
 
 def _ledger_payload(root: Path, invocation: CanonicalInvocation) -> JsonObject:
@@ -549,12 +747,28 @@ def _ledger_payload(root: Path, invocation: CanonicalInvocation) -> JsonObject:
 
 def _active_invocation(root: Path, invocation: CanonicalInvocation) -> CanonicalInvocation:
     ledger = load_ledger({"project_root": str(root)})
-    turn = active_turn(ledger, _ledger_payload(root, invocation))
-    if turn is not None:
-        turn_id = turn.get("turn_id")
-        return replace(invocation, turn_id=turn_id) if isinstance(turn_id, str) and turn_id else invocation
     turns = ledger.get("active_turns")
     if not isinstance(turns, dict):
+        return invocation
+    exact = turns.get(invocation.agent_key)
+    if isinstance(exact, dict):
+        turn_id = exact.get("turn_id")
+        if (
+            isinstance(turn_id, str)
+            and turn_id
+            and (turn_id == invocation.turn_id or invocation.turn_synthetic)
+        ):
+            return replace(invocation, turn_id=turn_id, turn_synthetic=False)
+        if (
+            isinstance(turn_id, str)
+            and turn_id
+            and not turn_is_closed(ledger, invocation.agent_key, invocation.turn_id)
+        ):
+            return replace(invocation, turn_id=turn_id, turn_synthetic=False)
+        return replace(invocation, identity_conflict=True)
+    if turn_is_closed(ledger, invocation.agent_key, invocation.turn_id):
+        return replace(invocation, identity_conflict=True)
+    if not invocation.identity_synthetic:
         return invocation
     matches = [
         (key, candidate)
@@ -571,7 +785,45 @@ def _active_invocation(root: Path, invocation: CanonicalInvocation) -> Canonical
     turn_id = candidate.get("turn_id")
     if len(parts) != 3 or not isinstance(turn_id, str) or not turn_id:
         return invocation
-    return replace(invocation, session_id=parts[1], turn_id=turn_id)
+    if (
+        turn_id != invocation.turn_id
+        and not invocation.turn_synthetic
+        and (
+            turn_is_closed(ledger, key, invocation.turn_id)
+            or _turn_closed_for_host_agent(ledger, invocation)
+        )
+    ):
+        return replace(invocation, identity_conflict=True)
+    return replace(
+        invocation,
+        session_id=parts[1],
+        turn_id=turn_id,
+        identity_synthetic=False,
+        turn_synthetic=False,
+    )
+
+
+def _turn_closed_for_host_agent(
+    ledger: JsonObject,
+    invocation: CanonicalInvocation,
+) -> bool:
+    closed = ledger.get("closed_turns")
+    if not isinstance(closed, list):
+        return False
+    for item in closed:
+        if not isinstance(item, dict) or item.get("turn_id") != invocation.turn_id:
+            continue
+        key = item.get("agent_key")
+        if not isinstance(key, str):
+            continue
+        parts = key.split(":", 2)
+        if (
+            len(parts) == 3
+            and parts[0] == invocation.host
+            and parts[2] == invocation.agent
+        ):
+            return True
+    return False
 
 
 def _baseline_missing(root: Path, invocation: CanonicalInvocation) -> bool:
@@ -580,6 +832,22 @@ def _baseline_missing(root: Path, invocation: CanonicalInvocation) -> bool:
         _ledger_payload(root, invocation),
     )
     return turn is not None and turn.get("baseline_status") == "missing"
+
+
+def _turn_bootstrap_error_report(
+    error: TurnBootstrapError,
+    full_reconcile: bool = False,
+) -> ObservationReport:
+    return ObservationReport(
+        "",
+        "",
+        (),
+        True,
+        full_reconcile,
+        error.status,
+        error.reason,
+        error_kind="TurnBootstrapError",
+    )
 
 
 def _with_shell_candidates(invocation: CanonicalInvocation) -> CanonicalInvocation:

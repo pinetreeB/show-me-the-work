@@ -57,6 +57,7 @@ class ProvenanceReason(StrEnum):
     OBSERVATION_ERROR = "observation_error"
     PEER_ACTIVITY = "peer_activity"
     TURN_NOT_STARTED = "turn_not_started"
+    BASELINE_STATE_MISMATCH = "baseline_state_mismatch"
 
 
 @dataclass(frozen=True, slots=True)

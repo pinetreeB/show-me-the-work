@@ -17,7 +17,15 @@ from .gate_counters import (
     recover_checkpoint_gates,
 )
 from .agent_log import ledger_transaction
-from .ledger import JsonObject, JsonValue, load_ledger, record_event, save_ledger, state_dir
+from .ledger import (
+    JsonObject,
+    JsonValue,
+    load_ledger,
+    record_event,
+    record_event_if_current_turn,
+    save_ledger,
+    state_dir,
+)
 from .risk_terms import risk_flags
 from .scorecard import GateAction, ReasonCode, Resolution, ScorecardSchemaError
 from .scorecard_store import (
@@ -533,18 +541,17 @@ def record_contract_authored_event(payload: Mapping[str, JsonValue]) -> None:
         digest = hashlib.sha256(namespaced.read_bytes()).hexdigest()
     except OSError:
         return
-    _ = record_event(
-        {
-            "project_root": root,
-            "event": "contract_authored",
-            "host": payload.get("host"),
-            "agent": agent_name,
-            "session_id": payload.get("session_id"),
-            "turn_id": payload.get("turn_id"),
-            "contract_path": namespaced_suffix,
-            "content_digest": digest,
-        }
-    )
+    event: dict[str, JsonValue] = {
+        "project_root": root,
+        "event": "contract_authored",
+        "host": payload.get("host"),
+        "agent": agent_name,
+        "session_id": payload.get("session_id"),
+        "turn_id": payload.get("turn_id"),
+        "contract_path": namespaced_suffix,
+        "content_digest": digest,
+    }
+    _ = record_event_if_current_turn(event, allow_missing=True)
 
 
 def _intent_set_command(payload: Mapping[str, JsonValue]) -> str:

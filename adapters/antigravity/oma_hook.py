@@ -112,7 +112,16 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     
     if result.get("decision") == "block":
         return emit({"decision": "deny", "reason": str(result.get("reason", ""))})
-    _ = begin_invocation(Path(common.project_root(payload)), invocation)
+    observation = begin_invocation(Path(common.project_root(payload)), invocation)
+    if (
+        observation.error_kind == "StaleTurn"
+        and invocation.identity_conflict
+        and invocation.mutation_capable
+    ):
+        return emit({
+            "decision": "deny",
+            "reason": "[smtw] stale turn identity; submit a current prompt before mutation.",
+        })
     return emit({"decision": "allow"})
 
 def handle_post_tool_use(payload: Mapping[str, object]) -> int:
@@ -131,7 +140,7 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
     from core.adapter_observation import observe_post_tool, resolve_active_invocation, verification_covers
     from core.classify import classify_prompt
     from core.contract import record_contract_authored_event
-    from core.ledger import JsonObject, load_ledger, record_event
+    from core.ledger import JsonObject, load_ledger, record_event_if_current_turn
     from core.provenance_types import ProvenanceStatus
     from core.scope_guard import evaluate_scope
     from core.verification import is_verification_command
@@ -150,7 +159,8 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
             success,
             evidence,
         )
-        if family == "edit":
+        invocation = resolve_active_invocation(Path(root), invocation)
+        if family == "edit" and not invocation.identity_conflict:
             record_contract_authored_event(
                 {
                     "project_root": root,
@@ -162,9 +172,10 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
                     "attribution": invocation.scorecard_attribution,
                 }
             )
-        invocation = resolve_active_invocation(Path(root), invocation)
         observation = observe_post_tool(Path(root), invocation)
         verification_command = family == "shell" and is_verification_command(command)
+        if observation.error_kind == "StaleTurn":
+            return emit({})
         if verification_command:
             covers = verification_covers(Path(root), invocation)
             verification: JsonObject = {
@@ -181,11 +192,11 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
             }
             if covers is not None:
                 verification["covers"] = covers
-            _ = record_event(verification)
+            _ = record_event_if_current_turn(verification, allow_missing=True)
             return emit({})
         if observation.status is ProvenanceStatus.SCOPE_TOO_LARGE:
             return emit({})
-        if observation.incomplete and not verification_command:
+        if observation.incomplete:
             return emit({})
         paths = list(observation.changed_paths)
         ledger = load_ledger({"project_root": root})
@@ -201,7 +212,7 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
             "changed_files": paths
         })
         if scope.get("decision") == "warn":
-            _ = record_event({
+            _ = record_event_if_current_turn({
                 "project_root": root,
                 "event": "scope_warning",
                 "host": invocation.host,
@@ -209,7 +220,7 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
                 "session_id": invocation.session_id,
                 "turn_id": invocation.turn_id,
                 "message": scope.get("message"),
-            })
+            }, allow_missing=True)
             return emit({})
         if family == "edit":
             return emit({})

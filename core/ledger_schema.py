@@ -170,6 +170,8 @@ def validate_v2_ledger(value: JsonValue) -> JsonObject:
     )
     _validate_manifest_transaction(ledger)
     _validate_path_attribution(ledger)
+    if "closed_turns" in ledger:
+        _validate_closed_turns(ledger["closed_turns"])
     active_turns = _object(_required(ledger, "active_turns", "ledger"), "ledger.active_turns")
     for agent, raw_turn in active_turns.items():
         _string(agent, "ledger.active_turns key")
@@ -204,8 +206,24 @@ def validate_v2_ledger(value: JsonValue) -> JsonObject:
                 _string(turn[timestamp_field], f"{field}.{timestamp_field}")
         if "baseline_status" in turn:
             baseline_status = _string(turn["baseline_status"], f"{field}.baseline_status")
-            if baseline_status not in {"missing", "ready"}:
-                _reject(f"{field}.baseline_status", "must be missing or ready")
+            if baseline_status not in {"missing", "ready", "degraded"}:
+                _reject(f"{field}.baseline_status", "must be missing, ready, or degraded")
+            if baseline_status == "degraded":
+                if turn.get("provenance_incomplete") is not True:
+                    _reject(
+                        f"{field}.provenance_incomplete",
+                        "must be true when baseline_status is degraded",
+                    )
+                if turn.get("provenance_status") != "incomplete":
+                    _reject(
+                        f"{field}.provenance_status",
+                        "must be incomplete when baseline_status is degraded",
+                    )
+                if turn.get("provenance_status_reason") != "baseline_state_mismatch":
+                    _reject(
+                        f"{field}.provenance_status_reason",
+                        "must identify a baseline_state_mismatch when degraded",
+                    )
         if "finish_state" in turn:
             finish_state = _string(turn["finish_state"], f"{field}.finish_state")
             if finish_state != "finish_requested":
@@ -225,6 +243,22 @@ def validate_v2_ledger(value: JsonValue) -> JsonObject:
     if "scorecard_evicted_keys" in ledger:
         _validate_scorecard_evicted_keys(ledger["scorecard_evicted_keys"])
     return ledger
+
+
+def _validate_closed_turns(value: JsonValue) -> None:
+    if not isinstance(value, list):
+        _reject("ledger.closed_turns", "must be a list")
+    if len(value) > 256:
+        _reject("ledger.closed_turns", "must contain at most 256 entries")
+    for index, raw_entry in enumerate(value):
+        field = f"ledger.closed_turns[{index}]"
+        entry = _object(raw_entry, field)
+        _string(_required(entry, "agent_key", field), f"{field}.agent_key")
+        _string(_required(entry, "turn_id", field), f"{field}.turn_id")
+        _nonnegative_integer(
+            _required(entry, "closed_seq", field),
+            f"{field}.closed_seq",
+        )
 
 
 def _validate_invocations(value: JsonValue, field: str) -> None:
@@ -323,25 +357,26 @@ def _validate_manifest_transaction(ledger: JsonObject) -> None:
             _required(pending, "base_generation", "ledger.manifest_pending"),
             "ledger.manifest_pending.base_generation",
         )
-        target = _positive_integer(
+        target = _nonnegative_integer(
             _required(pending, "target_generation", "ledger.manifest_pending"),
             "ledger.manifest_pending.target_generation",
         )
-        if target != base + 1:
+        if target not in {base, base + 1}:
             _reject(
                 "ledger.manifest_pending.target_generation",
-                "must equal base_generation + 1",
+                "must equal base_generation or base_generation + 1",
             )
-        _string(
+        before = _string(
             _required(pending, "snapshot_before", "ledger.manifest_pending"),
             "ledger.manifest_pending.snapshot_before",
         )
-        _string(
+        after = _string(
             _required(pending, "snapshot_after", "ledger.manifest_pending"),
             "ledger.manifest_pending.snapshot_after",
         )
+        pending_events = _required(pending, "events", "ledger.manifest_pending")
         _validate_manifest_events(
-            _required(pending, "events", "ledger.manifest_pending"),
+            pending_events,
             "ledger.manifest_pending.events",
             target,
             "uncommitted",
@@ -356,6 +391,32 @@ def _validate_manifest_transaction(ledger: JsonObject) -> None:
         if baseline_agent is not None and baseline_turn_id is not None:
             _string(baseline_agent, "ledger.manifest_pending.baseline_agent")
             _string(baseline_turn_id, "ledger.manifest_pending.baseline_turn_id")
+        baseline_before = pending.get("baseline_snapshot_before")
+        baseline_after = pending.get("baseline_snapshot_after")
+        baseline_keys = pending.get("baseline_candidate_keys")
+        new_baseline_fields = (baseline_before, baseline_after, baseline_keys)
+        if any(item is not None for item in new_baseline_fields):
+            if baseline_agent is None or baseline_turn_id is None or any(
+                item is None for item in new_baseline_fields
+            ):
+                _reject(
+                    "ledger.manifest_pending.baseline",
+                    "candidate baseline fields must be present together",
+                )
+            _string(baseline_before, "ledger.manifest_pending.baseline_snapshot_before")
+            _string(baseline_after, "ledger.manifest_pending.baseline_snapshot_after")
+            _string_list(baseline_keys, "ledger.manifest_pending.baseline_candidate_keys")
+        if target == base and (
+            before != after
+            or baseline_before is None
+            or baseline_after is None
+            or baseline_before == baseline_after
+            or pending_events != []
+        ):
+            _reject(
+                "ledger.manifest_pending.target_generation",
+                "baseline-only transitions require equal manifest snapshots and baseline CAS fields",
+            )
     if "manifest_event_journal" in ledger:
         _validate_manifest_events(
             ledger["manifest_event_journal"],

@@ -32,6 +32,7 @@ from .provenance_lifecycle_types import (
 from .provenance_observation import change_id_for, pending_change_ids, record_deltas
 from .provenance_manifest import (
     ManifestStoreError,
+    TurnBinding,
     commit_manifest,
     load_manifest_view,
     save_manifest_baseline,
@@ -39,8 +40,8 @@ from .provenance_manifest import (
 from .provenance_store import (
     SnapshotStoreError,
     delete_turn_baseline,
+    load_turn_baseline,
     load_workspace_current,
-    save_turn_baseline,
     turn_baseline_path,
     workspace_current_path,
 )
@@ -175,6 +176,14 @@ class ProvenanceLifecycle:
         return len(self._state.current.entries) if self._state.current is not None else 0
 
     @property
+    def current_snapshot(self) -> Snapshot | None:
+        return self._state.current
+
+    @property
+    def incomplete(self) -> bool:
+        return self._state.incomplete
+
+    @property
     def changes(self) -> tuple[ObservedChange, ...]:
         return tuple(sorted(self._state.changes.values(), key=lambda change: change.change_id))
 
@@ -244,7 +253,7 @@ class ProvenanceLifecycle:
             return result
         turn = TurnState(agent, turn_id, result.snapshot, self._state.event_seq, mutation_capable)
         try:
-            save_manifest_baseline(
+            baseline = save_manifest_baseline(
                 self._root,
                 self._state.generation,
                 turn.baseline,
@@ -253,6 +262,7 @@ class ProvenanceLifecycle:
             )
         except (ManifestStoreError, SnapshotStoreError):
             return self._mark_incomplete(result, ProvenanceReason.STORE_WRITE_ERROR)
+        turn = replace(turn, baseline=baseline)
         self._state.turns[(agent, turn_id)] = turn
         return self._turn_result(result, turn, False)
 
@@ -272,6 +282,7 @@ class ProvenanceLifecycle:
         candidates = candidate_paths_for_root(self._root, candidate_paths)
         if prime_candidates and not prime_candidate_scope(self._root, self._state, agent, turn_id, candidates):
             self._state.incomplete = True
+            self._state.incomplete_reason = ProvenanceReason.OBSERVATION_ERROR
         snapshot_id = self._state.current.snapshot_id if self._state.current is not None else ""
         return Invocation(
             invocation_id,
@@ -293,35 +304,121 @@ class ProvenanceLifecycle:
         mutation_capable: bool = False,
         *,
         allow_full_bootstrap: bool = False,
+        require_ledger_turn: bool = False,
     ) -> None:
-        if (agent, turn_id) in self._state.turns:
-            return
-        try:
-            turn = load_resumed_turn(
-                self._root, agent, turn_id, self._state.event_seq, mutation_capable
+        ledger = load_ledger({"project_root": str(self._root)})
+        active = ledger.get("active_turns")
+        raw_turn = active.get(agent) if isinstance(active, dict) else None
+        bound_turn = (
+            raw_turn
+            if isinstance(raw_turn, dict) and raw_turn.get("turn_id") == turn_id
+            else None
+        )
+        if (
+            require_ledger_turn
+            and ledger.get("schema_version") == 2
+            and bound_turn is None
+        ):
+            raise TurnBootstrapError(
+                ProvenanceStatus.INCOMPLETE,
+                ProvenanceReason.TURN_NOT_STARTED,
+                True,
             )
-        except MissingTurnBaselineError:
-            if not allow_full_bootstrap:
+        baseline_status = bound_turn.get("baseline_status") if bound_turn is not None else None
+        if baseline_status == "degraded":
+            raise TurnBootstrapError(
+                ProvenanceStatus.INCOMPLETE,
+                ProvenanceReason.BASELINE_STATE_MISMATCH,
+                True,
+            )
+        if baseline_status == "missing" and not allow_full_bootstrap:
+            raise TurnBootstrapError(
+                ProvenanceStatus.INCOMPLETE,
+                ProvenanceReason.TURN_NOT_STARTED,
+                True,
+            )
+        in_memory = self._state.turns.get((agent, turn_id))
+        if in_memory is not None:
+            try:
+                physical = load_turn_baseline(self._root, agent, turn_id)
+            except SnapshotStoreError as exc:
+                if baseline_status == "ready":
+                    raise TurnBootstrapError(
+                        ProvenanceStatus.INCOMPLETE,
+                        ProvenanceReason.BASELINE_STATE_MISMATCH,
+                        True,
+                    ) from exc
                 raise
-            current = self._state.current
-            if current is None:
-                result = self.start_turn(agent, turn_id, mutation_capable)
-                if _complete_observation(result.status) and not result.incomplete:
-                    return
-                raise TurnBootstrapError(
-                    result.status,
-                    result.status_reason,
-                    result.incomplete,
-                )
-            _ = save_turn_baseline(self._root, agent, turn_id, current)
-            turn = TurnState(
-                agent,
-                turn_id,
-                current,
-                self._state.event_seq,
-                mutation_capable,
+            if physical is None:
+                if baseline_status == "ready":
+                    raise TurnBootstrapError(
+                        ProvenanceStatus.INCOMPLETE,
+                        ProvenanceReason.BASELINE_STATE_MISMATCH,
+                        True,
+                    )
+                raise MissingTurnBaselineError(agent, turn_id)
+            baseline = physical
+            self._state.turns[(agent, turn_id)] = replace(
+                in_memory,
+                baseline=physical,
             )
-        self._state.turns[(agent, turn_id)] = turn
+        else:
+            try:
+                turn = load_resumed_turn(
+                    self._root, agent, turn_id, self._state.event_seq, mutation_capable
+                )
+            except (MissingTurnBaselineError, SnapshotStoreError) as exc:
+                if not allow_full_bootstrap:
+                    if baseline_status == "ready":
+                        raise TurnBootstrapError(
+                            ProvenanceStatus.INCOMPLETE,
+                            ProvenanceReason.BASELINE_STATE_MISMATCH,
+                            True,
+                        ) from exc
+                    raise
+                current = self._state.current
+                if current is None:
+                    result = self.start_turn(agent, turn_id, mutation_capable)
+                    if _complete_observation(result.status) and not result.incomplete:
+                        return
+                    raise TurnBootstrapError(
+                        result.status,
+                        result.status_reason,
+                        result.incomplete,
+                    )
+                current = save_manifest_baseline(
+                    self._root,
+                    self._state.generation,
+                    current,
+                    agent,
+                    turn_id,
+                )
+                turn = TurnState(
+                    agent,
+                    turn_id,
+                    current,
+                    self._state.event_seq,
+                    mutation_capable,
+                )
+            baseline = turn.baseline
+            self._state.turns[(agent, turn_id)] = turn
+        expected = bound_turn.get("baseline_snapshot_id") if bound_turn is not None else None
+        if (
+            isinstance(expected, str)
+            and expected
+            and expected != "snapshot:unavailable"
+            and baseline.snapshot_id != expected
+        ):
+            self._state.turns.pop((agent, turn_id), None)
+            raise TurnBootstrapError(
+                ProvenanceStatus.INCOMPLETE,
+                ProvenanceReason.BASELINE_STATE_MISMATCH,
+                True,
+            )
+        if require_ledger_turn:
+            self._state.ledger_bound_turns.add((agent, turn_id))
+        if in_memory is not None:
+            return
 
     def post_tool(self, invocation: Invocation, source: str = "external") -> ObservationResult:
         turn = self._state.turns[(invocation.agent, invocation.turn_id)]
@@ -573,6 +670,13 @@ class ProvenanceLifecycle:
                 self._snapshot_id(before),
                 snapshot,
                 templates,
+                required_turn=(
+                    TurnBinding(invocation.agent, invocation.turn_id)
+                    if invocation is not None
+                    and (invocation.agent, invocation.turn_id)
+                    in self._state.ledger_bound_turns
+                    else None
+                ),
             )
         except (ManifestStoreError, SnapshotStoreError):
             self._state.changes = previous_changes

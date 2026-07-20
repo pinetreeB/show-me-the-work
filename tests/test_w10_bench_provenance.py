@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
-import os
+import json
 from pathlib import Path
 import time
 from unittest.mock import patch
@@ -86,7 +86,9 @@ def test_scan_progress_uses_stderr_without_corrupting_hook_stdout() -> None:
     assert "[smtw] 10,000개 파일 상태 검증 중" in stderr.getvalue()
 
 
-def test_clean_turn_baseline_atomically_links_workspace_current(tmp_path: Path) -> None:
+def test_clean_turn_baseline_atomically_copies_workspace_current_with_identity(
+    tmp_path: Path,
+) -> None:
     # Given: a workspace-current snapshot that was just fully reconciled.
     (tmp_path / "app.py").write_text("print('v2')\n", encoding="utf-8")
     lifecycle = ProvenanceLifecycle(tmp_path)
@@ -98,10 +100,12 @@ def test_clean_turn_baseline_atomically_links_workspace_current(tmp_path: Path) 
         result = lifecycle.start_turn("bench", "second")
     baseline = lifecycle.turn_baseline_path("bench", "second")
 
-    # Then: its persisted baseline atomically reuses the unchanged current snapshot bytes.
+    # Then: the baseline avoids a scan while persisting its own collision-safe identity.
     assert result.full_scan is False
     assert save.call_count == 0
-    assert os.path.samefile(lifecycle.workspace_current_path, baseline)
+    raw = json.loads(baseline.read_text(encoding="utf-8"))
+    assert raw["baseline_agent"] == "bench"
+    assert raw["baseline_turn_id"] == "second"
 
 
 def test_measure_wraps_deadline_aware_hashing(tmp_path: Path) -> None:
