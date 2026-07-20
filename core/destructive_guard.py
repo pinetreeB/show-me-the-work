@@ -20,6 +20,7 @@ COMMAND_SEPARATORS: Final[frozenset[str]] = frozenset({"&&", "||", ";", "|"})
 
 GIT_SUBCOMMANDS_ALWAYS_IMPLICIT: Final[frozenset[str]] = frozenset({"reset", "clean", "stash", "read-tree"})
 GIT_SUBCOMMANDS_PATHSPEC: Final[frozenset[str]] = frozenset({"checkout", "restore"})
+GIT_CHECKOUT_DISCARD_FLAGS: Final[frozenset[str]] = frozenset({"-f", "--force"})
 GIT_SWITCH_DISCARD_FLAGS: Final[frozenset[str]] = frozenset({"--discard-changes"})
 GIT_SUBCOMMAND_NAMES: Final[frozenset[str]] = (
     GIT_SUBCOMMANDS_ALWAYS_IMPLICIT | GIT_SUBCOMMANDS_PATHSPEC | frozenset({"switch"})
@@ -213,6 +214,8 @@ def _detect_git(tokens: list[str]) -> ParsedDestructiveCommand | None:
     rest = tokens[2:]
     if subcommand == "checkout":
         option_tokens = rest[: rest.index("--")] if "--" in rest else rest
+        if any(token in GIT_CHECKOUT_DISCARD_FLAGS for token in option_tokens):
+            return _blocked(CATEGORY_GIT, "implicit_scope")
         if any(token in {"-b", "-B"} for token in option_tokens):
             return None
     return _parse_git_pathspec(subcommand, rest)
