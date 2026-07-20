@@ -69,6 +69,17 @@ R2_COORDINATION_REASON_MAP: Final[dict[str, CoordinationReason]] = {
     "attribution_lookup_unavailable": CoordinationReason.ATTRIBUTION_DEGRADED,
     "peer_unsettled_revision": CoordinationReason.PEER_UNSETTLED,
     "peer_open_invocation_candidate": CoordinationReason.PEER_UNSETTLED,
+    "parse_unable_dynamic_command": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_dynamic_expression": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_missing_path_flag": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_missing_target": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_missing_value": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_obfuscated": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_pathspec_from_file": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_pipeline": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_subcommand": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_target": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_wrapped": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
 }
 
 _STRIP_RE = re.compile(r"[^A-Za-z0-9.-]+")
@@ -529,6 +540,25 @@ def _canonicalize_target(root: str, target: str) -> tuple[str, str | None]:
     return (_CANON_IN_ROOT, canonical_manifest_key(rel, os.name == "nt"))
 
 
+def _canonicalize_lexical_target(root: str, target: str) -> str | None:
+    """Return an in-project key without following target symlinks."""
+    normalized = target.strip().strip("'\"").replace("\\", "/")
+    if not normalized:
+        return None
+    base = os.path.abspath(root)
+    candidate = Path(normalized)
+    absolute = os.path.abspath(
+        normalized if candidate.is_absolute() else Path(base) / candidate
+    )
+    try:
+        relative = os.path.relpath(absolute, base).replace("\\", "/")
+    except ValueError:
+        return None
+    if relative == "." or relative == ".." or relative.startswith("../"):
+        return None
+    return canonical_manifest_key(relative, os.name == "nt")
+
+
 def _is_state_dir_key(canonical: str) -> bool:
     # provenance/감사 상태 디렉토리(.fable-lite)는 어느 에이전트도 직접 파괴하면 안 된다.
     # attribution 인덱스에 등재되지 않으므로 소유권 조회로는 안 잡힌다 → 소유권 무관 하드 차단.
@@ -597,10 +627,31 @@ def _block(reason_code: str) -> Decision:
         ).value,
         "reason": (
             f"[smtw] R2: 파괴 조치가 차단되었습니다({reason_code}). "
-            "귀속을 확정할 수 없거나(파싱 불능/암시적 전체 범위) 타 에이전트의 미정산 변경 "
-            f"대상이라 fail-closed로 차단합니다. {RESOLUTION_PROCEDURES}"
+            f"{_block_explanation(reason_code)} {RESOLUTION_PROCEDURES}"
         ),
     }
+
+
+def _block_explanation(reason_code: str) -> str:
+    if reason_code == "parse_unable_dynamic_command":
+        return (
+            "셸 구간 선두의 런타임 변수 또는 동적 명령을 정적으로 해석할 수 없어 "
+            "파괴 명령 가능성을 배제할 수 없으므로 fail-closed로 차단합니다."
+        )
+    if reason_code == "parse_unable_dynamic_expression":
+        return (
+            "동적 경로 표현식을 정적으로 해석할 수 없어 파괴 대상을 확정할 수 없으므로 "
+            "fail-closed로 차단합니다."
+        )
+    if reason_code.startswith("parse_unable_"):
+        return (
+            "파괴 명령 또는 대상을 정적으로 해석할 수 없어 파괴 가능성을 배제할 수 "
+            "없으므로 fail-closed로 차단합니다."
+        )
+    return (
+        "귀속을 확정할 수 없거나(파싱 불능/암시적 전체 범위) 타 에이전트의 미정산 변경 "
+        "대상이라 fail-closed로 차단합니다."
+    )
 
 
 def _coordination_reason_for_block(reason_code: str) -> CoordinationReason:
@@ -635,6 +686,14 @@ def evaluate_r2_destructive_gate(
 
     root = payload.get("project_root")
     root = root if isinstance(root, str) and root else "."
+
+    # Lexical state-dir protection must run before ledger I/O and physical resolve:
+    # `.fable-lite` may itself be a symlink that resolves outside the project.
+    for parsed in parsed_commands:
+        for raw_target in parsed.targets:
+            lexical = _canonicalize_lexical_target(root, raw_target)
+            if lexical is not None and _is_state_dir_key(lexical):
+                return _block("state_dir_protected")
 
     # R2-first: 이 load가 어댑터 전체에서 최초의 상태 접근이다(§6-3).
     ledger, degraded = _load_ledger_for_r2(root)

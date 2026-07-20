@@ -968,7 +968,7 @@ def test_coordination_replay_quarantines_valid_json_with_invalid_schema(
     ]
 
 
-def test_r2_eight_static_block_points_map_to_four_closed_reasons() -> None:
+def test_r2_static_block_points_map_to_closed_reasons() -> None:
     expected = {
         "ledger_degraded": CoordinationReason.ATTRIBUTION_DEGRADED,
         "attribution_health_unavailable": CoordinationReason.ATTRIBUTION_DEGRADED,
@@ -978,12 +978,24 @@ def test_r2_eight_static_block_points_map_to_four_closed_reasons() -> None:
         "attribution_lookup_unavailable": CoordinationReason.ATTRIBUTION_DEGRADED,
         "peer_unsettled_revision": CoordinationReason.PEER_UNSETTLED,
         "peer_open_invocation_candidate": CoordinationReason.PEER_UNSETTLED,
+        "parse_unable_dynamic_command": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_dynamic_expression": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_missing_path_flag": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_missing_target": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_missing_value": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_obfuscated": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_pathspec_from_file": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_pipeline": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_subcommand": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_target": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_wrapped": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
     }
 
     assert R2_COORDINATION_REASON_MAP == expected
-    assert len(R2_COORDINATION_REASON_MAP) == 8
+    assert len(R2_COORDINATION_REASON_MAP) == 19
     assert set(R2_COORDINATION_REASON_MAP.values()) == {
         CoordinationReason.ATTRIBUTION_DEGRADED,
+        CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
         CoordinationReason.PEER_UNSETTLED,
         CoordinationReason.STATE_DIR_PROTECTED,
         CoordinationReason.UNRESOLVABLE_TARGET,

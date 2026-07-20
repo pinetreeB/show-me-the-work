@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 import shlex
 from collections.abc import Iterable
@@ -16,6 +17,21 @@ _INLINE = re.compile(
     r"(?:write_text|write_bytes|unlink|touch|mkdir|rmdir|rename|replace|chmod"
     r"|symlink_to|hardlink_to|open\(\s*['\"][wax])"
 )
+
+_PATH_WRITE_METHODS = frozenset(
+    {
+        "chmod",
+        "hardlink_to",
+        "mkdir",
+        "rmdir",
+        "symlink_to",
+        "touch",
+        "unlink",
+        "write_bytes",
+        "write_text",
+    }
+)
+_PATH_MOVE_METHODS = frozenset({"rename", "replace"})
 
 
 def shell_candidate_paths(command: str) -> tuple[str, ...]:
@@ -34,6 +50,93 @@ def _redirect_paths(command: str) -> Iterable[str]:
 def _inline_paths(command: str) -> Iterable[str]:
     for match in _INLINE.finditer(command):
         yield next(value for value in match.groups() if value is not None)
+    for source in _python_inline_sources(_tokens(command)):
+        yield from _python_write_paths(source)
+
+
+def _python_inline_sources(tokens: tuple[str, ...]) -> Iterable[str]:
+    index = 0
+    while index < len(tokens):
+        end = _command_end(tokens, index + 1)
+        executable = tokens[index].replace("\\", "/").rsplit("/", 1)[-1].casefold()
+        if executable.endswith(".exe"):
+            executable = executable[:-4]
+        if executable == "py" or re.fullmatch(r"python(?:\d+(?:\.\d+)?)?", executable):
+            args = tokens[index + 1 : end]
+            for argument_index, argument in enumerate(args[:-1]):
+                if argument == "-c":
+                    yield args[argument_index + 1]
+                    break
+        index = end + 1
+
+
+def _python_write_paths(source: str) -> Iterable[str]:
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return ()
+    visitor = _PythonWritePathVisitor()
+    visitor.visit(tree)
+    return tuple(visitor.paths)
+
+
+class _PythonWritePathVisitor(ast.NodeVisitor):
+    """Extract literal write hints; this remains advisory friction, not authorization."""
+
+    def __init__(self) -> None:
+        self.paths: list[str] = []
+
+    def visit_Call(self, node: ast.Call) -> None:  # noqa: N802 - ast visitor API
+        if isinstance(node.func, ast.Attribute):
+            receiver = _path_constructor_literal(node.func.value)
+            method = node.func.attr
+            if receiver is not None and method in _PATH_WRITE_METHODS:
+                self.paths.append(receiver)
+            elif receiver is not None and method in _PATH_MOVE_METHODS:
+                self.paths.append(receiver)
+                destination = _call_argument_literal(node, 0, "target")
+                if destination is not None:
+                    self.paths.append(destination)
+            elif receiver is not None and method == "open":
+                mode = _call_argument_literal(node, 0, "mode")
+                if _is_writable_mode(mode):
+                    self.paths.append(receiver)
+        elif isinstance(node.func, ast.Name) and node.func.id == "open":
+            path = _call_argument_literal(node, 0, "file")
+            mode = _call_argument_literal(node, 1, "mode")
+            if path is not None and _is_writable_mode(mode):
+                self.paths.append(path)
+        self.generic_visit(node)
+
+
+def _path_constructor_literal(node: ast.AST) -> str | None:
+    if not isinstance(node, ast.Call) or not node.args:
+        return None
+    constructor = node.func
+    is_path = isinstance(constructor, ast.Name) and constructor.id == "Path"
+    is_path = is_path or isinstance(constructor, ast.Attribute) and constructor.attr == "Path"
+    return _literal_string(node.args[0]) if is_path else None
+
+
+def _call_argument_literal(call: ast.Call, position: int, keyword: str) -> str | None:
+    for argument in call.keywords:
+        if argument.arg == keyword:
+            return _path_or_string_literal(argument.value)
+    if position < len(call.args):
+        return _path_or_string_literal(call.args[position])
+    return None
+
+
+def _path_or_string_literal(node: ast.AST) -> str | None:
+    return _path_constructor_literal(node) or _literal_string(node)
+
+
+def _literal_string(node: ast.AST) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _is_writable_mode(mode: str | None) -> bool:
+    return mode is not None and any(marker in mode for marker in "wax+")
 
 
 def _tokens(command: str) -> tuple[str, ...]:

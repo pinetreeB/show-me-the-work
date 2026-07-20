@@ -55,6 +55,7 @@ _COORDINATION_OUTCOMES = frozenset(
 _COORDINATION_REASONS = frozenset(
     {
         "attribution_degraded",
+        "command_parse_unavailable",
         "peer_unsettled",
         "state_dir_protected",
         "unresolvable_target",
@@ -471,6 +472,7 @@ def _validate_coordination_outbox_entry(
         or reason
         not in {
             "attribution_degraded",
+            "command_parse_unavailable",
             "peer_unsettled",
             "state_dir_protected",
             "unresolvable_target",
