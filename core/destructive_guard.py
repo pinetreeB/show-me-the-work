@@ -8,7 +8,12 @@ import re
 from typing import Final, TypeAlias
 
 from .ledger import JsonObject, JsonValue, load_ledger, state_dir
-from .provenance_policy import canonical_manifest_key
+from .provenance_policy import (
+    PROJECT_PATH_OUT_OF_ROOT as _CANON_OUT_OF_ROOT,
+    PROJECT_PATH_UNRESOLVABLE as _CANON_UNRESOLVABLE,
+    canonical_manifest_key,
+    canonicalize_project_path,
+)
 from .scorecard_coordination import CoordinationReason
 
 _STATE_DIR_NAME: Final[str] = Path(state_dir(".")).name
@@ -510,34 +515,9 @@ def _default_attribution_health(ledger: JsonObject) -> JsonObject:
     return attribution_health(ledger)
 
 
-_CANON_IN_ROOT: Final[str] = "in_root"
-_CANON_OUT_OF_ROOT: Final[str] = "out_of_root"
-_CANON_UNRESOLVABLE: Final[str] = "unresolvable"
-
-
 def _canonicalize_target(root: str, target: str) -> tuple[str, str | None]:
-    # path_attribution 인덱스 키는 canonical_manifest_key 규약(Windows casefold)이다.
-    # 세 경우를 구분해 반환한다(단일 None으로 뭉치면 안 됨 — agy 적대검토 실측):
-    #   ("in_root", key)      루트 내부로 확정 → key로 attribution 조회·판정
-    #   ("out_of_root", None) 루트 밖(relative_to ValueError) → 이 프로젝트 소유 아님, R2 무관 skip
-    #   ("unresolvable", None) resolve 자체 실패(OSError: 순환 심볼릭·초장경로 등) → fail-closed 차단
-    # OSError를 out_of_root와 뭉쳐 통과시키면, 루트 안 peer 파일을 고의 예외 유발로 우회할 수
-    # 있다(High). traversal(`..`)은 resolve **후** relative_to로 판정하므로 src/../peer.py처럼
-    # 루트로 되돌아오는 경로는 여전히 in_root 키로 잡혀 차단된다.
-    normalized = target.strip().strip("'\"").replace("\\", "/")
-    if not normalized:
-        return (_CANON_UNRESOLVABLE, None)
-    candidate = Path(normalized)
-    try:
-        base = Path(root).resolve()
-        resolved = (candidate if candidate.is_absolute() else base / normalized).resolve()
-    except OSError:
-        return (_CANON_UNRESOLVABLE, None)
-    try:
-        rel = str(resolved.relative_to(base)).replace("\\", "/")
-    except ValueError:
-        return (_CANON_OUT_OF_ROOT, None)
-    return (_CANON_IN_ROOT, canonical_manifest_key(rel, os.name == "nt"))
+    # Candidate recording and R2 target evaluation must use the exact same path rules.
+    return canonicalize_project_path(root, target)
 
 
 def _canonicalize_lexical_target(root: str, target: str) -> str | None:
@@ -613,10 +593,12 @@ def _owned_by_unsettled_peer(record: JsonObject | None, caller_agent_key: str) -
     return False
 
 
-def _peer_open_invocation_candidates(ledger: JsonObject, caller_agent_key: str) -> frozenset[str]:
+def _peer_open_invocation_candidates(
+    ledger: JsonObject, caller_agent_key: str, root: str
+) -> frozenset[str]:
     from .ledger_v2 import open_peer_invocation_candidates
 
-    return frozenset(open_peer_invocation_candidates(ledger, caller_agent_key))
+    return frozenset(open_peer_invocation_candidates(ledger, caller_agent_key, root))
 
 
 def _block(reason_code: str) -> Decision:
@@ -708,7 +690,7 @@ def evaluate_r2_destructive_gate(
         return _block("attribution_degraded_or_capacity_exceeded")
 
     caller_agent_key = _identity_agent_key(payload)
-    peer_candidates = _peer_open_invocation_candidates(ledger, caller_agent_key)
+    peer_candidates = _peer_open_invocation_candidates(ledger, caller_agent_key, root)
     for parsed in parsed_commands:
         for raw_target in parsed.targets:
             disposition, canonical = _canonicalize_target(root, raw_target)

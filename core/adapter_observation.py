@@ -23,6 +23,7 @@ from .provenance_manifest import (
     ensure_turn_bootstrap,
     record_turn_event_if_ready,
 )
+from .provenance_policy import PROJECT_PATH_IN_ROOT, canonicalize_project_path
 from .provenance_lifecycle import ProvenanceLifecycle
 from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
@@ -676,7 +677,9 @@ def _record_invocation(
 ) -> TurnEventCommit:
     payload = _ledger_payload(root, invocation) | {
         "event": "invocation",
-        "candidate_paths": list(invocation.candidate_paths),
+        "candidate_paths": list(
+            _canonical_candidate_paths(root, invocation.candidate_paths)
+        ),
     }
     classification = _shell_classification(invocation)
     if _mutation_capable(invocation, classification):
@@ -704,6 +707,19 @@ def _record_invocation(
         if record_event_if_current_turn(payload, allow_missing=True)
         else TurnEventCommitStatus.STALE_TURN
     )
+
+
+def _canonical_candidate_paths(
+    root: Path,
+    candidates: tuple[str, ...],
+) -> tuple[str, ...]:
+    normalized: dict[str, None] = {}
+    for candidate in candidates:
+        disposition, canonical = canonicalize_project_path(root, candidate)
+        if disposition != PROJECT_PATH_IN_ROOT or canonical is None:
+            continue
+        normalized.setdefault(canonical, None)
+    return tuple(normalized)
 
 
 def _record_finish_requested(root: Path, invocation: CanonicalInvocation) -> None:
