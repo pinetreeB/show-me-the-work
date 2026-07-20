@@ -23,7 +23,12 @@ MAX_INTENT_BLOCKS: Final = 2
 
 def needs_goals_block(payload: Mapping[str, JsonValue]) -> bool:
     root = _project_root(payload)
-    return _gate_required(load_ledger(payload), payload, "needs_goals") and not _goals_present(root)
+    ledger = load_ledger(payload)
+    return _gate_required(ledger, payload, "needs_goals") and not _goals_present(
+        root,
+        ledger,
+        payload,
+    )
 
 
 def needs_intent_block(payload: Mapping[str, JsonValue]) -> bool:
@@ -33,12 +38,14 @@ def needs_intent_block(payload: Mapping[str, JsonValue]) -> bool:
 
 def recover_checkpoint_gates(payload: Mapping[str, JsonValue]) -> None:
     root = _project_root(payload)
-    goals_present = _goals_present(root)
+    ledger = load_ledger(payload)
+    goals_present = _goals_present(root, ledger, payload)
     intent_present = has_intent(root)
     if not goals_present and not intent_present:
         return
     with ledger_transaction(root):
         ledger = load_ledger(payload)
+        goals_present = _goals_present(root, ledger, payload)
         recorded = False
         if goals_present:
             recorded = _record_scorecard(
@@ -62,10 +69,10 @@ def recover_checkpoint_gates(payload: Mapping[str, JsonValue]) -> None:
 
 def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
     root = _project_root(payload)
-    goals_present = _goals_present(root)
     # A checkpoint created after this hint can consume one capped block, preserving short RMW locking.
     with ledger_transaction(root):
         ledger = load_ledger(payload)
+        goals_present = _goals_present(root, ledger, payload)
         if not _gate_required(ledger, payload, "needs_goals") or goals_present:
             if goals_present and _record_scorecard(
                 ledger,
@@ -100,7 +107,8 @@ def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
     return {
         "decision": "block",
         "reason": (
-            "[smtw] N2: 2+ 스토리 작업은 `.fable-lite/goals.json` 체크포인트가 먼저 필요합니다. "
+            "[smtw] N2: 2+ 스토리 작업은 identity별 `.fable-lite/goals/<identity>.json` "
+            "체크포인트가 먼저 필요합니다(단일 identity는 기존 `.fable-lite/goals.json` 폴백). "
             "goals plan을 작성하거나 명시 확인 후 다시 시도하세요. "
             "/ Multi-story work requires a goals checkpoint first."
         ),
@@ -183,8 +191,53 @@ def _project_root(payload: Mapping[str, JsonValue]) -> str:
     return root if isinstance(root, str) and root else "."
 
 
-def _goals_present(root: str) -> bool:
-    return (state_dir(root) / "goals.json").exists()
+def _goals_present(
+    root: str,
+    ledger: Mapping[str, JsonValue],
+    payload: Mapping[str, JsonValue],
+) -> bool:
+    legacy = state_dir(root) / "goals.json"
+    identity = _active_turn_identity(ledger, payload)
+    if identity is None:
+        return legacy.exists()
+
+    # Lazy import avoids core.contract -> gate_counters import recursion while
+    # reusing the contract namespace's safe-key + identity-hash convention.
+    from .contract import _looks_exact_identity_key, namespaced_contract_path
+
+    filename = namespaced_contract_path(root, identity).name
+    if (state_dir(root) / "goals" / filename).exists():
+        return True
+    if not legacy.exists() or not _looks_exact_identity_key(identity):
+        return legacy.exists()
+    turns = ledger.get("active_turns")
+    if not isinstance(turns, dict):
+        return True
+    return not any(
+        key != identity
+        and isinstance(key, str)
+        and isinstance(turn, dict)
+        and _looks_exact_identity_key(key)
+        for key, turn in turns.items()
+    )
+
+
+def _active_turn_identity(
+    ledger: Mapping[str, JsonValue],
+    payload: Mapping[str, JsonValue],
+) -> str | None:
+    turn = active_turn(ledger, payload)
+    turns = ledger.get("active_turns")
+    if turn is None or not isinstance(turns, dict):
+        return None
+    return next(
+        (
+            key
+            for key, candidate in turns.items()
+            if isinstance(key, str) and candidate is turn
+        ),
+        None,
+    )
 
 
 def _gate_required(
