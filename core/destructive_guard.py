@@ -593,10 +593,12 @@ def _owned_by_unsettled_peer(record: JsonObject | None, caller_agent_key: str) -
     return False
 
 
-def _peer_open_invocation_candidates(ledger: JsonObject, caller_agent_key: str) -> frozenset[str]:
+def _peer_open_invocation_candidates(
+    ledger: JsonObject, caller_agent_key: str, root: str
+) -> frozenset[str]:
     from .ledger_v2 import open_peer_invocation_candidates
 
-    return frozenset(open_peer_invocation_candidates(ledger, caller_agent_key))
+    return frozenset(open_peer_invocation_candidates(ledger, caller_agent_key, root))
 
 
 def _block(reason_code: str) -> Decision:
@@ -688,7 +690,7 @@ def evaluate_r2_destructive_gate(
         return _block("attribution_degraded_or_capacity_exceeded")
 
     caller_agent_key = _identity_agent_key(payload)
-    peer_candidates = _peer_open_invocation_candidates(ledger, caller_agent_key)
+    peer_candidates = _peer_open_invocation_candidates(ledger, caller_agent_key, root)
     for parsed in parsed_commands:
         for raw_target in parsed.targets:
             disposition, canonical = _canonicalize_target(root, raw_target)

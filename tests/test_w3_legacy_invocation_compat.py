@@ -55,4 +55,5 @@ def test_legacy_invocation_without_window_fields_loads_conservatively(
     assert open_peer_invocation_candidates(
         loaded,
         "codex_cli:caller:codex",
+        tmp_path,
     ) == {}

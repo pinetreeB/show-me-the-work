@@ -87,6 +87,7 @@ def adjust_snapshot_for_peer_activity(
     peer_candidates = open_peer_invocation_candidates(
         ledger,
         caller_agent_key,
+        root,
         now=now,
     )
     evidence: list[SnapshotExclusion] = []

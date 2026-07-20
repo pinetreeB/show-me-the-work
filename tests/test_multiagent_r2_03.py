@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,43 @@ def test_out_of_root_candidate_is_not_misclassified_as_project_owned(
 
     assert stored == []
     assert result["decision"] == "allow"
+
+
+def _overwrite_stored_candidate_paths(
+    root: Path, invocation_id: str, raw_paths: list[str]
+) -> None:
+    # Simulates a pre-upgrade ledger entry: candidate_paths as they would have been
+    # stored *before* _canonical_candidate_paths existed (commit 9610115), i.e. raw
+    # / possibly-absolute strings written verbatim, never passed through
+    # canonicalize_project_path at write time. New writes can no longer produce this
+    # shape; this directly edits the on-disk ledger to reproduce what an already-open
+    # peer invocation from an older version would look like at read time.
+    ledger_path = root / ".fable-lite" / "ledger.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    invocation = ledger["active_turns"][PEER_AGENT_KEY]["invocations"][invocation_id]
+    invocation["candidate_paths"] = raw_paths
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+
+
+def test_legacy_absolute_candidate_stored_before_write_side_fix_still_blocks_relative_target(
+    tmp_path: Path,
+) -> None:
+    # R2-03 backward-compat gap (agy Critical finding): a peer invocation that was
+    # already open with a raw absolute candidate_paths entry -- e.g. because it was
+    # recorded before the write-side normalization in _canonical_candidate_paths
+    # existed, or by any future writer that does not go through it -- must still be
+    # read back correctly by open_peer_invocation_candidates. The read side must not
+    # rely solely on the write side always having normalized first.
+    absolute = tmp_path / "peer-new.py"
+    invocation_id = "legacy-absolute-peer"
+
+    _record_peer_candidate(tmp_path, "peer-new.py", invocation_id)
+    _overwrite_stored_candidate_paths(tmp_path, invocation_id, [str(absolute)])
+
+    result = _r2_result(tmp_path, "peer-new.py")
+
+    assert result["decision"] == "block"
+    assert "peer_open_invocation_candidate" in str(result["reason"])
 
 
 def test_unresolvable_candidate_is_not_used_as_mitigation(

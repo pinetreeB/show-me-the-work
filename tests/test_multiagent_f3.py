@@ -71,7 +71,7 @@ def test_open_invocation_closes_on_next_event_and_expires_after_lease(tmp_path: 
     )
 
     # When: open peer candidates are queried, then beta emits its next event.
-    before = open_peer_invocation_candidates(ledger, "host:session-alpha:alpha", now=now)
+    before = open_peer_invocation_candidates(ledger, "host:session-alpha:alpha", tmp_path, now=now)
     _ = apply_v2_event(
         ledger,
         _event(
@@ -89,6 +89,7 @@ def test_open_invocation_closes_on_next_event_and_expires_after_lease(tmp_path: 
     after = open_peer_invocation_candidates(
         ledger,
         "host:session-alpha:alpha",
+        tmp_path,
         now=now + timedelta(seconds=1),
     )
 
