@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
-import os
+import json
 from pathlib import Path
 import time
 from unittest.mock import patch
@@ -16,9 +16,11 @@ from eval.provenance_bench_metrics import (
     PhaseMeasurement,
     evaluate_slo,
     measure,
+    measure_memory,
     summarize_phase,
 )
 from core.provenance_lifecycle import ProvenanceLifecycle
+from core.provenance_lifecycle_types import ObservationResult
 from core.provenance_progress import scan_progress
 from core.provenance_store import save_workspace_current
 
@@ -86,7 +88,9 @@ def test_scan_progress_uses_stderr_without_corrupting_hook_stdout() -> None:
     assert "[smtw] 10,000개 파일 상태 검증 중" in stderr.getvalue()
 
 
-def test_clean_turn_baseline_atomically_links_workspace_current(tmp_path: Path) -> None:
+def test_clean_turn_baseline_atomically_copies_workspace_current_with_identity(
+    tmp_path: Path,
+) -> None:
     # Given: a workspace-current snapshot that was just fully reconciled.
     (tmp_path / "app.py").write_text("print('v2')\n", encoding="utf-8")
     lifecycle = ProvenanceLifecycle(tmp_path)
@@ -98,10 +102,12 @@ def test_clean_turn_baseline_atomically_links_workspace_current(tmp_path: Path) 
         result = lifecycle.start_turn("bench", "second")
     baseline = lifecycle.turn_baseline_path("bench", "second")
 
-    # Then: its persisted baseline atomically reuses the unchanged current snapshot bytes.
+    # Then: the baseline avoids a scan while persisting its own collision-safe identity.
     assert result.full_scan is False
     assert save.call_count == 0
-    assert os.path.samefile(lifecycle.workspace_current_path, baseline)
+    raw = json.loads(baseline.read_text(encoding="utf-8"))
+    assert raw["baseline_agent"] == "bench"
+    assert raw["baseline_turn_id"] == "second"
 
 
 def test_measure_wraps_deadline_aware_hashing(tmp_path: Path) -> None:
@@ -113,3 +119,38 @@ def test_measure_wraps_deadline_aware_hashing(tmp_path: Path) -> None:
     assert result.incomplete is False
     assert measurement.hash_calls == 1
     assert measurement.content_read_bytes > 0
+    assert measurement.rss_peak_bytes == 0
+
+
+def test_memory_measurement_ignores_stale_process_lifetime_peak() -> None:
+    result = ObservationResult(None, (), (), False, False, 0, False, False)
+
+    with (
+        patch("eval.provenance_bench_metrics._current_rss_bytes", return_value=100),
+        patch("eval.provenance_bench_metrics._peak_rss_bytes", return_value=10_000) as lifetime_peak,
+    ):
+        measured, _traced_peak, rss_peak = measure_memory(lambda: result)
+
+    assert measured is result
+    assert rss_peak == 0
+    lifetime_peak.assert_not_called()
+
+
+def test_memory_measurement_captures_phase_local_rss_growth() -> None:
+    result = ObservationResult(None, (), (), False, False, 0, False, False)
+    current = {"rss": 100}
+
+    def action() -> ObservationResult:
+        current["rss"] = 250
+        time.sleep(0.02)
+        current["rss"] = 100
+        return result
+
+    with patch(
+        "eval.provenance_bench_metrics._current_rss_bytes",
+        side_effect=lambda: current["rss"],
+    ):
+        measured, _traced_peak, rss_peak = measure_memory(action)
+
+    assert measured is result
+    assert rss_peak == 150

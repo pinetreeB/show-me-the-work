@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 import json
 import os
 from pathlib import Path
 import re
 import tempfile
 from typing import TypeAlias, override
-from uuid import uuid4
 
+from .agent_log import _LedgerTransaction
 from .provenance_types import (
     EntryKind,
     ManifestEntry,
@@ -23,6 +24,17 @@ from .provenance_types import (
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+class BaselineInitialization(StrEnum):
+    CREATED = "created"
+    EXISTING = "existing"
+    CONFLICT = "conflict"
+
+
+class BaselineAdvance(StrEnum):
+    COMMITTED = "committed"
+    RETRY = "retry"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,38 +71,150 @@ def load_workspace_current(root: Path) -> Snapshot | None:
 
 def save_turn_baseline(root: Path, agent: str, turn_id: str, snapshot: Snapshot) -> Path:
     path = turn_baseline_path(root, agent, turn_id)
-    _save(path, snapshot)
+    _save(path, snapshot, (agent, turn_id))
     return path
 
 
 def save_turn_baseline_from_current(root: Path, agent: str, turn_id: str, snapshot: Snapshot) -> Path:
     destination = turn_baseline_path(root, agent, turn_id)
-    source = workspace_current_path(root)
-    temporary = destination.parent / f"snapshot-{uuid4().hex}.tmp"
-    try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        os.link(source, temporary)
-        os.replace(temporary, destination)
-    except OSError:
-        temporary.unlink(missing_ok=True)
-        _save(destination, snapshot)
+    _save(destination, snapshot, (agent, turn_id))
     return destination
 
 
 def load_turn_baseline(root: Path, agent: str, turn_id: str) -> Snapshot | None:
-    return _load(turn_baseline_path(root, agent, turn_id))
+    path = turn_baseline_path(root, agent, turn_id)
+    return _load(path, expected_baseline_identity=(agent, turn_id))
+
+
+def turn_baseline_has_identity(root: Path, agent: str, turn_id: str) -> bool:
+    path = turn_baseline_path(root, agent, turn_id)
+    try:
+        raw: JsonValue = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SnapshotStoreError(path, "could not verify baseline identity") from exc
+    return _baseline_has_identity(path, raw, agent, turn_id)
+
+
+def initialize_turn_baseline(
+    root: Path,
+    agent: str,
+    turn_id: str,
+    expected_absent: bool,
+    candidate: Snapshot,
+    transaction: _LedgerTransaction,
+) -> BaselineInitialization:
+    resolved = root.resolve()
+    transaction.assert_active_for(str(resolved))
+    path = turn_baseline_path(resolved, agent, turn_id)
+    try:
+        existing = load_turn_baseline(resolved, agent, turn_id)
+    except SnapshotStoreError:
+        return BaselineInitialization.CONFLICT
+    if existing is not None:
+        return BaselineInitialization.EXISTING
+    if not expected_absent:
+        return BaselineInitialization.CONFLICT
+    _save(path, candidate, (agent, turn_id))
+    try:
+        winner = load_turn_baseline(resolved, agent, turn_id)
+    except SnapshotStoreError:
+        return BaselineInitialization.CONFLICT
+    return (
+        BaselineInitialization.CREATED
+        if winner is not None and winner.snapshot_id == candidate.snapshot_id
+        else BaselineInitialization.CONFLICT
+    )
+
+
+def claim_legacy_turn_baseline(
+    root: Path,
+    agent: str,
+    turn_id: str,
+    expected_snapshot_id: str,
+    transaction: _LedgerTransaction,
+) -> bool:
+    """Bind a metadata-free baseline to its identity without changing its bytes."""
+    resolved = root.resolve()
+    transaction.assert_active_for(str(resolved))
+    path = turn_baseline_path(resolved, agent, turn_id)
+    try:
+        snapshot = _load(path)
+        has_identity = turn_baseline_has_identity(resolved, agent, turn_id)
+    except SnapshotStoreError:
+        return False
+    if snapshot is None or snapshot.snapshot_id != expected_snapshot_id:
+        return False
+    if has_identity:
+        return True
+    _save(path, snapshot, (agent, turn_id))
+    try:
+        claimed = load_turn_baseline(resolved, agent, turn_id)
+    except SnapshotStoreError:
+        return False
+    return claimed is not None and claimed.snapshot_id == expected_snapshot_id
+
+
+def advance_turn_baseline(
+    root: Path,
+    agent: str,
+    turn_id: str,
+    expected_snapshot_id: str,
+    merged_snapshot: Snapshot,
+    manifest_generation: int,
+    transaction: _LedgerTransaction,
+) -> BaselineAdvance:
+    resolved = root.resolve()
+    transaction.assert_active_for(str(resolved))
+    from .ledger import load_ledger
+    from .ledger_v1 import sequence_value
+
+    ledger = load_ledger({"project_root": str(resolved)})
+    if sequence_value(ledger.get("manifest_generation")) != manifest_generation:
+        return BaselineAdvance.RETRY
+    try:
+        current = load_turn_baseline(resolved, agent, turn_id)
+    except SnapshotStoreError:
+        return BaselineAdvance.RETRY
+    if current is None or current.snapshot_id != expected_snapshot_id:
+        return BaselineAdvance.RETRY
+    _save(
+        turn_baseline_path(resolved, agent, turn_id),
+        merged_snapshot,
+        (agent, turn_id),
+    )
+    try:
+        committed = load_turn_baseline(resolved, agent, turn_id)
+    except SnapshotStoreError:
+        return BaselineAdvance.RETRY
+    return (
+        BaselineAdvance.COMMITTED
+        if committed is not None
+        and committed.snapshot_id == merged_snapshot.snapshot_id
+        else BaselineAdvance.RETRY
+    )
 
 
 def delete_turn_baseline(root: Path, agent: str, turn_id: str) -> None:
+    path = turn_baseline_path(root, agent, turn_id)
     try:
-        turn_baseline_path(root, agent, turn_id).unlink(missing_ok=True)
+        if path.exists():
+            _assert_baseline_identity(path, agent, turn_id)
+        path.unlink(missing_ok=True)
     except OSError as exc:
-        raise SnapshotStoreError(turn_baseline_path(root, agent, turn_id), str(exc)) from exc
+        raise SnapshotStoreError(path, str(exc)) from exc
 
 
-def _save(path: Path, snapshot: Snapshot) -> None:
+def _save(
+    path: Path,
+    snapshot: Snapshot,
+    baseline_identity: tuple[str, str] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    encoded = json.dumps(_to_value(snapshot), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    value = _to_value(snapshot)
+    if baseline_identity is not None:
+        value["baseline_agent"] = baseline_identity[0]
+        value["baseline_turn_id"] = baseline_identity[1]
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     handle = tempfile.NamedTemporaryFile(
         "w",
         encoding="utf-8",
@@ -114,16 +238,48 @@ def _safe_key(value: str, fallback: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-") or fallback
 
 
-def _load(path: Path) -> Snapshot | None:
+def _load(
+    path: Path,
+    *,
+    expected_baseline_identity: tuple[str, str] | None = None,
+) -> Snapshot | None:
     try:
         raw: JsonValue = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except OSError as exc:
         raise SnapshotStoreError(path, str(exc)) from exc
-    except json.JSONDecodeError as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SnapshotStoreError(path, "must be valid JSON") from exc
-    return _from_value(path, raw)
+    snapshot = _from_value(path, raw)
+    if expected_baseline_identity is not None:
+        _ = _baseline_has_identity(path, raw, *expected_baseline_identity)
+    return snapshot
+
+
+def _assert_baseline_identity(path: Path, agent: str, turn_id: str) -> None:
+    try:
+        raw: JsonValue = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SnapshotStoreError(path, "could not verify baseline identity") from exc
+    _ = _baseline_has_identity(path, raw, agent, turn_id)
+
+
+def _baseline_has_identity(
+    path: Path,
+    raw: JsonValue,
+    agent: str,
+    turn_id: str,
+) -> bool:
+    if not isinstance(raw, dict):
+        raise SnapshotStoreError(path, "must be an object")
+    stored_agent = raw.get("baseline_agent")
+    stored_turn = raw.get("baseline_turn_id")
+    if stored_agent is None and stored_turn is None:
+        return False
+    if stored_agent != agent or stored_turn != turn_id:
+        raise SnapshotStoreError(path, "safe-key collision with another turn baseline")
+    return True
 
 
 def _to_value(snapshot: Snapshot) -> dict[str, JsonValue]:

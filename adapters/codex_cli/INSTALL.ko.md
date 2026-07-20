@@ -70,9 +70,11 @@ event 계약으로 정규화됩니다. 상태는 대상 프로젝트의 `.fable-
 - scan이 불완전하면 clean으로 간주하지 않고 기존 2회 차단 상한을 적용합니다.
 - v1 ledger 자동 migration은 W9 정확도 receipt와 W10 성능 receipt가 모두 green일 때만 켜집니다.
 
-현재 저장된 `eval/results/bench-latest.json`은 rev3의 1k 대표 규모와 10k 극한 규모 hard gate가
-모두 green입니다. W9 정확도 receipt도 green이므로 one-shot v1 ledger 자동 migration이 활성화됩니다.
-receipt 파일을 수동으로 수정해 가드를 우회하면 안 됩니다. 재측정은 저장소 루트에서 다음 명령으로 실행합니다.
+패키지에 포함된 `core/release_receipts/bench-latest.json`은 rev3의 1k 대표 규모와 10k 극한 규모 hard
+gate가 모두 green입니다. 함께 패키징된 W9 정확도 receipt도 green이므로 one-shot v1 ledger 자동
+migration이 활성화됩니다. `eval/results/`의 ignored 재측정 산출물은 release 승인을 자동 갱신하지
+않습니다. packaged receipt를 수동으로 수정해 가드를 우회하면 안 됩니다. 재측정은 저장소 루트에서 다음
+명령으로 실행합니다.
 
 ```powershell
 python -m eval.provenance.run

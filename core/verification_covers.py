@@ -31,6 +31,13 @@ def active_turn(ledger: Mapping[str, JsonValue], payload: Mapping[str, JsonValue
     if payload is not None:
         turn = turns.get(agent_key(payload))
         if isinstance(turn, dict):
+            requested_turn_id = payload.get("turn_id")
+            if (
+                isinstance(requested_turn_id, str)
+                and requested_turn_id
+                and turn.get("turn_id") != requested_turn_id
+            ):
+                return None
             return turn
         if not _legacy_payload(payload):
             return None

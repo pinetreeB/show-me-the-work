@@ -5,9 +5,11 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 import errno
 import json
+import math
 import os
 from pathlib import Path
 import re
+import threading
 import time
 from uuid import uuid4
 
@@ -15,6 +17,29 @@ from .ledger_schema import JsonObject, JsonValue
 LOCK_WAIT_SECONDS = 15.0
 STALE_LOCK_SECONDS = 10.0
 TEST_LOCK_WAIT_ENV = "FABLE_LITE_TEST_LOCK_WAIT_SECONDS"
+
+
+class _LedgerTransaction:
+    """Opaque proof that the root ledger lock is active in this call stack."""
+
+    __slots__ = ("_active", "_pid", "_root", "_thread_id")
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self._active = True
+        self._pid = os.getpid()
+        self._thread_id = threading.get_ident()
+
+    def assert_active_for(self, project_root: str) -> None:
+        if not self._active:
+            raise RuntimeError("ledger transaction is no longer active")
+        if os.getpid() != self._pid or threading.get_ident() != self._thread_id:
+            raise RuntimeError("ledger transaction cannot cross a process or thread boundary")
+        if Path(project_root).resolve() != self._root:
+            raise RuntimeError("ledger transaction belongs to a different project root")
+
+    def _deactivate(self) -> None:
+        self._active = False
 
 
 def _safe_agent_name(agent: str) -> str:
@@ -51,9 +76,13 @@ def _posix_guard(path: Path, deadline: float) -> Iterator[None]:
 
 def _read_lock_record(path: Path) -> str | None:
     try:
-        return path.read_text(encoding="ascii").strip()
+        encoded = path.read_bytes()
     except OSError:
         return None
+    try:
+        return encoded.decode("ascii").strip()
+    except UnicodeDecodeError:
+        return f"malformed:{encoded.hex()}"
 
 
 def _record_pid(record: str) -> int | None:
@@ -94,16 +123,17 @@ def _windows_pid_is_alive(pid: int) -> bool:
 
 
 def _stale_record(path: Path) -> str | None:
-    try:
-        if time.time() - path.stat().st_mtime <= STALE_LOCK_SECONDS:
-            return None
-    except OSError:
-        return None
     record = _read_lock_record(path)
     if record is None:
         return None
     pid = _record_pid(record)
-    return None if pid is not None and _pid_is_alive(pid) else record
+    if pid is not None:
+        return None if _pid_is_alive(pid) else record
+    try:
+        old_enough = time.time() - path.stat().st_mtime > STALE_LOCK_SECONDS
+    except OSError:
+        return None
+    return record if old_enough else None
 
 
 def _unlink_matching_record(path: Path, expected: str) -> bool:
@@ -147,29 +177,87 @@ def _acquire_owner_lock(path: Path, deadline: float, owner: str) -> int:
 
 
 @contextmanager
-def _owned_lock(path: Path, deadline: float) -> Iterator[None]:
+def _owned_lock(
+    path: Path,
+    deadline: float,
+    *,
+    release_wait_seconds: float = 1.0,
+) -> Iterator[None]:
     owner = f"{os.getpid()}:{uuid4().hex}"
     descriptor = _acquire_owner_lock(path, deadline, owner)
     try:
         yield
     finally:
         os.close(descriptor)
-        _ = _unlink_matching_record(path, owner)
+        _release_owner_lock(path, owner, wait_seconds=release_wait_seconds)
+
+
+def _release_owner_lock(
+    path: Path,
+    owner: str,
+    *,
+    wait_seconds: float = 1.0,
+) -> None:
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        if _unlink_matching_record(path, owner) or not path.exists():
+            return
+        current = _read_lock_record(path)
+        if current is not None and current != owner:
+            return
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(0.005)
 
 
 @contextmanager
-def ledger_transaction(project_root: str) -> Iterator[None]:
-    directory = Path(project_root).resolve() / ".fable-lite"
+def ledger_transaction(
+    project_root: str,
+    *,
+    lock_wait_seconds: float | None = None,
+    release_wait_seconds: float | None = None,
+) -> Iterator[_LedgerTransaction]:
+    """Hold the root ledger lock; zero wait makes one immediate acquire attempt."""
+    root = Path(project_root).resolve()
+    directory = root / ".fable-lite"
     directory.mkdir(parents=True, exist_ok=True)
     lock_path = directory / "ledger.lock"
-    deadline = time.monotonic() + _lock_wait_seconds()
+    wait_seconds = (
+        _lock_wait_seconds()
+        if lock_wait_seconds is None
+        else _explicit_nonnegative_seconds(lock_wait_seconds, "lock_wait_seconds")
+    )
+    release_seconds = (
+        1.0
+        if release_wait_seconds is None
+        else _explicit_nonnegative_seconds(
+            release_wait_seconds,
+            "release_wait_seconds",
+        )
+    )
+    deadline = time.monotonic() + wait_seconds
+    transaction = _LedgerTransaction(root)
     if os.name == "posix":
         with _posix_guard(directory / "ledger.guard", deadline):
-            with _owned_lock(lock_path, deadline):
-                yield
+            with _owned_lock(
+                lock_path,
+                deadline,
+                release_wait_seconds=release_seconds,
+            ):
+                try:
+                    yield transaction
+                finally:
+                    transaction._deactivate()
     else:
-        with _owned_lock(lock_path, deadline):
-            yield
+        with _owned_lock(
+            lock_path,
+            deadline,
+            release_wait_seconds=release_seconds,
+        ):
+            try:
+                yield transaction
+            finally:
+                transaction._deactivate()
 
 
 def _lock_wait_seconds() -> float:
@@ -181,6 +269,12 @@ def _lock_wait_seconds() -> float:
     except ValueError:
         return LOCK_WAIT_SECONDS
     return wait_seconds if wait_seconds > 0 else LOCK_WAIT_SECONDS
+
+
+def _explicit_nonnegative_seconds(value: float, field: str) -> float:
+    if isinstance(value, bool) or not math.isfinite(value) or value < 0:
+        raise ValueError(f"{field} must be a finite non-negative number")
+    return float(value)
 
 
 def _json_safe(value: JsonValue) -> bool:

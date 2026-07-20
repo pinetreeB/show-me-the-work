@@ -421,8 +421,12 @@ def _gate_state(
 ) -> Mapping[str, JsonValue]:
     if turn is not None:
         return turn
-    if ledger.get("schema_version") != 2 or _legacy_identity(payload):
+    if ledger.get("schema_version") != 2:
         return ledger
+    requested_turn_id = payload.get("turn_id")
+    if not isinstance(requested_turn_id, str) or not requested_turn_id:
+        if _legacy_identity(payload):
+            return ledger
     return {
         "baseline_status": "missing",
         "provenance_incomplete": True,
@@ -447,13 +451,18 @@ def _finish_allowed_turn(
     payload: Mapping[str, JsonValue],
     decision: Mapping[str, JsonValue],
 ) -> None:
-    if decision.get("decision") != "allow" or active_turn(ledger, payload) is None:
+    turn = active_turn(ledger, payload)
+    if decision.get("decision") != "allow" or turn is None:
         return
     event: JsonObject = {
         key: value
         for key in ("project_root", "cwd", "host", "agent", "session_id", "turn_id", "attribution")
         if (value := payload.get(key)) is not None
     }
+    if not isinstance(event.get("turn_id"), str):
+        turn_id = turn.get("turn_id")
+        if isinstance(turn_id, str) and turn_id:
+            event["turn_id"] = turn_id
     event["event"] = "turn_finished"
     event["seq"] = sequence_value(ledger.get("event_seq")) + 1
     _ = apply_v2_event(ledger, event)

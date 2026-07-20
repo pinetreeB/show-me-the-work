@@ -22,7 +22,7 @@ def main() -> int:
         from core.adapter_observation import observe_post_tool, resolve_active_invocation, verification_covers
         from core.classify import classify_prompt
         from core.contract import EDIT_TOOLS, SHELL_TOOLS, record_contract_authored_event
-        from core.ledger import load_ledger, record_event
+        from core.ledger import load_ledger, record_event_if_current_turn
         from core.provenance_types import ProvenanceStatus
         from core.scope_guard import evaluate_scope
         from core.verification import is_verification_command
@@ -41,7 +41,8 @@ def main() -> int:
                 common["tool_success"](payload),
                 common["tool_output"](payload),
             )
-            if family == "edit":
+            invocation = resolve_active_invocation(Path(root), invocation)
+            if family == "edit" and not invocation.identity_conflict:
                 record_contract_authored_event(
                     {
                         "project_root": root,
@@ -53,9 +54,12 @@ def main() -> int:
                         "attribution": invocation.scorecard_attribution,
                     }
                 )
-            invocation = resolve_active_invocation(Path(root), invocation)
             observation = observe_post_tool(Path(root), invocation)
             verification_command = family == "shell" and is_verification_command(command)
+            if observation.error_kind == "StaleTurn":
+                return common["emit"](
+                    {"systemMessage": "[smtw] provenance incomplete; fail-open observation."}
+                )
             if verification_command:
                 covers = verification_covers(Path(root), invocation)
                 verification = {
@@ -72,12 +76,14 @@ def main() -> int:
                 }
                 if covers is not None:
                     verification["covers"] = covers
-                record_event(verification)
+                _ = record_event_if_current_turn(verification, allow_missing=True)
                 return common["emit"]({"systemMessage": "[smtw] 원장: 검증 기록 / recorded verification."})
             if observation.status is ProvenanceStatus.SCOPE_TOO_LARGE:
                 return common["emit"]({})
-            if observation.incomplete and not verification_command:
-                return common["emit"]({"systemMessage": "[smtw] provenance incomplete; fail-open observation."})
+            if observation.incomplete:
+                return common["emit"](
+                    {"systemMessage": "[smtw] provenance incomplete; fail-open observation."}
+                )
             paths = list(observation.changed_paths)
             ledger = load_ledger({"project_root": root})
             prompt = ledger.get("prompt")
@@ -92,7 +98,7 @@ def main() -> int:
                 }
             )
             if scope["decision"] == "warn":
-                record_event(
+                _ = record_event_if_current_turn(
                     {
                         "project_root": root,
                         "event": "scope_warning",
@@ -101,7 +107,8 @@ def main() -> int:
                         "session_id": invocation.session_id,
                         "turn_id": invocation.turn_id,
                         "message": scope["message"],
-                    }
+                    },
+                    allow_missing=True,
                 )
                 return common["emit"](
                     {

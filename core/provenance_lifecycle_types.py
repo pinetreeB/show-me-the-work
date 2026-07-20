@@ -84,6 +84,7 @@ class LifecycleState:
     incomplete_reason: ProvenanceReason
     current_is_stop_full: bool
     stop_cap_reservations: set[tuple[str, str]]
+    ledger_bound_turns: set[tuple[str, str]]
 
     def __init__(self, root: str, current: Snapshot | None = None) -> None:
         self.root = root
@@ -96,3 +97,4 @@ class LifecycleState:
         self.incomplete_reason = ProvenanceReason.NONE
         self.current_is_stop_full = current.full_reconciled_at is not None if current else False
         self.stop_cap_reservations = set()
+        self.ledger_bound_turns = set()

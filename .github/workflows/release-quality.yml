@@ -73,6 +73,7 @@ jobs:
           Push-Location $env:RUNNER_TEMP
           try {
             & $wheelPython -P -m fable_lite --help
+            & $wheelPython -P -c "from core.release_gate import auto_migration_enabled; assert auto_migration_enabled()"
           } finally {
             Pop-Location
           }
