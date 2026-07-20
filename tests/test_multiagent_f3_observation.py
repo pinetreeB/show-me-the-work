@@ -214,6 +214,7 @@ def test_followup_hook_preserves_turn_not_started_without_keyerror_chain(
 
     class FailedBootstrapLifecycle:
         observed_file_count = 0
+        current_snapshot = None
 
         def __init__(self, root: Path) -> None:
             self.root = root
@@ -226,6 +227,14 @@ def test_followup_hook_preserves_turn_not_started_without_keyerror_chain(
             *,
             allow_full_bootstrap: bool = False,
         ) -> None:
+            raise TurnBootstrapError(
+                ProvenanceStatus.INCOMPLETE,
+                ProvenanceReason.OBSERVATION_ERROR,
+                True,
+            )
+
+        def start_turn(self, *args: object, **kwargs: object) -> object:
+            del args, kwargs
             raise TurnBootstrapError(
                 ProvenanceStatus.INCOMPLETE,
                 ProvenanceReason.OBSERVATION_ERROR,

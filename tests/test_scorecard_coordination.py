@@ -269,6 +269,7 @@ def test_r2_deny_records_only_the_resolved_active_identity(tmp_path: Path) -> No
         False,
         "",
         True,
+        True,
     )
 
     recorded = record_r2_deny_after_resolution(

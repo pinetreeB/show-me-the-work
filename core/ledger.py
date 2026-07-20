@@ -1,20 +1,34 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 import os as os
 from pathlib import Path
 from uuid import uuid4
 
-from .agent_log import agent_log_path as agent_log_path, append_agent_event, ledger_transaction, load_agent_events
+from .agent_log import (
+    _LedgerTransaction,
+    agent_log_path as agent_log_path,
+    append_agent_event,
+    ledger_transaction,
+    load_agent_events,
+)
 from .ledger_migration import LedgerMigrationError as LedgerMigrationError, migrate_v1_ledger
 from .ledger_schema import JsonObject as JsonObject, JsonScalar as JsonScalar, JsonValue as JsonValue, LedgerSchemaError, serialize_v2_ledger, validate_v2_ledger
 from .ledger_storage import atomic_write_text, ledger_path as ledger_path, state_dir as state_dir
 from .ledger_v1 import apply_v1_event, classify_change_kind as classify_change_kind, default_ledger, sequence_value
-from .ledger_v2 import apply_v2_event, default_v2_ledger
+from .ledger_v2 import apply_v2_event, default_v2_ledger, turn_is_closed
 from .release_gate import auto_migration_enabled
-from .verification_covers import active_turn, capture_covers
+from .verification_covers import active_turn, agent_key, capture_covers
+
+
+@dataclass(frozen=True, slots=True)
+class _RecordedEvent:
+    ledger: JsonObject
+    payload: JsonObject
+    saved: bool
 
 
 def _project_root(payload: Mapping[str, JsonValue]) -> str:
@@ -119,26 +133,76 @@ def record_event(payload: Mapping[str, JsonValue]) -> JsonObject:
             _ = migrate_v1_ledger(root)
         except LedgerMigrationError:
             return load_ledger(payload)
-    event_payload: dict[str, JsonValue]
-    saved = False
-    with ledger_transaction(root):
-        existed_before_load = destination.exists()
+    with ledger_transaction(root) as transaction:
+        recorded = _record_event_locked(payload, transaction)
+    if recorded.saved:
+        _record_coordination_after_event(root, recorded.payload)
+    return recorded.ledger
+
+
+def record_event_if_current_turn(
+    payload: Mapping[str, JsonValue],
+    *,
+    allow_missing: bool = False,
+) -> bool:
+    """Record only when an existing actor turn has not been replaced."""
+    root = _project_root(payload)
+    destination = ledger_path(root)
+    if auto_migration_enabled() and _legacy_ledger_exists(destination):
+        try:
+            _ = migrate_v1_ledger(root)
+        except LedgerMigrationError:
+            return False
+    recorded: _RecordedEvent | None = None
+    with ledger_transaction(root) as transaction:
         ledger = load_ledger(payload)
-        if not existed_before_load:
-            ledger = default_v2_ledger()
-        event_payload = dict(payload)
-        _ = event_payload.pop("event_seq", None)
-        _decorate_design_prompt(root, event_payload)
-        event_payload["seq"] = sequence_value(ledger.get("event_seq")) + 1
-        if ledger.get("schema_version") == 2:
-            _ = apply_v2_event(ledger, event_payload)
-        else:
-            _ = apply_v1_event(ledger, event_payload)
-        saved = save_ledger(payload, ledger)
-        append_agent_event(root, _agent(payload), event_payload)
+        turn = active_turn(ledger, payload)
+        requested_turn_id = payload.get("turn_id")
+        active = ledger.get("active_turns")
+        raw_turn = active.get(agent_key(payload)) if isinstance(active, dict) else None
+        if turn is None:
+            if not allow_missing or isinstance(raw_turn, dict):
+                return False
+            if requested_turn_id is not None and not isinstance(requested_turn_id, str):
+                return False
+            if isinstance(requested_turn_id, str) and turn_is_closed(
+                ledger, agent_key(payload), requested_turn_id
+            ):
+                return False
+        elif (
+            not isinstance(requested_turn_id, str)
+            or turn.get("turn_id") != requested_turn_id
+        ):
+            return False
+        recorded = _record_event_locked(payload, transaction)
+    if recorded.saved:
+        _record_coordination_after_event(root, recorded.payload)
+    return recorded.saved
+
+
+def _record_event_locked(
+    payload: Mapping[str, JsonValue],
+    transaction: _LedgerTransaction,
+) -> _RecordedEvent:
+    root = _project_root(payload)
+    transaction.assert_active_for(root)
+    destination = ledger_path(root)
+    existed_before_load = destination.exists()
+    ledger = load_ledger(payload)
+    if not existed_before_load:
+        ledger = default_v2_ledger()
+    event_payload = dict(payload)
+    _ = event_payload.pop("event_seq", None)
+    _decorate_design_prompt(root, event_payload)
+    event_payload["seq"] = sequence_value(ledger.get("event_seq")) + 1
+    if ledger.get("schema_version") == 2:
+        _ = apply_v2_event(ledger, event_payload)
+    else:
+        _ = apply_v1_event(ledger, event_payload)
+    saved = save_ledger(payload, ledger)
     if saved:
-        _record_coordination_after_event(root, event_payload)
-    return ledger
+        append_agent_event(root, _agent(payload), event_payload)
+    return _RecordedEvent(ledger, event_payload, saved)
 
 
 def _record_coordination_after_event(
@@ -146,7 +210,7 @@ def _record_coordination_after_event(
 ) -> None:
     event = payload.get("event")
     entered = event == "prompt" and _missing_bootstrap(payload)
-    recovered = event == "invocation" and _recovered_bootstrap(payload)
+    recovered = event == "turn_bootstrap_recovered" and _recovered_bootstrap(payload)
     if not entered and not recovered:
         return
     try:

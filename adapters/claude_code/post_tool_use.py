@@ -64,7 +64,7 @@ def main() -> int:
             SHELL_TOOLS,
             record_contract_authored_event,
         )
-        from core.ledger import JsonObject, load_ledger, record_event
+        from core.ledger import JsonObject, load_ledger, record_event_if_current_turn
         from core.provenance_types import ProvenanceStatus
         from core.scope_guard import evaluate_scope
         from core.verification import is_verification_command
@@ -95,7 +95,7 @@ def main() -> int:
             attribution = invocation.scorecard_attribution
             if attribution == "legacy_default" and invocation.session_id != "default":
                 attribution = "exact"
-            if family == "edit":
+            if family == "edit" and not invocation.identity_conflict:
                 record_contract_authored_event(
                     {
                         "project_root": root,
@@ -111,6 +111,8 @@ def main() -> int:
             verification_command = family == "shell" and is_verification_command(
                 command
             )
+            if observation.error_kind == "StaleTurn":
+                return emit(response(context, {}))
             if verification_command:
                 covers = verification_covers(Path(root), invocation)
                 verification: JsonObject = {
@@ -127,7 +129,7 @@ def main() -> int:
                 }
                 if covers is not None:
                     verification["covers"] = covers
-                _ = record_event(verification)
+                _ = record_event_if_current_turn(verification, allow_missing=True)
                 return emit(response(context, {}))
             if observation.status is ProvenanceStatus.SCOPE_TOO_LARGE:
                 return emit(
@@ -137,8 +139,6 @@ def main() -> int:
                         "provenance scope is too large; continuing fail-open",
                     )
                 )
-            if observation.incomplete and not verification_command:
-                return emit(response(context, {}))
             paths = list(observation.changed_paths)
             ledger = load_ledger({"project_root": root})
             prompt = ledger.get("prompt")
@@ -159,7 +159,7 @@ def main() -> int:
             if scope["decision"] == "warn":
                 if not show_scope_once(context):
                     return emit(response(context, {}))
-                _ = record_event(
+                _ = record_event_if_current_turn(
                     {
                         "project_root": root,
                         "event": "scope_warning",
@@ -168,7 +168,8 @@ def main() -> int:
                         "session_id": invocation.session_id,
                         "turn_id": invocation.turn_id,
                         "message": scope["message"],
-                    }
+                    },
+                    allow_missing=True,
                 )
                 return emit(
                     response(
@@ -181,6 +182,8 @@ def main() -> int:
                         },
                     )
                 )
+            if observation.incomplete:
+                return emit(response(context, {}))
             return emit(response(context, {}))
         return emit(response(context, {}))
     except Exception as exc:  # noqa: BLE001

@@ -141,11 +141,11 @@ def canonical_invocation(
     agent = (
         _string(payload.get("agent_id")) or _string(payload.get("agent")) or "claude"
     )
-    turn_id = (
+    raw_turn_id = (
         _string(payload.get("prompt_id"))
         or _string(payload.get("turn_id"))
-        or f"turn:{session_id}"
     )
+    turn_id = raw_turn_id or f"turn:{session_id}"
     invocation_id = (
         _string(
             payload.get("tool_use_id")
@@ -167,6 +167,7 @@ def canonical_invocation(
         success,
         evidence,
         identity_synthetic,
+        not raw_turn_id,
     )
 
 
