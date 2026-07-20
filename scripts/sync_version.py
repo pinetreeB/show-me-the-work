@@ -115,9 +115,24 @@ def _validate_changelog(root: Path, version: str) -> None:
         )
 
 
+def _validate_no_uv_lock(root: Path) -> None:
+    # REL-01: uv.lock is not part of the documented install/CI workflow (see
+    # CONTRIBUTING.md "Dependency Locking") and nothing keeps its pinned version in
+    # sync, so a committed lockfile silently drifts stale instead of reflecting a real
+    # reproducible-build guarantee. Fail loudly here (this script already runs as a
+    # blocking CI step) instead of letting an unused lockfile reappear unnoticed.
+    path = root / "uv.lock"
+    if path.exists():
+        raise SyncError(
+            f"{path} exists but is not part of the documented workflow; delete it or "
+            "adopt uv for real (install docs + CI) and add a version check for it here"
+        )
+
+
 def _plan_updates(root: Path) -> tuple[str, dict[Path, tuple[str, str]]]:
     version = _plugin_version(root)
     _validate_changelog(root, version)
+    _validate_no_uv_lock(root)
     marketplace = root / ".claude-plugin" / "marketplace.json"
     pyproject = root / "pyproject.toml"
     readme = root / "README.md"

@@ -327,6 +327,12 @@ def _run_coordination_view(root: Path, args: argparse.Namespace) -> int:
     replay = load_coordination_journal(root)
     events = _filtered_coordination_events(list(replay.events), args)
     grouped: dict[tuple[str, str, str, str, str], JsonObject] = {}
+    # occurred_at bounds are tracked as datetimes (not pre-formatted ISO strings) so
+    # they can be combined with min()/max() regardless of journal append order — a
+    # coordination event's write-to-journal order is not guaranteed to match its
+    # occurred_at order (retried/delayed outbox drains can append an older event after
+    # a newer one). Formatting to isoformat() happens once, after bounds are final.
+    bounds: dict[tuple[str, str, str, str, str], tuple[datetime, datetime]] = {}
     for event in events:
         key = (
             event.actor.agent_key,
@@ -346,12 +352,15 @@ def _run_coordination_view(root: Path, args: argparse.Namespace) -> int:
                 "outcome": event.outcome.value,
                 "reason_code": event.reason_code.value,
                 "count": 0,
-                "first_observed_at": event.occurred_at.isoformat(),
-                "last_observed_at": event.occurred_at.isoformat(),
             },
         )
         row["count"] = _integer(row.get("count")) + 1
-        row["last_observed_at"] = event.occurred_at.isoformat()
+        first, last = bounds.get(key, (event.occurred_at, event.occurred_at))
+        bounds[key] = (min(first, event.occurred_at), max(last, event.occurred_at))
+    for key, row in grouped.items():
+        first, last = bounds[key]
+        row["first_observed_at"] = first.isoformat()
+        row["last_observed_at"] = last.isoformat()
     result: JsonObject = {
         "view": "coordination",
         "complete": replay.complete,

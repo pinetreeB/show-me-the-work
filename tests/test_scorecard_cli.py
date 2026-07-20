@@ -100,14 +100,19 @@ def _write_coordination_journal(
     )
 
 
-def _coordination_event(occurred_at: datetime) -> dict[str, JsonValue]:
+def _coordination_event(
+    occurred_at: datetime,
+    *,
+    event_id: str = "coordination-cli-boundary",
+    session_id: str = "coordination-session",
+) -> dict[str, JsonValue]:
     return {
         "scorecard_coord_schema_version": 1,
         "event": "coordination_transition",
-        "event_id": "coordination-cli-boundary",
+        "event_id": event_id,
         "actor": {
             "host": "codex_cli",
-            "session_id": "coordination-session",
+            "session_id": session_id,
             "agent": "codex",
         },
         "actor_turn_id": "coordination-turn",
@@ -119,6 +124,16 @@ def _coordination_event(occurred_at: datetime) -> dict[str, JsonValue]:
         "attribution": "exact",
         "occurred_at": occurred_at.isoformat(),
     }
+
+
+def _coordination_row(value: JsonValue, *, session_id: str) -> dict[str, JsonValue]:
+    rows = [
+        item
+        for item in _objects(value)
+        if item.get("session_id") == session_id and "first_observed_at" in item
+    ]
+    assert len(rows) == 1, rows
+    return rows[0]
 
 
 def _verification(
@@ -208,6 +223,86 @@ def test_scorecard_cli_real_agents_and_coordination_boundaries(
     assert "Coordination Scorecard" in coordination_human.stdout
     assert "entered/recovered" in coordination_human.stdout
     assert "선택 범위 밖" in coordination_human.stdout
+
+
+def test_scorecard_cli_sc_score01_coordination_bounds_use_occurred_at_min_max_not_append_order(
+    tmp_path: Path,
+) -> None:
+    # Given: three coordination events for the same (agent,category,outcome,reason) group,
+    # appended to the journal out of chronological order (latest event appended first).
+    earliest = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    middle = datetime(2026, 7, 20, 9, 0, tzinfo=UTC)
+    latest = datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    _write_coordination_journal(
+        tmp_path,
+        [
+            _coordination_event(latest, event_id="c-latest"),
+            _coordination_event(earliest, event_id="c-earliest"),
+            _coordination_event(middle, event_id="c-middle"),
+        ],
+    )
+
+    # When: the coordination view is rendered.
+    data = _json_result(_run_scorecard(tmp_path, "--view", "coordination", "--json"))
+
+    # Then: first/last reflect the true chronological min/max of occurred_at, not the
+    # journal append order (latest, earliest, middle) events were written in.
+    row = _coordination_row(data, session_id="coordination-session")
+    assert row["first_observed_at"] == earliest.isoformat()
+    assert row["last_observed_at"] == latest.isoformat()
+    assert str(row["last_observed_at"]) >= str(row["first_observed_at"])
+
+
+def test_scorecard_cli_sc_score01_coordination_bounds_collapse_for_identical_timestamps(
+    tmp_path: Path,
+) -> None:
+    # Given: repeated events sharing the exact same occurred_at instant.
+    same = datetime(2026, 7, 20, 12, 30, tzinfo=UTC)
+    _write_coordination_journal(
+        tmp_path,
+        [
+            _coordination_event(same, event_id="c-1"),
+            _coordination_event(same, event_id="c-2"),
+            _coordination_event(same, event_id="c-3"),
+        ],
+    )
+
+    # When: the coordination view is rendered.
+    data = _json_result(_run_scorecard(tmp_path, "--view", "coordination", "--json"))
+
+    # Then: first and last both equal the shared instant, and the group counted all 3.
+    row = _coordination_row(data, session_id="coordination-session")
+    assert row["first_observed_at"] == row["last_observed_at"] == same.isoformat()
+    assert row["count"] == 3
+
+
+def test_scorecard_cli_sc_score01_coordination_bounds_stay_correct_after_session_filter(
+    tmp_path: Path,
+) -> None:
+    # Given: an out-of-order group for the filtered session, interleaved in the journal
+    # with an unrelated session's event that must be excluded by the filter.
+    earliest = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+    latest = datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    other = datetime(2026, 7, 20, 9, 0, tzinfo=UTC)
+    _write_coordination_journal(
+        tmp_path,
+        [
+            _coordination_event(latest, event_id="target-latest", session_id="target"),
+            _coordination_event(other, event_id="other-1", session_id="other-session"),
+            _coordination_event(earliest, event_id="target-earliest", session_id="target"),
+        ],
+    )
+
+    # When: the coordination view is filtered to just the target session.
+    data = _json_result(
+        _run_scorecard(tmp_path, "--session", "target", "--view", "coordination", "--json")
+    )
+
+    # Then: only the target session's group is present, with correct min/max bounds.
+    row = _coordination_row(data, session_id="target")
+    assert row["first_observed_at"] == earliest.isoformat()
+    assert row["last_observed_at"] == latest.isoformat()
+    assert all(item.get("session_id") != "other-session" for item in _objects(data))
 
 
 def test_scorecard_cli_sc_cli_02_separates_agents_unattributed_and_cap(
