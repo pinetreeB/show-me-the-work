@@ -485,6 +485,18 @@ def _validate_coordination_outbox_entry(
         _reject(field, "must satisfy the turn_bootstrap outcome/reason contract")
 
 
+def validate_coordination_outbox_entry(
+    event_id: str,
+    raw_event: JsonValue,
+) -> None:
+    """Validate one prospective outbox entry before it mutates the ledger."""
+    _validate_coordination_outbox_entry(
+        event_id,
+        raw_event,
+        f"ledger.coordination_outbox.{event_id}",
+    )
+
+
 def sanitize_coordination_outbox(value: JsonValue) -> JsonObject:
     """Keep independently valid entries from an untrusted persisted outbox."""
     return _sanitize_coordination_event_map(value, "ledger.coordination_outbox")

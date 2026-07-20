@@ -25,6 +25,7 @@ from .ledger_schema import (
     sanitize_coordination_delivered,
     sanitize_coordination_outbox,
     serialize_v2_ledger,
+    validate_coordination_outbox_entry,
     validate_v2_ledger,
 )
 from .ledger_storage import atomic_write_text, ledger_path as ledger_path, state_dir as state_dir
@@ -391,6 +392,7 @@ def _enqueue_coordination_raw(
     raw: JsonObject,
 ) -> tuple[bool, bool]:
     event_id = _required_event_string(raw, "event_id")
+    validate_coordination_outbox_entry(event_id, raw)
     outbox_value = ledger.get("coordination_outbox")
     outbox = outbox_value if isinstance(outbox_value, dict) else {}
     changed = outbox is not outbox_value
@@ -447,12 +449,14 @@ def _drain_coordination_outbox(root: str) -> None:
         pending = (items[start:] + items[:start])[:COORDINATION_DRAIN_BATCH]
     from .scorecard_coordination import (
         CoordinationSchemaError,
+        coordination_event_json,
         load_coordination_journal,
         parse_coordination_event,
-        record_coordination_event,
+        record_coordination_event_for_delivery,
     )
 
     delivered: dict[str, JsonValue] = {}
+    delivered_receipts: dict[str, JsonValue] = {}
     schema_error = False
     delivery_error = False
     degraded = not load_coordination_journal(root).complete
@@ -464,7 +468,7 @@ def _drain_coordination_outbox(root: str) -> None:
             continue
         try:
             event = parse_coordination_event(raw)
-            _ = record_coordination_event(root, event)
+            canonical = record_coordination_event_for_delivery(root, event)
         except CoordinationSchemaError:
             schema_error = True
             continue
@@ -472,9 +476,11 @@ def _drain_coordination_outbox(root: str) -> None:
             delivery_error = True
             break
         delivered[event_id] = raw
+        delivered_receipts[event_id] = coordination_event_json(canonical)
     _ack_coordination_outbox(
         root,
         delivered,
+        delivered_receipts=delivered_receipts,
         degraded=degraded or schema_error or delivery_error,
         drain_cursor=cursor + attempted,
     )
@@ -484,6 +490,7 @@ def _ack_coordination_outbox(
     root: str,
     acknowledged: Mapping[str, JsonValue],
     *,
+    delivered_receipts: Mapping[str, JsonValue] | None = None,
     degraded: bool,
     drain_cursor: int | None = None,
 ) -> None:
@@ -517,7 +524,11 @@ def _ack_coordination_outbox(
             for event_id, raw in acknowledged.items():
                 if outbox.get(event_id) == raw:
                     del outbox[event_id]
-                    delivered_events[event_id] = raw
+                    delivered_events[event_id] = (
+                        delivered_receipts.get(event_id, raw)
+                        if delivered_receipts is not None
+                        else raw
+                    )
                     if event_id in delivered_order:
                         delivered_order.remove(event_id)
                     delivered_order.append(event_id)
