@@ -40,6 +40,9 @@ SOFT_EXCLUDE_CHAINS: Final = tuple(
     tuple(pattern.removesuffix("/**").split("/")) for pattern in SOFT_EXCLUDES
 )
 CONFIG_RELATIVE_PATH: Final = ".fable-lite/provenance-config.json"
+PROJECT_PATH_IN_ROOT: Final = "in_root"
+PROJECT_PATH_OUT_OF_ROOT: Final = "out_of_root"
+PROJECT_PATH_UNRESOLVABLE: Final = "unresolvable"
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
 
@@ -60,6 +63,34 @@ def normalize_relative_path(root: Path, path: Path) -> str:
 def canonical_manifest_key(path: str, windows: bool) -> str:
     normalized = path.replace("\\", "/")
     return normalized.casefold() if windows else normalized
+
+
+def canonicalize_project_path(
+    root: str | Path,
+    target: str,
+    *,
+    windows: bool | None = None,
+) -> tuple[str, str | None]:
+    """Resolve one candidate to a project-relative canonical key.
+
+    Out-of-root and unresolvable paths remain distinct so callers never use either as
+    evidence that an in-project path is safe.
+    """
+    normalized = target.strip().strip("'\"").replace("\\", "/")
+    if not normalized:
+        return (PROJECT_PATH_UNRESOLVABLE, None)
+    candidate = Path(normalized)
+    try:
+        base = Path(root).resolve()
+        resolved = (candidate if candidate.is_absolute() else base / normalized).resolve()
+    except OSError:
+        return (PROJECT_PATH_UNRESOLVABLE, None)
+    try:
+        relative = str(resolved.relative_to(base)).replace("\\", "/")
+    except ValueError:
+        return (PROJECT_PATH_OUT_OF_ROOT, None)
+    casefolded = os.name == "nt" if windows is None else windows
+    return (PROJECT_PATH_IN_ROOT, canonical_manifest_key(relative, casefolded))
 
 
 def load_provenance_config(root: Path) -> ProvenanceConfig:
