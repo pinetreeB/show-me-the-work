@@ -65,6 +65,7 @@ class CoordinationOutcome(StrEnum):
 @unique
 class CoordinationReason(StrEnum):
     ATTRIBUTION_DEGRADED = "attribution_degraded"
+    COMMAND_PARSE_UNAVAILABLE = "command_parse_unavailable"
     PEER_UNSETTLED = "peer_unsettled"
     STATE_DIR_PROTECTED = "state_dir_protected"
     UNRESOLVABLE_TARGET = "unresolvable_target"
@@ -540,6 +541,7 @@ def _validate_active_contract(event: CoordinationEvent) -> None:
             raise CoordinationSchemaError("outcome", "r2_deny must be blocked")
         if event.reason_code not in {
             CoordinationReason.ATTRIBUTION_DEGRADED,
+            CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
             CoordinationReason.PEER_UNSETTLED,
             CoordinationReason.STATE_DIR_PROTECTED,
             CoordinationReason.UNRESOLVABLE_TARGET,
