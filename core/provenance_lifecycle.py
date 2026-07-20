@@ -429,11 +429,32 @@ class ProvenanceLifecycle:
             False,
             invocation,
         )
-        if result.status is ProvenanceStatus.COMPLETE and self._state.current is not None:
+        if (
+            _complete_observation(result.status)
+            and not result.incomplete
+            and result.snapshot is not None
+            and self._state.current is not None
+        ):
+            replay_casefolded = result.snapshot.is_casefolded
+            excluded_keys = {
+                canonical_manifest_key(item.path, replay_casefolded)
+                for item in result.snapshot.exclusions
+            }
+            replay = tuple(
+                delta
+                for delta in self._observable_deltas(
+                    turn.baseline,
+                    self._state.current,
+                )
+                if (
+                    canonical_manifest_key(delta.path, replay_casefolded)
+                    not in excluded_keys
+                )
+            )
             record_deltas(
                 self._state,
                 ObservationInput(
-                    self._observable_deltas(turn.baseline, self._state.current),
+                    replay,
                     invocation.agent,
                     source,
                     self._candidate_keys(
