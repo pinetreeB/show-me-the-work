@@ -10,9 +10,9 @@ from typing import Final, cast
 from .adapter_change_events import record_observed_changes
 from .ledger import (
     JsonObject,
+    JsonValue,
     capture_verification_covers,
     load_ledger,
-    record_event,
     record_event_if_current_turn,
 )
 from .provenance_manifest import (
