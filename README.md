@@ -133,8 +133,10 @@ normal or production sessions.
 
 Initial `cwd fallback is best-effort`, not a security boundary: before Claude
 provides `CLAUDE_PROJECT_DIR` or a session root is latched, a forged hook
-payload/cwd can steer the initial upward config search. Once present, the env
-root is effective for that hook and the write-once latch remains unchanged.
+payload/cwd can steer the initial upward config search. Once present, a
+mismatched env root is effective for that hook only when that project has its
+own exact opt-in config; otherwise supervision is inactive for the hook. The
+write-once latch remains unchanged.
 For a corrupt inactive config, a once-per-session warning and TTL cleanup may
 write only under global plugin data; the inactive project tree is never
 written.

@@ -95,6 +95,45 @@ def bootstrap(event_name: str) -> HookContext:
         candidate = env_root or fixed_root
         if _is_exact_home(candidate):
             return _inactive(payload, data_dir, session_id, agent)
+        if env_root is not None and not _same_root(env_root, fixed_root):
+            enabled, _, config_corrupt = _config_state(env_root)
+            if force:
+                enabled = True
+            if not enabled:
+                warning = ""
+                if config_corrupt and warn_once(
+                    data_dir,
+                    session_id,
+                    "config_or_registry_corrupt",
+                ):
+                    warning = (
+                        "activation config or session registry is corrupt; "
+                        "supervision is inactive"
+                    )
+                return _inactive(payload, data_dir, session_id, agent, warning)
+
+            # 정책 A: mismatch env root는 별도 프로젝트로 opt-in을 확인하되, 기존
+            # write-once registry latch는 A에 유지한다. 이번 hook의 유효 root만 B다.
+            _ = bind_session(
+                data_dir,
+                session_id,
+                fixed_root,
+                record.config_digest,
+            )
+            warning = ""
+            if warn_once(data_dir, session_id, "root_mismatch"):
+                warning = (
+                    "session root mismatch; using CLAUDE_PROJECT_DIR for this hook "
+                    "while keeping the registry latch unchanged"
+                )
+            return _active(
+                payload,
+                env_root,
+                data_dir,
+                session_id,
+                agent,
+                warning,
+            )
         bound = bind_session(
             data_dir,
             session_id,
@@ -301,4 +340,10 @@ def _inactive(
         "",
         "",
         warning,
+    )
+
+
+def _same_root(left: Path, right: Path) -> bool:
+    return os.path.normcase(str(left.resolve())) == os.path.normcase(
+        str(right.resolve())
     )
