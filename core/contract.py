@@ -21,7 +21,6 @@ from .ledger import (
     JsonObject,
     JsonValue,
     load_ledger,
-    record_event,
     record_event_if_current_turn,
     save_ledger,
     state_dir,
