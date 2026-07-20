@@ -15,5 +15,8 @@ dependencies = []
 [tool.setuptools.packages.find]
 include = ["adapters*", "core*", "fable_lite*", "goals*"]
 
+[tool.setuptools.package-data]
+core = ["release_receipts/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

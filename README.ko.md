@@ -175,7 +175,9 @@ python eval/run_probes.py --strict
 python eval/run_probes.py --output eval/results/probes-latest.json
 ```
 
-기본 결과 파일은 `eval/results/probes-latest.json`입니다. 콘솔 요약은 Windows CP949에서도 깨지지 않도록 ASCII만 출력합니다.
+기본 결과 파일은 `eval/results/probes-latest.json`이며 이 재생성 산출물 디렉터리는 Git에서 무시됩니다.
+CI는 runner 임시 경로를 `--output`으로 지정합니다. 콘솔 요약은 Windows CP949에서도 깨지지 않도록
+ASCII만 출력합니다.
 
 ```text
 probes pass=17 fail=0 manual=3 total=20 result=PASS

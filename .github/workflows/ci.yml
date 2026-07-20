@@ -32,7 +32,7 @@ jobs:
       - name: Unit tests
         run: python -m pytest tests/ -q
       - name: Deterministic probes
-        run: python eval/run_probes.py --strict
+        run: python eval/run_probes.py --strict --output "${{ runner.temp }}/smtw-probes.json"
       - name: E2E smoke (hook chain)
         run: python eval/e2e_smoke.py
       - name: Python compile
@@ -46,11 +46,13 @@ jobs:
           python -m venv .ci-venv
           ${{ matrix.venv_python }} -m pip install --no-index --find-links dist fable-lite
           ${{ matrix.venv_python }} -P -m fable_lite --help
-      - name: Upload fresh W9 receipt and wheel
+          ${{ matrix.venv_python }} -P -c "from core.release_gate import auto_migration_enabled; assert auto_migration_enabled()"
+      - name: Upload fresh receipts and wheel
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ci-${{ matrix.os }}
           path: |
+            ${{ runner.temp }}/smtw-probes.json
             ${{ runner.temp }}/smtw-provenance.json
             dist/*.whl
