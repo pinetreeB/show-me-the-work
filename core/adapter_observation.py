@@ -482,9 +482,8 @@ def record_r2_deny_after_resolution(
             CoordinationCategory,
             CoordinationOutcome,
             CoordinationReason,
-            load_accepted_peer_coordination,
             new_coordination_event,
-            record_peer_coordination,
+            record_r2_deny_coordination,
             stable_coordination_event_id,
         )
 
@@ -514,9 +513,6 @@ def record_r2_deny_after_resolution(
             reason,
             evidence_refs,
         )
-        existing = load_accepted_peer_coordination(root, event_id)
-        if existing is not None:
-            return record_peer_coordination(root, existing)
         event = new_coordination_event(
             actor,
             resolved.turn_id,
@@ -528,7 +524,7 @@ def record_r2_deny_after_resolution(
             event_id=event_id,
             occurred_at=_r2_coordination_time(root, resolved),
         )
-        return record_peer_coordination(root, event)
+        return record_r2_deny_coordination(root, event)
     except Exception:  # noqa: BLE001 - audit I/O cannot undo an R2 denial.
         return False
 

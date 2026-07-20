@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Made R2 deny auditing fail fast when the ledger lock is busy, preserving the blocking response's one-second budget while leaving deterministic events retryable through the durable outbox. Malformed outbox entries are now rejected before mutation and persist `coordination_degraded` instead of escaping from ledger serialization.
 - Made turn bootstrap recovery atomic under the root ledger lock with first-valid-write-wins baseline creation, CAS baseline advancement, explicit missing/ready/degraded states, crash-residue adoption, and live-owner-safe stale-lock recovery. A READY turn is accepted only when its physical baseline exists and its snapshot ID matches the ledger.
 - Made coordination projection durable without changing gate decisions: a bounded 256-entry ledger outbox commits with the authoritative transition, drains after unlock through the strict exact-content writer, acknowledges by CAS, retries crash cuts, and reports overflow/schema/I/O damage through `coordination_degraded`.
 - Reconciled `COMPLETE_WITH_EXCLUSIONS` PostTool observations by replaying trustworthy turn deltas in memory while filtering every excluded path under the result snapshot's canonical case policy. Excluded peer changes are never attributed to the caller; non-excluded observer contention remains visible.

@@ -5,12 +5,15 @@ from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 import json
+import multiprocessing
 from pathlib import Path
+import time
 from unittest.mock import patch
 
 import pytest
 
 import core.ledger as ledger_module
+from core.agent_log import ledger_transaction
 from core.adapter_observation import (
     CanonicalInvocation,
     record_r2_deny_after_resolution,
@@ -19,7 +22,7 @@ from core.destructive_guard import (
     R2_COORDINATION_REASON_MAP,
     evaluate_r2_destructive_gate,
 )
-from core.ledger import load_ledger, record_event, save_ledger
+from core.ledger import enqueue_coordination_event, load_ledger, record_event, save_ledger
 from core.ledger_schema import LedgerSchemaError, validate_v2_ledger
 from core.ledger_v1 import default_ledger
 from core.ledger_v2 import default_v2_ledger
@@ -77,6 +80,13 @@ def _args(root: Path, view: str, *, json_output: bool = True) -> argparse.Namesp
         json=json_output,
         view=view,
     )
+
+
+def _hold_ledger_lock(root: str, locked, release) -> None:
+    with ledger_transaction(root):
+        locked.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release the ledger lock")
 
 
 def _missing_bootstrap_payload(root: Path, turn_id: str = "turn-outbox") -> dict:
@@ -648,7 +658,7 @@ def test_transient_drain_failure_stops_the_batch_and_advances_one_slot(
     assert save_ledger({"project_root": str(tmp_path)}, ledger) is True
 
     with patch(
-        "core.scorecard_coordination.record_coordination_event",
+        "core.scorecard_coordination.record_coordination_event_for_delivery",
         side_effect=TimeoutError("busy ledger"),
     ) as writer:
         _ = record_event(
@@ -749,6 +759,27 @@ def test_malformed_persisted_outbox_is_sanitized_fail_open(tmp_path: Path) -> No
     assert persisted["coordination_outbox"] == {}
     assert valid.event_id in persisted["coordination_delivered"]
     assert persisted["coordination_degraded"] is True
+
+
+def test_malformed_enqueue_is_rejected_and_persists_degraded(tmp_path: Path) -> None:
+    malformed = coordination_event_json(_event("malformed-enqueue"))
+    del malformed["reason_code"]
+
+    accepted = enqueue_coordination_event(str(tmp_path), malformed)
+
+    assert accepted is False
+    path = tmp_path / ".fable-lite" / "ledger.json"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert validate_v2_ledger(persisted) is persisted
+    assert persisted["coordination_outbox"] == {}
+    assert persisted["coordination_delivered"] == {}
+    assert persisted["coordination_degraded"] is True
+    assert coordination_journal_path(tmp_path).exists() is False
+
+    valid = _event("valid-after-malformed")
+    assert enqueue_coordination_event(
+        str(tmp_path), coordination_event_json(valid)
+    ) is True
 
 
 @pytest.mark.parametrize(
@@ -959,6 +990,183 @@ def test_r2_eight_static_block_points_map_to_four_closed_reasons() -> None:
     }
 
 
+def test_r2_deny_audit_fails_fast_while_ledger_lock_is_held(
+    tmp_path: Path,
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    locked = context.Event()
+    release = context.Event()
+    holder = context.Process(
+        target=_hold_ledger_lock,
+        args=(str(tmp_path), locked, release),
+    )
+    holder.start()
+    assert locked.wait(5)
+    invocation = CanonicalInvocation(
+        "claude_code",
+        "claude",
+        "contended-session",
+        "contended-turn",
+        "contended-invocation",
+        "pre_tool",
+        "shell",
+        (),
+        "rm",
+        False,
+        "",
+    )
+    payload = {
+        "project_root": str(tmp_path),
+        "tool_name": "Bash",
+        "command": "rm",
+        "host": invocation.host,
+        "session_id": invocation.session_id,
+        "agent": invocation.agent,
+    }
+    try:
+        with patch("core.agent_log._lock_wait_seconds", return_value=1.1):
+            started = time.perf_counter()
+            decision = evaluate_r2_destructive_gate(payload)
+            recorded = record_r2_deny_after_resolution(
+                tmp_path,
+                invocation,
+                str(decision["coordination_reason_code"]),
+            )
+            elapsed = time.perf_counter() - started
+    finally:
+        release.set()
+        holder.join(timeout=5)
+        if holder.is_alive():
+            holder.terminate()
+            holder.join(timeout=5)
+
+    assert holder.is_alive() is False
+    assert holder.exitcode == 0
+    assert decision["decision"] == "block"
+    assert recorded is False
+    assert elapsed < 1.0
+
+    reason = str(decision["coordination_reason_code"])
+    assert record_r2_deny_after_resolution(tmp_path, invocation, reason) is True
+    first_pending = load_ledger({"project_root": str(tmp_path)})[
+        "coordination_outbox"
+    ]
+    assert isinstance(first_pending, dict) and len(first_pending) == 1
+    assert record_r2_deny_after_resolution(tmp_path, invocation, reason) is True
+    assert load_ledger({"project_root": str(tmp_path)})[
+        "coordination_outbox"
+    ] == first_pending
+
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "scope_warning",
+            "message": "deliver retried R2 audit",
+        }
+    )
+    assert len(load_coordination_journal(tmp_path).events) == 1
+
+
+def test_r2_deny_response_path_never_scans_the_coordination_journal(
+    tmp_path: Path,
+) -> None:
+    invocation = CanonicalInvocation(
+        "claude_code",
+        "claude",
+        "bounded-session",
+        "bounded-turn",
+        "bounded-invocation",
+        "pre_tool",
+        "shell",
+        (),
+        "rm",
+        False,
+        "",
+    )
+
+    with patch(
+        "core.scorecard_coordination.load_coordination_journal",
+        side_effect=AssertionError("R2 response path must not scan the journal"),
+    ):
+        started = time.perf_counter()
+        recorded = record_r2_deny_after_resolution(
+            tmp_path,
+            invocation,
+            CoordinationReason.PEER_UNSETTLED.value,
+        )
+        elapsed = time.perf_counter() - started
+
+    assert recorded is True
+    assert elapsed < 1.0
+    pending = load_ledger({"project_root": str(tmp_path)})["coordination_outbox"]
+    assert isinstance(pending, dict) and len(pending) == 1
+
+
+def test_r2_deny_response_does_not_wait_to_retry_lock_release(
+    tmp_path: Path,
+) -> None:
+    invocation = CanonicalInvocation(
+        "claude_code",
+        "claude",
+        "release-session",
+        "release-turn",
+        "release-invocation",
+        "pre_tool",
+        "shell",
+        (),
+        "rm",
+        False,
+        "",
+    )
+    lock_path = tmp_path / ".fable-lite" / "ledger.lock"
+    try:
+        with patch("core.agent_log._unlink_matching_record", return_value=False):
+            started = time.perf_counter()
+            recorded = record_r2_deny_after_resolution(
+                tmp_path,
+                invocation,
+                CoordinationReason.PEER_UNSETTLED.value,
+            )
+            elapsed = time.perf_counter() - started
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+    assert recorded is True
+    assert elapsed < 1.0
+
+
+def test_r2_deny_legacy_ledger_skips_unbounded_journal_fallback(
+    tmp_path: Path,
+) -> None:
+    assert save_ledger({"project_root": str(tmp_path)}, default_ledger()) is True
+    invocation = CanonicalInvocation(
+        "claude_code",
+        "claude",
+        "legacy-session",
+        "legacy-turn",
+        "legacy-invocation",
+        "pre_tool",
+        "shell",
+        (),
+        "rm",
+        False,
+        "",
+    )
+
+    with patch(
+        "core.scorecard_coordination.load_coordination_journal",
+        side_effect=AssertionError("legacy R2 response must not scan the journal"),
+    ):
+        recorded = record_r2_deny_after_resolution(
+            tmp_path,
+            invocation,
+            CoordinationReason.PEER_UNSETTLED.value,
+        )
+
+    assert recorded is False
+    assert coordination_journal_path(tmp_path).exists() is False
+
+
 def test_r2_deny_records_only_the_resolved_active_identity(tmp_path: Path) -> None:
     _ = record_event(
         {
@@ -998,9 +1206,23 @@ def test_r2_deny_records_only_the_resolved_active_identity(tmp_path: Path) -> No
         raw,
         CoordinationReason.PEER_UNSETTLED.value,
     )
-    replay = load_coordination_journal(tmp_path)
 
     assert recorded is True
+    pending = load_ledger({"project_root": str(tmp_path)})["coordination_outbox"]
+    assert isinstance(pending, dict) and len(pending) == 1
+    pending_event = parse_coordination_event(next(iter(pending.values())))
+    assert pending_event.actor.session_id == "resolved-session"
+    assert pending_event.actor_turn_id == "resolved-turn"
+    assert pending_event.actor.session_id != raw.session_id
+
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "scope_warning",
+            "message": "deliver resolved R2 audit",
+        }
+    )
+    replay = load_coordination_journal(tmp_path)
     assert len(replay.events) == 1
     assert replay.events[0].actor.session_id == "resolved-session"
     assert replay.events[0].actor_turn_id == "resolved-turn"
@@ -1043,6 +1265,13 @@ def test_r2_coordination_write_failure_cannot_change_block_decision(
             invocation,
             str(decision["coordination_reason_code"]),
         )
+        _ = record_event(
+            {
+                "project_root": str(tmp_path),
+                "event": "scope_warning",
+                "message": "attempt R2 audit delivery",
+            }
+        )
 
     assert decision["decision"] == "block"
     assert recorded is True
@@ -1072,6 +1301,13 @@ def test_r2_retry_reuses_the_first_exact_canonical_event(tmp_path: Path) -> None
         invocation,
         CoordinationReason.PEER_UNSETTLED.value,
     )
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "scope_warning",
+            "message": "deliver first R2 audit",
+        }
+    )
     first_event = load_coordination_journal(tmp_path).events[0]
     receiptless = load_ledger({"project_root": str(tmp_path)})
     del receiptless["coordination_delivered"][first_event.event_id]
@@ -1082,11 +1318,21 @@ def test_r2_retry_reuses_the_first_exact_canonical_event(tmp_path: Path) -> None
         invocation,
         CoordinationReason.PEER_UNSETTLED.value,
     )
+    _ = record_event(
+        {
+            "project_root": str(tmp_path),
+            "event": "scope_warning",
+            "message": "reconcile retried R2 audit",
+        }
+    )
 
     ledger = load_ledger({"project_root": str(tmp_path)})
     assert first is True and second is True
     assert len(load_coordination_journal(tmp_path).events) == 1
     assert ledger["coordination_outbox"] == {}
+    assert ledger["coordination_delivered"][first_event.event_id] == (
+        coordination_event_json(first_event)
+    )
     assert ledger["coordination_degraded"] is False
 
 

@@ -270,6 +270,33 @@ def load_coordination_journal(project_root: str | Path) -> CoordinationReplay:
 def record_coordination_event(
     project_root: str | Path, event: CoordinationEvent
 ) -> bool:
+    recorded, _canonical = _record_coordination_event(
+        project_root,
+        event,
+        reconcile_stable_r2=False,
+    )
+    return recorded
+
+
+def record_coordination_event_for_delivery(
+    project_root: str | Path,
+    event: CoordinationEvent,
+) -> CoordinationEvent:
+    """Write an event or return the first canonical stable R2 observation."""
+    _recorded, canonical = _record_coordination_event(
+        project_root,
+        event,
+        reconcile_stable_r2=True,
+    )
+    return canonical
+
+
+def _record_coordination_event(
+    project_root: str | Path,
+    event: CoordinationEvent,
+    *,
+    reconcile_stable_r2: bool,
+) -> tuple[bool, CoordinationEvent]:
     root = str(Path(project_root).resolve())
     with ledger_transaction(root):
         replay = load_coordination_journal(root)
@@ -277,12 +304,18 @@ def record_coordination_event(
             if existing.event_id != event.event_id:
                 continue
             if existing != event:
+                if reconcile_stable_r2 and _same_stable_r2_event(
+                    root,
+                    existing,
+                    event,
+                ):
+                    return False, existing
                 raise CoordinationSchemaError(
                     "event_id", "must not identify conflicting content"
                 )
-            return False
+            return False, existing
         _append_coordination_event(root, event)
-    return True
+    return True, event
 
 
 def try_record_coordination_event(
@@ -312,6 +345,48 @@ def record_peer_coordination(
         return False
 
 
+def record_r2_deny_coordination(
+    project_root: str | Path,
+    event: CoordinationEvent,
+) -> bool:
+    """Accept an R2 deny audit with one immediate lock attempt and no drain."""
+    if event.category is not CoordinationCategory.R2_DENY:
+        return False
+    root = str(Path(project_root).resolve())
+    raw = coordination_event_json(event)
+    try:
+        from .ledger import _enqueue_coordination_raw, load_ledger, save_ledger
+        from .ledger_storage import ledger_path
+        from .ledger_v2 import default_v2_ledger
+
+        with ledger_transaction(
+            root,
+            lock_wait_seconds=0.0,
+            release_wait_seconds=0.0,
+        ):
+            destination = ledger_path(root)
+            existed_before_load = destination.exists()
+            ledger = load_ledger({"project_root": root})
+            if not existed_before_load:
+                ledger = default_v2_ledger()
+            if ledger.get("schema_version") == 2:
+                for field in ("coordination_outbox", "coordination_delivered"):
+                    accepted = ledger.get(field)
+                    if isinstance(accepted, dict) and event.event_id in accepted:
+                        return True
+                try:
+                    accepted, changed = _enqueue_coordination_raw(ledger, raw)
+                except Exception:  # noqa: BLE001 - malformed audit is degraded.
+                    accepted = False
+                    changed = ledger.get("coordination_degraded") is not True
+                    ledger["coordination_degraded"] = True
+                saved = not changed or save_ledger({"project_root": root}, ledger)
+                return accepted and saved
+            return False
+    except Exception:  # noqa: BLE001 - audit durability cannot change a gate.
+        return False
+
+
 def load_accepted_peer_coordination(
     project_root: str | Path,
     event_id: str,
@@ -323,23 +398,56 @@ def load_accepted_peer_coordination(
         raw = load_accepted_coordination_event(root, event_id)
         if raw is not None:
             return parse_coordination_event(raw)
-        replay = load_coordination_journal(root)
-        for event in replay.events:
-            if event.event_id != event_id:
-                continue
-            expected = stable_coordination_event_id(
-                root,
-                event.actor,
-                event.actor_turn_id,
-                event.category,
-                event.outcome,
-                event.reason_code,
-                event.evidence_refs,
-            )
-            return event if expected == event_id else None
-        return None
+        return _stable_journal_event(root, event_id)
     except Exception:  # noqa: BLE001 - a cache miss is safe for observability.
         return None
+
+
+def _stable_journal_event(
+    root: str,
+    event_id: str,
+) -> CoordinationEvent | None:
+    replay = load_coordination_journal(root)
+    for event in replay.events:
+        if event.event_id != event_id:
+            continue
+        expected = stable_coordination_event_id(
+            root,
+            event.actor,
+            event.actor_turn_id,
+            event.category,
+            event.outcome,
+            event.reason_code,
+            event.evidence_refs,
+        )
+        return event if expected == event_id else None
+    return None
+
+
+def _same_stable_r2_event(
+    root: str,
+    first: CoordinationEvent,
+    second: CoordinationEvent,
+) -> bool:
+    if (
+        first.category is not CoordinationCategory.R2_DENY
+        or second.category is not CoordinationCategory.R2_DENY
+        or first.event_id != second.event_id
+    ):
+        return False
+    return all(
+        stable_coordination_event_id(
+            root,
+            event.actor,
+            event.actor_turn_id,
+            event.category,
+            event.outcome,
+            event.reason_code,
+            event.evidence_refs,
+        )
+        == event.event_id
+        for event in (first, second)
+    )
 
 
 def stable_coordination_event_id(
