@@ -181,7 +181,11 @@ def parse_coordination_event(raw: Mapping[str, JsonValue]) -> CoordinationEvent:
         )
     if missing:
         raise CoordinationSchemaError(next(iter(sorted(missing))), "field is required")
-    if raw.get("scorecard_coord_schema_version") != COORDINATION_SCHEMA_VERSION:
+    coordination_version = raw.get("scorecard_coord_schema_version")
+    if (
+        coordination_version != COORDINATION_SCHEMA_VERSION
+        or isinstance(coordination_version, bool)
+    ):
         raise CoordinationSchemaError(
             "scorecard_coord_schema_version", "must equal 1"
         )
@@ -288,6 +292,54 @@ def try_record_coordination_event(
         return record_coordination_event(project_root, event)
     except Exception:  # noqa: BLE001 - observability must never change a gate decision.
         return False
+
+
+def record_peer_coordination(
+    project_root: str | Path,
+    event: CoordinationEvent,
+) -> bool:
+    """Durably accept coordination without making it a gate input."""
+    root = str(Path(project_root).resolve())
+    try:
+        from .ledger import enqueue_coordination_event
+
+        accepted = enqueue_coordination_event(root, coordination_event_json(event))
+        if accepted is None:
+            _ = record_coordination_event(root, event)
+            return True
+        return accepted
+    except Exception:  # noqa: BLE001 - audit durability cannot change a gate.
+        return False
+
+
+def load_accepted_peer_coordination(
+    project_root: str | Path,
+    event_id: str,
+) -> CoordinationEvent | None:
+    try:
+        from .ledger import load_accepted_coordination_event
+
+        root = str(Path(project_root).resolve())
+        raw = load_accepted_coordination_event(root, event_id)
+        if raw is not None:
+            return parse_coordination_event(raw)
+        replay = load_coordination_journal(root)
+        for event in replay.events:
+            if event.event_id != event_id:
+                continue
+            expected = stable_coordination_event_id(
+                root,
+                event.actor,
+                event.actor_turn_id,
+                event.category,
+                event.outcome,
+                event.reason_code,
+                event.evidence_refs,
+            )
+            return event if expected == event_id else None
+        return None
+    except Exception:  # noqa: BLE001 - a cache miss is safe for observability.
+        return None
 
 
 def stable_coordination_event_id(

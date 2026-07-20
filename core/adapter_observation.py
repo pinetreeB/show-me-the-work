@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, cast
 
@@ -481,9 +482,10 @@ def record_r2_deny_after_resolution(
             CoordinationCategory,
             CoordinationOutcome,
             CoordinationReason,
+            load_accepted_peer_coordination,
             new_coordination_event,
+            record_peer_coordination,
             stable_coordination_event_id,
-            try_record_coordination_event,
         )
 
         resolved = resolve_active_invocation(root, invocation)
@@ -512,6 +514,9 @@ def record_r2_deny_after_resolution(
             reason,
             evidence_refs,
         )
+        existing = load_accepted_peer_coordination(root, event_id)
+        if existing is not None:
+            return record_peer_coordination(root, existing)
         event = new_coordination_event(
             actor,
             resolved.turn_id,
@@ -521,10 +526,38 @@ def record_r2_deny_after_resolution(
             evidence_refs=evidence_refs,
             attribution=attribution,
             event_id=event_id,
+            occurred_at=_r2_coordination_time(root, resolved),
         )
-        return try_record_coordination_event(root, event)
+        return record_peer_coordination(root, event)
     except Exception:  # noqa: BLE001 - audit I/O cannot undo an R2 denial.
         return False
+
+
+def _r2_coordination_time(
+    root: Path,
+    invocation: CanonicalInvocation,
+) -> datetime | None:
+    ledger = load_ledger({"project_root": str(root)})
+    turn = active_turn(ledger, _ledger_payload(root, invocation))
+    if turn is None:
+        return None
+    candidates: list[JsonValue] = []
+    invocations = turn.get("invocations")
+    if isinstance(invocations, dict):
+        raw_invocation = invocations.get(invocation.invocation_id)
+        if isinstance(raw_invocation, dict):
+            candidates.append(raw_invocation.get("started_at"))
+    candidates.append(turn.get("started_at"))
+    for value in candidates:
+        if not isinstance(value, str):
+            continue
+        try:
+            observed = datetime.fromisoformat(value)
+        except ValueError:
+            continue
+        if observed.tzinfo is not None and observed.utcoffset() == UTC.utcoffset(observed):
+            return observed.astimezone(UTC)
+    return None
 
 
 def restart_blocked_turn(root: Path, invocation: CanonicalInvocation) -> None:
