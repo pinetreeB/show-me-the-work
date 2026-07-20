@@ -38,6 +38,7 @@ from core.provenance_manifest import (
 )
 from core.provenance_store import (
     BaselineInitialization,
+    SnapshotStoreError,
     initialize_turn_baseline,
     load_turn_baseline,
     save_turn_baseline,
@@ -177,6 +178,34 @@ def test_safe_key_collision_never_overwrites_the_first_identity(tmp_path: Path) 
     assert first is BaselineInitialization.CREATED
     assert second is BaselineInitialization.CONFLICT
     assert load_turn_baseline(tmp_path, "agent:a", TURN_ID) == candidate
+
+
+def test_load_turn_baseline_parses_json_once(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("before", encoding="utf-8")
+    candidate = snapshot_workspace(tmp_path)
+    save_turn_baseline(tmp_path, "agent:a", TURN_ID, candidate)
+
+    with patch("core.provenance_store.json.loads", wraps=json.loads) as loads:
+        assert load_turn_baseline(tmp_path, "agent:a", TURN_ID) == candidate
+
+    assert loads.call_count == 1
+
+
+@pytest.mark.parametrize("missing", ["baseline_agent", "baseline_turn_id"])
+def test_partial_baseline_identity_fails_closed(
+    tmp_path: Path,
+    missing: str,
+) -> None:
+    (tmp_path / "app.py").write_text("before", encoding="utf-8")
+    candidate = snapshot_workspace(tmp_path)
+    save_turn_baseline(tmp_path, "agent:a", TURN_ID, candidate)
+    path = turn_baseline_path(tmp_path, "agent:a", TURN_ID)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    del raw[missing]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(SnapshotStoreError, match="safe-key collision"):
+        _ = load_turn_baseline(tmp_path, "agent:a", TURN_ID)
 
 
 def test_locked_event_token_rejects_wrong_root_thread_and_reuse(tmp_path: Path) -> None:

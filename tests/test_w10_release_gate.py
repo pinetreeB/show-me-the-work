@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import core.release_gate as release_gate_module
 from core.ledger import record_event
 from core.ledger_schema import JsonValue
-from core.release_gate import auto_migration_enabled
+from core.release_gate import DEFAULT_RECEIPTS_DIR, auto_migration_enabled
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "v2-provenance"
 
@@ -21,6 +22,14 @@ def _legacy_ledger(root: Path) -> Path:
     ledger = state / "ledger.json"
     ledger.write_text((FIXTURE_DIR / "v1-ledger.json").read_text(encoding="utf-8"), encoding="utf-8")
     return ledger
+
+
+def test_packaged_release_receipts_keep_the_default_gate_enabled() -> None:
+    assert DEFAULT_RECEIPTS_DIR.parent == Path(
+        release_gate_module.__file__
+    ).resolve().parent
+    assert DEFAULT_RECEIPTS_DIR.name == "release_receipts"
+    assert auto_migration_enabled() is True
 
 
 def test_auto_migration_gate_requires_two_green_receipts(tmp_path: Path) -> None:

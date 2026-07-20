@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Made turn bootstrap recovery atomic under the root ledger lock with first-valid-write-wins baseline creation, CAS baseline advancement, explicit missing/ready/degraded states, crash-residue adoption, and live-owner-safe stale-lock recovery. A READY turn is accepted only when its physical baseline exists and its snapshot ID matches the ledger.
+- Made coordination projection durable without changing gate decisions: a bounded 256-entry ledger outbox commits with the authoritative transition, drains after unlock through the strict exact-content writer, acknowledges by CAS, retries crash cuts, and reports overflow/schema/I/O damage through `coordination_degraded`.
+- Reconciled `COMPLETE_WITH_EXCLUSIONS` PostTool observations by replaying trustworthy turn deltas in memory while filtering every excluded path under the result snapshot's canonical case policy. Excluded peer changes are never attributed to the caller; non-excluded observer contention remains visible.
+- Stopped deterministic probe runs from dirtying tracked files. `eval/results/` is ignored and CI writes probe receipts to runner temporary storage.
+- Made benchmark RSS accounting phase-local. Timing samples no longer reuse the process-lifetime high-water mark, and the dedicated memory probe polls current RSS during each action so earlier benchmark phases cannot create false SLO failures.
+
+### Changed
+
+- Moved the two reviewed green migration-gate receipts from mutable `eval/results/` output into package data at `core/release_receipts/`. This also fixes clean wheels silently keeping v1 dual-read because `eval/` was never packaged. Source checkouts and wheel installs now evaluate the same W9/W10 evidence; fresh measurements do not self-promote into release approval.
+
+### Known Limitations
+
+- Atomic replace does not include directory fsync durability across sudden power loss. Stale-lock recovery does not yet compare process start time, so PID reuse remains a hardening backlog.
+- A tombstone-free stale turn written by a pre-upgrade version cannot always be distinguished from a live child turn.
+- Coordination payloads are count-bounded but have no per-entry byte ceiling; bootstrap timestamp validation is conservative at delivery time, and the journal/parser and ledger validators duplicate part of the schema contract.
+- `PEER_EXCLUSION` coordination audit, stronger peer-exclusion lease policy, and durable ledger events for cumulative replay remain follow-up work. The W3 replay fix intentionally changes only in-memory attribution; immediate PostTool deltas remain durably recorded as before.
+
 ## [2.3.0] - 2026-07-19
 
 ### Fixed

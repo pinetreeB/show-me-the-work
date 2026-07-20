@@ -16,9 +16,11 @@ from eval.provenance_bench_metrics import (
     PhaseMeasurement,
     evaluate_slo,
     measure,
+    measure_memory,
     summarize_phase,
 )
 from core.provenance_lifecycle import ProvenanceLifecycle
+from core.provenance_lifecycle_types import ObservationResult
 from core.provenance_progress import scan_progress
 from core.provenance_store import save_workspace_current
 
@@ -117,3 +119,38 @@ def test_measure_wraps_deadline_aware_hashing(tmp_path: Path) -> None:
     assert result.incomplete is False
     assert measurement.hash_calls == 1
     assert measurement.content_read_bytes > 0
+    assert measurement.rss_peak_bytes == 0
+
+
+def test_memory_measurement_ignores_stale_process_lifetime_peak() -> None:
+    result = ObservationResult(None, (), (), False, False, 0, False, False)
+
+    with (
+        patch("eval.provenance_bench_metrics._current_rss_bytes", return_value=100),
+        patch("eval.provenance_bench_metrics._peak_rss_bytes", return_value=10_000) as lifetime_peak,
+    ):
+        measured, _traced_peak, rss_peak = measure_memory(lambda: result)
+
+    assert measured is result
+    assert rss_peak == 0
+    lifetime_peak.assert_not_called()
+
+
+def test_memory_measurement_captures_phase_local_rss_growth() -> None:
+    result = ObservationResult(None, (), (), False, False, 0, False, False)
+    current = {"rss": 100}
+
+    def action() -> ObservationResult:
+        current["rss"] = 250
+        time.sleep(0.02)
+        current["rss"] = 100
+        return result
+
+    with patch(
+        "eval.provenance_bench_metrics._current_rss_bytes",
+        side_effect=lambda: current["rss"],
+    ):
+        measured, _traced_peak, rss_peak = measure_memory(action)
+
+    assert measured is result
+    assert rss_peak == 150

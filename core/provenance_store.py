@@ -83,10 +83,7 @@ def save_turn_baseline_from_current(root: Path, agent: str, turn_id: str, snapsh
 
 def load_turn_baseline(root: Path, agent: str, turn_id: str) -> Snapshot | None:
     path = turn_baseline_path(root, agent, turn_id)
-    snapshot = _load(path)
-    if snapshot is not None:
-        _assert_baseline_identity(path, agent, turn_id)
-    return snapshot
+    return _load(path, expected_baseline_identity=(agent, turn_id))
 
 
 def turn_baseline_has_identity(root: Path, agent: str, turn_id: str) -> bool:
@@ -95,15 +92,7 @@ def turn_baseline_has_identity(root: Path, agent: str, turn_id: str) -> bool:
         raw: JsonValue = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SnapshotStoreError(path, "could not verify baseline identity") from exc
-    if not isinstance(raw, dict):
-        raise SnapshotStoreError(path, "must be an object")
-    stored_agent = raw.get("baseline_agent")
-    stored_turn = raw.get("baseline_turn_id")
-    if stored_agent is None and stored_turn is None:
-        return False
-    if stored_agent != agent or stored_turn != turn_id:
-        raise SnapshotStoreError(path, "safe-key collision with another turn baseline")
-    return True
+    return _baseline_has_identity(path, raw, agent, turn_id)
 
 
 def initialize_turn_baseline(
@@ -249,7 +238,11 @@ def _safe_key(value: str, fallback: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-") or fallback
 
 
-def _load(path: Path) -> Snapshot | None:
+def _load(
+    path: Path,
+    *,
+    expected_baseline_identity: tuple[str, str] | None = None,
+) -> Snapshot | None:
     try:
         raw: JsonValue = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -258,7 +251,10 @@ def _load(path: Path) -> Snapshot | None:
         raise SnapshotStoreError(path, str(exc)) from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SnapshotStoreError(path, "must be valid JSON") from exc
-    return _from_value(path, raw)
+    snapshot = _from_value(path, raw)
+    if expected_baseline_identity is not None:
+        _ = _baseline_has_identity(path, raw, *expected_baseline_identity)
+    return snapshot
 
 
 def _assert_baseline_identity(path: Path, agent: str, turn_id: str) -> None:
@@ -266,14 +262,24 @@ def _assert_baseline_identity(path: Path, agent: str, turn_id: str) -> None:
         raw: JsonValue = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SnapshotStoreError(path, "could not verify baseline identity") from exc
+    _ = _baseline_has_identity(path, raw, agent, turn_id)
+
+
+def _baseline_has_identity(
+    path: Path,
+    raw: JsonValue,
+    agent: str,
+    turn_id: str,
+) -> bool:
     if not isinstance(raw, dict):
         raise SnapshotStoreError(path, "must be an object")
     stored_agent = raw.get("baseline_agent")
     stored_turn = raw.get("baseline_turn_id")
     if stored_agent is None and stored_turn is None:
-        return
+        return False
     if stored_agent != agent or stored_turn != turn_id:
         raise SnapshotStoreError(path, "safe-key collision with another turn baseline")
+    return True
 
 
 def _to_value(snapshot: Snapshot) -> dict[str, JsonValue]:
