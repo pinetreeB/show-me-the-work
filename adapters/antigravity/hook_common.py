@@ -53,7 +53,8 @@ def canonical_invocation(
     step_value = payload.get("stepIdx")
     step_id = str(step_value) if isinstance(step_value, int | str) and not isinstance(step_value, bool) else ""
     turn_value = payload.get("turn_id")
-    turn_id = turn_value if isinstance(turn_value, str) and turn_value else ":".join(filter(None, ("turn", session_id, step_id)))
+    turn_is_synthetic = not isinstance(turn_value, str) or not turn_value
+    turn_id = turn_value if not turn_is_synthetic else ":".join(filter(None, ("turn", session_id, step_id)))
     invocation_value = payload.get("tool_use_id") or payload.get("invocation_id") or payload.get("tool_call_id")
     invocation_id = invocation_value if isinstance(invocation_value, str) and invocation_value else ":".join(filter(None, ("tool", session_id, step_id, family)))
     return CanonicalInvocation(
@@ -69,6 +70,7 @@ def canonical_invocation(
         success,
         evidence,
         identity_synthetic,
+        turn_is_synthetic,
     )
 
 

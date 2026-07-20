@@ -12,3 +12,4 @@ eval/ab*/**/hookdebug.log
 eval/ab*/**/response*
 eval/ab*/**/ledger.json
 eval/ab*/**/*.png
+eval/results/

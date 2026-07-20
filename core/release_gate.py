@@ -6,7 +6,7 @@ from typing import Final
 
 from .ledger_schema import JsonObject, JsonValue
 
-DEFAULT_RECEIPTS_DIR: Final = Path(__file__).resolve().parent.parent / "eval" / "results"
+DEFAULT_RECEIPTS_DIR: Final = Path(__file__).resolve().parent / "release_receipts"
 
 
 def auto_migration_enabled(receipts_dir: Path | None = None) -> bool:

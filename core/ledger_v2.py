@@ -10,7 +10,12 @@ from typing import Final, cast
 from .ledger_schema import JsonObject, JsonValue
 from .ledger_v1 import V1_PROJECTION_FIELDS, apply_v1_event, default_ledger, sequence_value
 from .provenance_policy import canonical_manifest_key
-from .provenance_types import normalize_budget_breach_path, normalize_budget_top_paths
+from .provenance_types import (
+    ProvenanceReason,
+    ProvenanceStatus,
+    normalize_budget_breach_path,
+    normalize_budget_top_paths,
+)
 from .verification_covers import agent_key, attach_covers, record_path_revisions
 
 SNAPSHOT_UNAVAILABLE: Final = "snapshot:unavailable"
@@ -18,6 +23,7 @@ EVENT_ONLY_PROMPT: Final = "(event-only)"
 NO_TOOL_OUTPUT: Final = "(no tool output)"
 MAX_ATTRIBUTION_PATHS: Final = 10_000
 MAX_PATH_OWNERS: Final = 8
+MAX_CLOSED_TURNS: Final = 256
 INVOCATION_LEASE: Final = timedelta(minutes=30)
 TURN_STALE_AFTER: Final = timedelta(hours=24)
 
@@ -29,6 +35,12 @@ def default_v2_ledger() -> JsonObject:
     ledger["agent"] = "default"
     ledger["manifest_generation"] = 0
     ledger["active_turns"] = {}
+    ledger["closed_turns"] = []
+    ledger["coordination_outbox"] = {}
+    ledger["coordination_degraded"] = False
+    ledger["coordination_drain_cursor"] = 0
+    ledger["coordination_delivered"] = {}
+    ledger["coordination_delivered_order"] = []
     ledger["path_attribution"] = {}
     ledger["attribution_capacity_exceeded"] = False
     ledger["attribution_degraded"] = False
@@ -130,7 +142,6 @@ def apply_v2_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
     event_seq = sequence_value(payload.get("seq"))
     ledger["event_seq"] = max(sequence_value(ledger.get("event_seq")), event_seq)
     event_time = _event_time(payload)
-    _gc_stale_turns(ledger, event_time)
     event = payload.get("event")
     if event == "change":
         commit_state = payload.get("commit_state")
@@ -146,16 +157,72 @@ def apply_v2_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
             return ledger
     active = _active_turns(ledger)
     key = _event_turn_key(active, payload, event)
+    requested_turn_id = payload.get("turn_id")
+    raw_before_gc = active.get(key)
+    if (
+        event != "prompt"
+        and isinstance(raw_before_gc, dict)
+        and isinstance(requested_turn_id, str)
+        and requested_turn_id
+        and raw_before_gc.get("turn_id") != requested_turn_id
+    ):
+        return ledger
+    if (
+        event != "prompt"
+        and not isinstance(raw_before_gc, dict)
+        and isinstance(requested_turn_id, str)
+        and turn_is_closed(ledger, key, requested_turn_id)
+    ):
+        return ledger
+    preserve_key = (
+        key
+        if isinstance(raw_before_gc, dict)
+        and raw_before_gc.get("turn_id") == requested_turn_id
+        else None
+    )
+    _gc_stale_turns(ledger, event_time, preserve_key)
+    active = _active_turns(ledger)
     if event == "turn_finished":
         raw_turn = active.get(key)
-        if isinstance(raw_turn, dict):
+        if (
+            isinstance(raw_turn, dict)
+            and raw_turn.get("turn_id") == payload.get("turn_id")
+        ):
             _close_open_invocations(raw_turn, payload, event_seq, event_time)
-        _ = active.pop(key, None)
+            _remember_closed_turn(ledger, key, raw_turn, event_seq)
+            _ = active.pop(key, None)
         ledger["active_turns"] = active
         return ledger
     if event == "prompt":
+        _forget_closed_turn(ledger, key, payload.get("turn_id"))
         _discard_legacy_turn(active)
-        turn = _new_turn(payload, event_seq)
+        raw_turn = active.get(key)
+        same_turn_started_at = (
+            raw_turn.get("started_at")
+            if isinstance(raw_turn, dict)
+            and raw_turn.get("turn_id") == requested_turn_id
+            and isinstance(raw_turn.get("started_at"), str)
+            else None
+        )
+        if (
+            isinstance(raw_turn, dict)
+            and raw_turn.get("turn_id") != requested_turn_id
+        ):
+            _remember_closed_turn(ledger, key, raw_turn, event_seq)
+        same_degraded_turn = (
+            isinstance(raw_turn, dict)
+            and raw_turn.get("baseline_status") == "degraded"
+            and raw_turn.get("turn_id") == payload.get("turn_id")
+        )
+        if same_degraded_turn:
+            turn = raw_turn
+            _ = apply_v1_event(turn, payload)
+            _update_turn_after_event(turn, payload, ledger, event_time)
+            _preserve_degraded_baseline(turn)
+        else:
+            turn = _new_turn(payload, event_seq)
+            if same_turn_started_at is not None:
+                turn["started_at"] = same_turn_started_at
     else:
         raw_turn = active.get(key)
         if isinstance(raw_turn, dict):
@@ -166,6 +233,7 @@ def apply_v2_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
         if event == "change":
             _record_path_attribution(ledger, payload)
         _update_turn_after_event(turn, payload, ledger, event_time)
+        _preserve_degraded_baseline(turn)
     active[key] = turn
     ledger["active_turns"] = active
     manifest_generation = payload.get("manifest_generation")
@@ -487,6 +555,7 @@ def _new_turn(payload: Mapping[str, JsonValue], event_seq: int) -> JsonObject:
     if missing:
         turn["provenance_status_reason"] = "turn_not_started"
     _update_turn_after_event(turn, payload, None, event_time)
+    _preserve_degraded_baseline(turn)
     return turn
 
 
@@ -498,16 +567,34 @@ def _update_turn_after_event(
 ) -> None:
     observed_at = event_time or _event_time(payload)
     event_seq = sequence_value(payload.get("seq"))
+    bootstrap_recovered = _applied_bootstrap_recovery(turn, payload)
     turn["last_event_at"] = observed_at.isoformat()
+    if bootstrap_recovered:
+        if "bootstrap_recovered_at" not in turn:
+            turn["bootstrap_recovered_at"] = observed_at.isoformat()
+        invocation_id = payload.get("invocation_id")
+        if "bootstrap_recovery_evidence_refs" not in turn:
+            turn["bootstrap_recovery_evidence_refs"] = (
+                [f"invocation:{invocation_id}"]
+                if isinstance(invocation_id, str) and invocation_id
+                else []
+            )
     _close_open_invocations(turn, payload, event_seq, observed_at)
+    was_degraded = turn.get("baseline_status") == "degraded"
     baseline_status = payload.get("baseline_status")
-    if baseline_status in {"missing", "ready"}:
+    if was_degraded:
+        baseline_status = "degraded"
+    if baseline_status in {"missing", "ready", "degraded"}:
         turn["baseline_status"] = baseline_status
     baseline_snapshot = payload.get("baseline_snapshot_id")
-    if isinstance(baseline_snapshot, str) and baseline_snapshot:
+    if not was_degraded and isinstance(baseline_snapshot, str) and baseline_snapshot:
         turn["baseline_snapshot_id"] = baseline_snapshot
     snapshot_id = payload.get("current_snapshot_id")
-    if isinstance(snapshot_id, str) and snapshot_id:
+    if (
+        not (was_degraded and payload.get("baseline_status") == "ready")
+        and isinstance(snapshot_id, str)
+        and snapshot_id
+    ):
         turn["current_snapshot_id"] = snapshot_id
     incomplete = payload.get("provenance_incomplete")
     if isinstance(incomplete, bool):
@@ -554,6 +641,12 @@ def _update_turn_after_event(
         if epochs:
             turn["remote_mutation_epochs"] = epochs
     event = payload.get("event")
+    if event == "turn_bootstrap_pending":
+        turn["bootstrap_pending"] = True
+        return
+    if event in {"turn_bootstrap_initialized", "turn_bootstrap_recovered"}:
+        turn.pop("bootstrap_pending", None)
+        return
     if event == "invocation":
         _remember_invocation(turn, payload)
         return
@@ -563,7 +656,8 @@ def _update_turn_after_event(
         turn["finish_requested_at"] = observed_at.isoformat()
         return
     if event == "turn_started":
-        turn["baseline_status"] = "ready"
+        if not was_degraded:
+            turn["baseline_status"] = "ready"
         return
     if event == "observation":
         return
@@ -587,6 +681,29 @@ def _update_turn_after_event(
         turn["pending_change_ids"] = pending
     if turn.get("migration_mode") == "legacy_turn":
         turn["legacy_seq_less"] = False
+
+
+def _applied_bootstrap_recovery(
+    turn: Mapping[str, JsonValue],
+    payload: Mapping[str, JsonValue],
+) -> bool:
+    return (
+        turn.get("baseline_status") == "missing"
+        and payload.get("event") == "turn_bootstrap_recovered"
+        and payload.get("turn_bootstrap_recovered") is True
+        and payload.get("baseline_status") == "ready"
+        and payload.get("provenance_incomplete") is False
+        and payload.get("provenance_status") == "complete"
+        and payload.get("provenance_status_reason") == ""
+    )
+
+
+def _preserve_degraded_baseline(turn: JsonObject) -> None:
+    if turn.get("baseline_status") != "degraded":
+        return
+    turn["provenance_incomplete"] = True
+    turn["provenance_status"] = ProvenanceStatus.INCOMPLETE.value
+    turn["provenance_status_reason"] = ProvenanceReason.BASELINE_STATE_MISMATCH.value
 
 
 def _remember_invocation(turn: JsonObject, payload: Mapping[str, JsonValue]) -> None:
@@ -632,19 +749,90 @@ def _close_open_invocations(
         raw_entry["completed_at"] = event_time.isoformat()
 
 
-def _gc_stale_turns(ledger: JsonObject, now: datetime) -> None:
+def _gc_stale_turns(
+    ledger: JsonObject,
+    now: datetime,
+    preserve_key: str | None = None,
+) -> None:
     active = _active_turns(ledger)
     stale = [
         key
         for key, raw_turn in active.items()
         if isinstance(key, str)
+        and key != preserve_key
         and isinstance(raw_turn, dict)
         and (last_event := _parse_timestamp(raw_turn.get("last_event_at"))) is not None
         and now - last_event > TURN_STALE_AFTER
     ]
     for key in stale:
-        _ = active.pop(key, None)
+        raw_turn = active.pop(key, None)
+        if isinstance(raw_turn, dict):
+            _remember_closed_turn(
+                ledger,
+                key,
+                raw_turn,
+                sequence_value(ledger.get("event_seq")),
+            )
     ledger["active_turns"] = active
+
+
+def turn_is_closed(ledger: Mapping[str, JsonValue], agent: str, turn_id: str) -> bool:
+    closed = ledger.get("closed_turns")
+    if not isinstance(closed, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("agent_key") == agent
+        and item.get("turn_id") == turn_id
+        for item in closed
+    )
+
+
+def _remember_closed_turn(
+    ledger: JsonObject,
+    agent: str,
+    turn: Mapping[str, JsonValue],
+    event_seq: int,
+) -> None:
+    turn_id = turn.get("turn_id")
+    if not isinstance(turn_id, str) or not turn_id:
+        return
+    closed = ledger.get("closed_turns")
+    entries = [item for item in closed if isinstance(item, dict)] if isinstance(closed, list) else []
+    entries = [
+        item
+        for item in entries
+        if item.get("agent_key") != agent or item.get("turn_id") != turn_id
+    ]
+    entries.append(
+        {
+            "agent_key": agent,
+            "turn_id": turn_id,
+            "closed_seq": max(0, event_seq),
+        }
+    )
+    ledger["closed_turns"] = entries[-MAX_CLOSED_TURNS:]
+
+
+def _forget_closed_turn(
+    ledger: JsonObject,
+    agent: str,
+    turn_id: JsonValue | None,
+) -> None:
+    if not isinstance(turn_id, str) or not turn_id:
+        return
+    closed = ledger.get("closed_turns")
+    if not isinstance(closed, list):
+        return
+    ledger["closed_turns"] = [
+        item
+        for item in closed
+        if not (
+            isinstance(item, dict)
+            and item.get("agent_key") == agent
+            and item.get("turn_id") == turn_id
+        )
+    ]
 
 
 def _event_time(payload: Mapping[str, JsonValue]) -> datetime:

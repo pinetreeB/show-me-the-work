@@ -217,7 +217,18 @@ def main() -> int:
         )
         if result["decision"] == "block":
             return emit(response(context, _deny(str(result["reason"]))))
-        _ = begin_invocation(context.root, invocation)
+        observation = begin_invocation(context.root, invocation)
+        if (
+            observation.error_kind == "StaleTurn"
+            and invocation.identity_conflict
+            and invocation.mutation_capable
+        ):
+            return emit(
+                response(
+                    context,
+                    _deny("[smtw] stale turn identity; submit a current prompt before mutation."),
+                )
+            )
         return emit(response(context, {}))
     except Exception as exc:  # noqa: BLE001
         return fail_open(str(exc), context)

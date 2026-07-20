@@ -156,7 +156,8 @@ def canonical_invocation(
     identity_synthetic = not _string(payload.get("session_id"))
     session_id = _string(payload.get("session_id")) or "default"
     agent = _string(payload.get("agent")) or "codex"
-    turn_id = _string(payload.get("turn_id")) or f"turn:{session_id}"
+    raw_turn_id = _string(payload.get("turn_id"))
+    turn_id = raw_turn_id or f"turn:{session_id}"
     invocation_id = _string(
         payload.get("tool_use_id") or payload.get("invocation_id") or payload.get("tool_call_id")
     ) or f"{phase}:{session_id}:{tool_family_hint}"
@@ -173,6 +174,7 @@ def canonical_invocation(
         success,
         evidence,
         identity_synthetic,
+        not raw_turn_id,
     )
 
 

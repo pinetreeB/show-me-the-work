@@ -8,7 +8,7 @@ import math
 import os
 from pathlib import Path
 import time
-from threading import Lock
+from threading import Event, Lock, Thread
 from io import BufferedReader
 from typing import Final
 import tracemalloc
@@ -28,6 +28,7 @@ SCORECARD_PHASES: Final = (
     "r1_block_scorecard",
 )
 SCORECARD_MEASUREMENTS: Final = 30
+RSS_SAMPLE_INTERVAL_SECONDS: Final = 0.001
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +82,36 @@ class _ProcessMemoryCounters(ctypes.Structure):
     ]
 
 
+class _RssSampler:
+    def __init__(self) -> None:
+        self._stop = Event()
+        self._ready = Event()
+        self._baseline = 0
+        self._peak = 0
+        self._thread = Thread(
+            target=self._sample,
+            name="provenance-bench-rss",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+        self._ready.wait()
+
+    def stop(self) -> int:
+        self._stop.set()
+        self._thread.join()
+        return max(0, self._peak - self._baseline)
+
+    def _sample(self) -> None:
+        self._baseline = _current_rss_bytes()
+        self._peak = self._baseline
+        self._ready.set()
+        while not self._stop.wait(RSS_SAMPLE_INTERVAL_SECONDS):
+            self._peak = max(self._peak, _current_rss_bytes())
+        self._peak = max(self._peak, _current_rss_bytes())
+
+
 def measure(action: Callable[[], ObservationResult]) -> tuple[ObservationResult, PhaseMeasurement]:
     read_bytes = 0
     hash_calls = 0
@@ -101,7 +132,6 @@ def measure(action: Callable[[], ObservationResult]) -> tuple[ObservationResult,
             hash_calls += 1
         return digest
 
-    rss_before = _current_rss_bytes()
     with patch.object(capture, "_digest_stream", counting_digest):
         started = time.perf_counter_ns()
         result = action()
@@ -113,21 +143,23 @@ def measure(action: Callable[[], ObservationResult]) -> tuple[ObservationResult,
         hash_calls,
         entries + (hash_calls * 3),
         0,
-        max(0, _peak_rss_bytes() - rss_before),
+        0,
         result.incomplete,
         result.full_scan,
     )
 
 
 def measure_memory(action: Callable[[], ObservationResult]) -> tuple[ObservationResult, int, int]:
-    rss_before = _current_rss_bytes()
     tracemalloc.start()
+    sampler = _RssSampler()
+    sampler.start()
     try:
         result = action()
         _, traced_peak = tracemalloc.get_traced_memory()
     finally:
+        rss_peak = sampler.stop()
         tracemalloc.stop()
-    return result, traced_peak, max(0, _peak_rss_bytes() - rss_before)
+    return result, traced_peak, rss_peak
 
 
 def summarize_phase(measurements: tuple[PhaseMeasurement, ...]) -> PhaseStats:

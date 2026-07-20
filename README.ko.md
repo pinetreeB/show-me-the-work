@@ -2,7 +2,7 @@
 
 **show-me-the-work**(짧은 표기 **smtw**, 쇼미더워크)는 "검증했다"는 말 대신 실제 실행 증거를 요구하는 AI 작업 감독 도구입니다.
 
-[![version](https://img.shields.io/badge/version-2.3.0-brightgreen.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.3.1-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## 🎯 이게 뭔가요? (비개발자·바이브코더를 위한 설명)
@@ -175,7 +175,9 @@ python eval/run_probes.py --strict
 python eval/run_probes.py --output eval/results/probes-latest.json
 ```
 
-기본 결과 파일은 `eval/results/probes-latest.json`입니다. 콘솔 요약은 Windows CP949에서도 깨지지 않도록 ASCII만 출력합니다.
+기본 결과 파일은 `eval/results/probes-latest.json`이며 이 재생성 산출물 디렉터리는 Git에서 무시됩니다.
+CI는 runner 임시 경로를 `--output`으로 지정합니다. 콘솔 요약은 Windows CP949에서도 깨지지 않도록
+ASCII만 출력합니다.
 
 ```text
 probes pass=17 fail=0 manual=3 total=20 result=PASS
