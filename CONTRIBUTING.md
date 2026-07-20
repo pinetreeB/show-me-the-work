@@ -13,6 +13,18 @@ python -m pytest tests/
 
 `pyproject.toml` pins pytest collection to `tests/` so local research clones under `tmp/` are not collected.
 
+## Dependency Locking
+
+This repo does not commit a `uv.lock`. The documented workflow installs and runs with
+plain `pip`/`python -m pytest` (see above), no CI job in `.github/workflows/` installs
+via `uv`, and no script reads a lockfile. A previously-committed `uv.lock` had drifted
+to a stale package version relative to `pyproject.toml` (REL-01) precisely because
+nothing kept it in sync — an unused lockfile is worse than no lockfile. `uv.lock` is
+git-ignored; `tests/test_release_hygiene.py::test_all_release_version_surfaces_are_synchronized`
+and `python scripts/sync_version.py --check` both fail if one is committed again. If the
+project adopts `uv` as the real install/CI workflow, remove it from `.gitignore`, add a
+version-sync check for it, and update both of those.
+
 ## Adding Packs
 
 1. Add the Korean and English pack files together under `packs/`.
