@@ -5,11 +5,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 import os
+from pathlib import Path
 from typing import Final, cast
 
 from .ledger_schema import JsonObject, JsonValue
 from .ledger_v1 import V1_PROJECTION_FIELDS, apply_v1_event, default_ledger, sequence_value
-from .provenance_policy import canonical_manifest_key
+from .provenance_policy import (
+    PROJECT_PATH_IN_ROOT,
+    canonical_manifest_key,
+    canonicalize_project_path,
+)
 from .provenance_types import (
     ProvenanceReason,
     ProvenanceStatus,
@@ -79,6 +84,7 @@ def attribution_health(ledger: dict[str, JsonValue]) -> JsonObject:
 def open_peer_invocation_candidates(
     ledger: Mapping[str, JsonValue],
     caller_agent_key: str,
+    root: str | Path,
     *,
     now: datetime | None = None,
 ) -> dict[str, JsonObject]:
@@ -119,8 +125,22 @@ def open_peer_invocation_candidates(
                 "started_at": started_at.isoformat(),
             }
             for path in paths:
-                if isinstance(path, str) and path:
-                    candidates[canonical_manifest_key(path, os.name == "nt")] = evidence
+                if not isinstance(path, str) or not path:
+                    continue
+                # Read-side candidates must go through the same project-relative
+                # canonicalization as writes (_canonical_candidate_paths). A live
+                # ledger can still hold an open invocation recorded before that
+                # write-side fix existed -- with a raw, possibly-absolute path -- and
+                # a bare casefold of that string would never match a caller's
+                # relative R2 target. out_of_root/unresolvable candidates are not
+                # usable as mitigation evidence (unresolvable has no canonical key to
+                # index by; out_of_root is not this project's concern, matching R2's
+                # own target handling), so they are dropped rather than kept as a
+                # stale/misleading key.
+                disposition, canonical = canonicalize_project_path(root, path)
+                if disposition != PROJECT_PATH_IN_ROOT or canonical is None:
+                    continue
+                candidates[canonical] = evidence
     return candidates
 
 
