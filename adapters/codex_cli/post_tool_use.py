@@ -42,6 +42,15 @@ def main() -> int:
                 common["tool_output"](payload),
             )
             invocation = resolve_active_invocation(Path(root), invocation)
+            # CODEX-02: promote a resolved recovered identity's attribution before
+            # recording contract authorship, matching
+            # adapters/claude_code/post_tool_use.py. Without this, a recovered
+            # identity's own namespaced-contract edit is recorded as
+            # attribution=legacy_default and the contract_authored audit event never
+            # cross-checks against a subsequent exact-identity high-risk edit.
+            attribution = invocation.scorecard_attribution
+            if attribution == "legacy_default" and invocation.session_id != "default":
+                attribution = "exact"
             if family == "edit" and not invocation.identity_conflict:
                 record_contract_authored_event(
                     {
@@ -51,7 +60,7 @@ def main() -> int:
                         "agent": invocation.agent,
                         "session_id": invocation.session_id,
                         "turn_id": invocation.turn_id,
-                        "attribution": invocation.scorecard_attribution,
+                        "attribution": attribution,
                     }
                 )
             observation = observe_post_tool(Path(root), invocation)
