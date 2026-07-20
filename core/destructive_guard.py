@@ -529,6 +529,25 @@ def _canonicalize_target(root: str, target: str) -> tuple[str, str | None]:
     return (_CANON_IN_ROOT, canonical_manifest_key(rel, os.name == "nt"))
 
 
+def _canonicalize_lexical_target(root: str, target: str) -> str | None:
+    """Return an in-project key without following target symlinks."""
+    normalized = target.strip().strip("'\"").replace("\\", "/")
+    if not normalized:
+        return None
+    base = os.path.abspath(root)
+    candidate = Path(normalized)
+    absolute = os.path.abspath(
+        normalized if candidate.is_absolute() else Path(base) / candidate
+    )
+    try:
+        relative = os.path.relpath(absolute, base).replace("\\", "/")
+    except ValueError:
+        return None
+    if relative == "." or relative == ".." or relative.startswith("../"):
+        return None
+    return canonical_manifest_key(relative, os.name == "nt")
+
+
 def _is_state_dir_key(canonical: str) -> bool:
     # provenance/감사 상태 디렉토리(.fable-lite)는 어느 에이전트도 직접 파괴하면 안 된다.
     # attribution 인덱스에 등재되지 않으므로 소유권 조회로는 안 잡힌다 → 소유권 무관 하드 차단.
@@ -635,6 +654,14 @@ def evaluate_r2_destructive_gate(
 
     root = payload.get("project_root")
     root = root if isinstance(root, str) and root else "."
+
+    # Lexical state-dir protection must run before ledger I/O and physical resolve:
+    # `.fable-lite` may itself be a symlink that resolves outside the project.
+    for parsed in parsed_commands:
+        for raw_target in parsed.targets:
+            lexical = _canonicalize_lexical_target(root, raw_target)
+            if lexical is not None and _is_state_dir_key(lexical):
+                return _block("state_dir_protected")
 
     # R2-first: 이 load가 어댑터 전체에서 최초의 상태 접근이다(§6-3).
     ledger, degraded = _load_ledger_for_r2(root)
