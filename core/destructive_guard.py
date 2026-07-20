@@ -298,6 +298,10 @@ def _detect_truncate_redirect(tokens: list[str]) -> ParsedDestructiveCommand | N
 
 
 def _detect_truncate_pipe_tee(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    # 복수 명령 파서는 실제 파이프 경계에서 segment를 나눈다. 파이프 오른쪽의
+    # `tee` command head도 직접 인식해야 기존 truncate 정책을 유지할 수 있다.
+    if _command_name(tokens[0]) == "tee":
+        return _blocked(CATEGORY_TRUNCATE, "parse_unable_pipeline")
     if "|" not in tokens:
         return None
     pipe_idx = tokens.index("|")
@@ -387,7 +391,9 @@ def _command_segments(command: str) -> list[str]:
                 quote = ""
         elif character in "'\"":
             quote = character
-        elif character == ";" or character == "|" or (
+        elif character == ";" or (
+            character == "|" and (index == 0 or command[index - 1] != ">")
+        ) or (
             character == "&" and index + 1 < len(command) and command[index + 1] == "&"
         ):
             segments.append(command[start:index])
@@ -433,13 +439,8 @@ _DETECTORS: Final[tuple[Callable[[list[str]], ParsedDestructiveCommand | None], 
 )
 
 
-def parse_destructive_command(command: str) -> ParsedDestructiveCommand | None:
-    """command 문자열을 파괴 카테고리(§6-4)로 분류한다.
-
-    반환 None = 파괴 카테고리 대상이 아님(R2 불개입). resolved=True인 경우에만
-    targets가 신뢰 가능한 정적 경로 목록이다 — 그 외(파싱 불능·암시적 범위)는
-    fail-closed로 처리해야 한다(호출자 책임).
-    """
+def _parse_destructive_segment(command: str) -> ParsedDestructiveCommand | None:
+    """연산자 경계가 제거된 단일 shell segment를 분류한다."""
     tokens = _tokenize(command)
     if not tokens:
         return None
@@ -451,6 +452,30 @@ def parse_destructive_command(command: str) -> ParsedDestructiveCommand | None:
         if result is not None:
             return result
     return _detect_obfuscated_fallback(tokens)
+
+
+def parse_destructive_commands(command: str) -> tuple[ParsedDestructiveCommand, ...]:
+    """모든 shell segment의 파괴 분류 결과를 원래 순서대로 반환한다.
+
+    quote 또는 escape 안의 연산자는 _command_segments()가 경계로 취급하지 않는다.
+    non-destructive segment는 제외한다. resolved=False 결과가 하나라도 있으면 호출자는
+    전체 command를 fail-closed로 처리해야 한다.
+    """
+    parsed: list[ParsedDestructiveCommand] = []
+    for segment in _command_segments(command):
+        result = _parse_destructive_segment(segment)
+        if result is not None:
+            parsed.append(result)
+    return tuple(parsed)
+
+
+def parse_destructive_command(command: str) -> ParsedDestructiveCommand | None:
+    """첫 파괴 segment를 반환하는 기존 단수 API 호환 래퍼다.
+
+    복수 segment를 정책 판정할 때는 parse_destructive_commands()를 사용해야 한다.
+    """
+    parsed = parse_destructive_commands(command)
+    return parsed[0] if parsed else None
 
 
 # --- §6-3/§6-4 게이트 판정 ---------------------------------------------------
@@ -598,11 +623,12 @@ def evaluate_r2_destructive_gate(
     command = payload.get("command")
     if not isinstance(command, str) or not command.strip():
         return _allow("no command")
-    parsed = parse_destructive_command(command)
-    if parsed is None:
+    parsed_commands = parse_destructive_commands(command)
+    if not parsed_commands:
         return _allow("not destructive-shaped")
-    if not parsed.resolved:
-        return _block(parsed.reason)
+    for parsed in parsed_commands:
+        if not parsed.resolved:
+            return _block(parsed.reason)
 
     root = payload.get("project_root")
     root = root if isinstance(root, str) and root else "."
@@ -621,25 +647,26 @@ def evaluate_r2_destructive_gate(
 
     caller_agent_key = _identity_agent_key(payload)
     peer_candidates = _peer_open_invocation_candidates(ledger, caller_agent_key)
-    for raw_target in parsed.targets:
-        disposition, canonical = _canonicalize_target(root, raw_target)
-        if disposition == _CANON_UNRESOLVABLE:
-            # resolve 자체가 실패한 경로(순환 심볼릭·초장경로 등): 고의 예외 유발로 루트 안
-            # peer 파일을 우회할 수 없도록 fail-closed 차단(agy 적대검토 High).
-            return _block("canonicalization_unavailable")
-        if disposition == _CANON_OUT_OF_ROOT or canonical is None:
-            # 루트 밖 대상: 이 프로젝트 path_attribution에 없어 타 에이전트 미정산 변경일 수
-            # 없다 → R2 무관, 이 타겟은 건너뛴다. 다른 프로젝트/시스템 파일 보호는 비범위(§9).
-            continue
-        if _is_state_dir_key(canonical):
-            # provenance/감사 상태(.fable-lite): 소유권 무관 하드 차단(agy 적대검토 Critical).
-            return _block("state_dir_protected")
-        try:
-            record = lookup_path_attribution(ledger, canonical)
-        except Exception:  # noqa: BLE001
-            return _block("attribution_lookup_unavailable")
-        if _owned_by_unsettled_peer(record, caller_agent_key):
-            return _block("peer_unsettled_revision")
-        if canonical in peer_candidates:
-            return _block("peer_open_invocation_candidate")
+    for parsed in parsed_commands:
+        for raw_target in parsed.targets:
+            disposition, canonical = _canonicalize_target(root, raw_target)
+            if disposition == _CANON_UNRESOLVABLE:
+                # resolve 자체가 실패한 경로(순환 심볼릭·초장경로 등): 고의 예외 유발로 루트 안
+                # peer 파일을 우회할 수 없도록 fail-closed 차단(agy High).
+                return _block("canonicalization_unavailable")
+            if disposition == _CANON_OUT_OF_ROOT or canonical is None:
+                # 루트 밖 대상: 이 프로젝트 path_attribution에 없어 타 에이전트 미정산 변경일 수
+                # 없다 → R2 무관, 이 타겟은 건너뛴다. 다른 프로젝트/시스템 파일 보호는 비범위(§9).
+                continue
+            if _is_state_dir_key(canonical):
+                # provenance/감사 상태(.fable-lite): 소유권 무관 하드 차단(agy Critical).
+                return _block("state_dir_protected")
+            try:
+                record = lookup_path_attribution(ledger, canonical)
+            except Exception:  # noqa: BLE001
+                return _block("attribution_lookup_unavailable")
+            if _owned_by_unsettled_peer(record, caller_agent_key):
+                return _block("peer_unsettled_revision")
+            if canonical in peer_candidates:
+                return _block("peer_open_invocation_candidate")
     return _allow("r2 pass")
