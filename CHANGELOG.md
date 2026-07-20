@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased] — v2.4 stabilization (no new gate semantics)
+
+Stabilization sweep closing the external audit (`docs/reviews/2026-07-20-sol-stabilization-handoff.md`, P0/P1/P2) plus real-world multi-agent friction. Each item shipped regression-first with adversarial (agy) P4 review; full review-debt closure in `docs/reviews/2026-07-21-v24-review-debt-closure.md` (13/13 FIXED or ALREADY_FIXED).
+
+### Fixed
+
+- **R2-01**: the destructive-command parser inspects every chained shell segment (`&&`, `||`, `;`, `|`), not just the head; a benign leading segment no longer masks a destructive tail, operators inside quotes are never split, and any unresolved destructive segment fails closed.
+- **R2-02**: `git checkout -f/--force` is blocked as implicit-scope destruction (discards local work) regardless of target attribution; `-b/-B` and non-forced switches stay allowed.
+- **R2-03**: peer open-invocation candidate paths are canonicalized to project-relative keys on both write and read, closing a pre-attribution window where an absolute peer candidate diverged from a relative R2 target (backward-compat migration for live ledgers included).
+- **R2-04**: state-dir (`.fable-lite`) protection applies to the lexical project-relative first component, so a symlinked state dir cannot route deletes around protection via out-of-root resolution.
+- **ACT-01**: on session-root mismatch, the Claude adapter re-checks the mismatched project's opt-in before using it as the active root; unconfigured projects stay stateless (quiet-opt-in contract preserved).
+- **CODEX-01 / CODEX-02**: recovered Codex identities are promoted `legacy_default` → `exact`, and contract authorship is recorded after identity resolution, so namespaced-contract authoring is honored on later high-risk edits.
+- **SCORE-01**: coordination view first/last times use `occurred_at` min/max instead of journal append order, fixing time inversion under concurrency.
+- **HINT-01**: inline Python write-friction detects `Path.rename/replace` destinations and `open` update/binary write modes while leaving read forms unflagged.
+- **NEW-02**: `parse_unable_*` fail-closed reasons are mapped in `R2_COORDINATION_REASON_MAP`, so dynamic-command denials (e.g. PowerShell `$var` idioms) are labeled accurately instead of `unresolvable_target` — diagnostic only, gate decision unchanged.
+- **Multi-agent goals (B4)**: `goals.py` checkpoints are namespaced per session identity (`goals/<identity>.json`), preventing worker overwrite of the orchestrator's goals; N2 gate checks the active identity; single-identity sessions stay compatible via legacy fallback + on-write migration.
+
+### Changed
+
+- **REL-01**: removed the unused/stale `uv.lock`; `sync_version.py` fails CI if it returns or any release-version surface drifts.
+- **DOC-01**: README/README.ko realigned to actual behavior (plugin install + per-project opt-in; blocks up to twice then fail-opens); stale/overclaimed phrasing removed.
+- **PKG-01**: added `smtw` / `fable-lite` console scripts and a `version` subcommand.
+
 ## [2.3.1] - 2026-07-21
 
 ### Fixed
