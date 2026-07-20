@@ -13,3 +13,4 @@ eval/ab*/**/response*
 eval/ab*/**/ledger.json
 eval/ab*/**/*.png
 eval/results/
+uv.lock
