@@ -61,6 +61,14 @@ def main() -> int:
         from core.adapter_observation import begin_invocation, resolve_active_invocation
 
         invocation = resolve_active_invocation(Path(root), invocation)
+        # CODEX-01: a recovered invocation (session_id was omitted, resolved to the
+        # sole active turn for this host+agent) must not stay attribution=legacy_default
+        # once it has a real, resolved session_id -- matching
+        # adapters/claude_code/pre_tool_use.py. Otherwise a recovered identity's own
+        # valid namespaced contract is wrongly treated as an unattributed edit.
+        attribution = invocation.scorecard_attribution
+        if attribution == "legacy_default" and invocation.session_id != "default":
+            attribution = "exact"
         input_text = json.dumps(tool_input(payload), ensure_ascii=False)
         result = evaluate_pretool_contract(
             {
@@ -74,7 +82,7 @@ def main() -> int:
                 "agent": invocation.agent,
                 "session_id": invocation.session_id,
                 "turn_id": invocation.turn_id,
-                "attribution": invocation.scorecard_attribution,
+                "attribution": attribution,
             }
         )
         if result["decision"] == "block":
