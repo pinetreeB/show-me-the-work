@@ -49,6 +49,23 @@ def fail_open(event_name: str, msg: str) -> int:
         return emit({"decision": "allow", "reason": reason})
     return emit({})
 
+
+def fail_closed_runtime_env(event_name: str, error: BaseException) -> int | None:
+    error_type = type(error)
+    if (
+        error_type.__module__ != "core.runtime_env"
+        or error_type.__name__ != "SmtwEnvConflictError"
+    ):
+        return None
+    from core.runtime_env import SmtwEnvConflictError
+
+    if not isinstance(error, SmtwEnvConflictError):
+        return None
+    reason = f"[smtw] runtime environment conflict; denied fail-closed: {error}"
+    if event_name in {"Stop", "AfterAgent"}:
+        return emit({"decision": "continue", "reason": reason})
+    return emit({"decision": "deny", "reason": reason})
+
 def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     from adapters.antigravity.tool_io import extract_command, extract_paths_from_input, extract_tool_info, tool_family
     from adapters.intent_command import intent_set_command
@@ -267,6 +284,9 @@ def main() -> int:
         return handler(payload) if handler is not None else emit({})
             
     except Exception as e:
+        denied = fail_closed_runtime_env(event_name, e)
+        if denied is not None:
+            return denied
         return fail_open(event_name, str(e))
 
 if __name__ == "__main__":

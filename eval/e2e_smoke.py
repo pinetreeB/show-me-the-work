@@ -20,6 +20,11 @@ if callable(reconfigure):
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ADAPT = ROOT / "adapters" / "claude_code"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.ledger_storage import ledger_path  # noqa: E402
+from core.state_layout import state_dir  # noqa: E402
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -85,7 +90,7 @@ def main() -> int:
     ctx = json.dumps(r, ensure_ascii=False)
     check("AC5 한국어 디버그 라우팅", "가설" in ctx and "조사 팩" in ctx, "(investigation 팩 주입)")
     check("AC10 한국어 메시지", "show-me-the-work 활성화" in ctx)
-    led = os.path.join(proj, ".fable-lite", "ledger.json")
+    led = ledger_path(proj)
     check("AC3 N1 배선(ledger 플래그)", os.path.exists(led) and json.loads(pathlib.Path(led).read_text(encoding="utf-8")).get("requires_investigation_compliance") is True)
 
     # E2E-2: N1 미준수 → Stop 차단, 준수 → 통과 (AC3)
@@ -168,9 +173,13 @@ def main() -> int:
     r = run_hook("user_prompt_submit.py", {"hook_event_name": "UserPromptSubmit", "cwd": proj, "prompt": "add 함수가 뺄셈을 하고 있어 고쳐줘"})
     check("발견B '하고' 단일수정 오분류 없음", "goals 체크포인트" not in json.dumps(r, ensure_ascii=False), "(needs_goals 미발동)")
 
-    # E2E-6: .fable-lite/ 단일 상태 디렉토리 (아키텍처 계약)
+    # E2E-6: layout facade가 선택한 단일 상태 디렉토리 (아키텍처 계약)
     strays = [p for p in ("ledger.json", "goals.json", "contract.json") if os.path.exists(os.path.join(proj, p))]
-    check("상태파일 .fable-lite/ 격리", not strays, f"(루트 잔존: {strays})")
+    check(
+        f"상태파일 {state_dir(proj).name}/ 격리",
+        not strays,
+        f"(루트 잔존: {strays})",
+    )
 
     import shutil
     shutil.rmtree(workspace, ignore_errors=True)

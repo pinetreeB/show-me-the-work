@@ -7,7 +7,9 @@ import sys
 from pathlib import Path
 
 from core.ambiguity import JsonValue, evaluate_ambiguity
+from core.intent import intent_path
 from core.ledger import load_ledger, record_event
+from core.ledger_storage import ledger_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -123,7 +125,9 @@ def test_ledger_records_intent_required_and_resets_intent_blocks_on_new_prompt(t
     )
     ledger = load_ledger({"project_root": str(tmp_path)})
     ledger["intent_blocks"] = 2
-    (tmp_path / ".fable-lite" / "ledger.json").write_text(json.dumps(ledger, ensure_ascii=False), encoding="utf-8")
+    ledger_path(str(tmp_path)).write_text(
+        json.dumps(ledger, ensure_ascii=False), encoding="utf-8"
+    )
 
     record_event(
         {
@@ -189,7 +193,7 @@ def test_intent_cli_set_show_clear_schema(tmp_path: Path) -> None:
 
     assert clear_result.returncode == 0
     assert json.loads(show_after_clear.stdout) == {}
-    assert not (tmp_path / ".fable-lite" / "intent.json").exists()
+    assert not intent_path(str(tmp_path)).exists()
 
 
 def test_root_launcher_runs_from_arbitrary_cwd_without_pythonpath(tmp_path: Path) -> None:

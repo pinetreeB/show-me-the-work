@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from hashlib import sha256
 import os
 from pathlib import Path
 import time
@@ -24,6 +23,7 @@ from claude_hook_support import (
     registry_path,
     write_config,
 )
+from adapters.claude_code.project_config import load_project_config
 
 
 def _prompt(root: Path, session_id: str, agent_id: str = "") -> JsonObject:
@@ -59,7 +59,8 @@ def test_registry_records_canonical_root_digest_and_timestamps(
     registry = read_json(registry_path(data_dir, session_id))
     assert registry["schema_version"] == 1
     assert registry["root"] == str(root.resolve())
-    assert registry["config_digest"] == sha256(config.read_bytes()).hexdigest()
+    assert config.is_file()
+    assert registry["config_digest"] == load_project_config(root).digest
     assert isinstance(registry["created_at"], str)
     assert isinstance(registry["last_activity_at"], str)
 

@@ -22,6 +22,7 @@ from core.provenance_types import (
     SnapshotScanOptions,
 )
 from core.provenance_store import SnapshotStoreError, workspace_current_path
+from core.state_layout import PROVENANCE_CONFIG_NAME, state_dir
 
 
 def _write(path: Path, content: str) -> None:
@@ -290,7 +291,7 @@ def test_scope_policy_change_forces_turn_start_full_scan(tmp_path: Path) -> None
     lifecycle.start_turn("codex", "turn-1")
     lifecycle.finish_turn("codex", "turn-1")
     _write(
-        tmp_path / ".fable-lite" / "provenance-config.json",
+        state_dir(tmp_path) / PROVENANCE_CONFIG_NAME,
         json.dumps({"version": 1, "exclude": ["vendor/**"]}),
     )
 

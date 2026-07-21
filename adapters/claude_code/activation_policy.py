@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from hashlib import sha256
-import json
 import os
 from pathlib import Path
 import tempfile
+
+if __package__:
+    from .project_config import config_state as _project_config_state
+    from .project_config import project_config_present
+else:
+    from project_config import config_state as _project_config_state
+    from project_config import project_config_present
 
 
 def plugin_data_dir(force: bool) -> Path:
@@ -43,29 +49,14 @@ def fallback_root(
     if force:
         return start
     for candidate in (start, *start.parents):
-        if (candidate / ".fable-lite" / "config.json").exists():
+        if project_config_present(candidate):
             return candidate
     return start
 
 
 def config_state(root: Path) -> tuple[bool, str, bool]:
-    path = root / ".fable-lite" / "config.json"
-    try:
-        raw_bytes = path.read_bytes()
-        raw: object = json.loads(raw_bytes)
-    except FileNotFoundError:
-        return False, "", False
-    except (json.JSONDecodeError, OSError):
-        return False, "", True
-    if not isinstance(raw, dict):
-        return False, "", False
-    schema = raw.get("schema_version")
-    valid_schema = (
-        isinstance(schema, int) and not isinstance(schema, bool) and schema == 1
-    )
-    enabled = valid_schema and raw.get("supervision") is True
-    digest = sha256(raw_bytes).hexdigest() if enabled else ""
-    return enabled, digest, False
+    """Compatibility facade for the shared project-config SSOT."""
+    return _project_config_state(root)
 
 
 def is_exact_home(root: Path) -> bool:

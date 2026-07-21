@@ -35,6 +35,7 @@ from .scorecard import (
     parse_transition,
 )
 from .verification_covers import active_turn
+from .state_layout import state_dir
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +45,7 @@ class JournalReplay:
 
 
 def scorecard_journal_path(project_root: str | Path) -> Path:
-    return Path(project_root).resolve() / ".fable-lite" / "scorecard" / "gates.jsonl"
+    return state_dir(project_root) / "scorecard" / "gates.jsonl"
 
 
 def new_transition(

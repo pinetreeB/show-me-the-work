@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from core.provenance_store import turn_baseline_path
+from core.ledger_storage import ledger_path as selected_ledger_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +57,7 @@ def test_adapters_handle_realistic_claude_code_nested_payloads(tmp_path: Path) -
         },
     )
     ledger = json.loads(
-        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+        selected_ledger_path(str(tmp_path)).read_text(encoding="utf-8")
     )
 
     assert "hookSpecificOutput" in prompt_result
@@ -88,7 +89,7 @@ def test_stop_fails_closed_when_mutated_turn_baseline_is_missing(
         {"cwd": str(tmp_path), "prompt": "상태만 파악하고 대기해", "session_id": "s2"},
     )
     ledger = json.loads(
-        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+        selected_ledger_path(str(tmp_path)).read_text(encoding="utf-8")
     )
     turns = object_value(ledger["active_turns"])
     agent_key, turn = next(
@@ -159,7 +160,7 @@ def test_posttool_records_nested_shell_verification(tmp_path: Path) -> None:
         },
     )
     ledger = json.loads(
-        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+        selected_ledger_path(str(tmp_path)).read_text(encoding="utf-8")
     )
 
     assert result == {}
@@ -207,7 +208,7 @@ def test_fake_output_verification_cannot_unlock_changed_claude_turn(
         {"cwd": str(tmp_path), "session_id": "s1", "stop_hook_active": False},
     )
     ledger = json.loads(
-        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+        selected_ledger_path(str(tmp_path)).read_text(encoding="utf-8")
     )
 
     assert "recorded verification" not in str(fake_result.get("systemMessage", ""))
@@ -359,7 +360,7 @@ def test_remote_possible_command_records_epoch_while_local_observation_stays_ena
         },
     )
     ledger = json.loads(
-        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+        selected_ledger_path(str(tmp_path)).read_text(encoding="utf-8")
     )
     turn = object_value(object_value(ledger["active_turns"])["claude_code:s1:claude"])
 
@@ -398,7 +399,7 @@ def test_failed_remote_attempt_still_requires_fresh_verification(
         },
     )
     ledger = json.loads(
-        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+        selected_ledger_path(str(tmp_path)).read_text(encoding="utf-8")
     )
     turn = object_value(object_value(ledger["active_turns"])["claude_code:s1:claude"])
 
@@ -469,7 +470,7 @@ def test_scope_too_large_turn_still_tracks_and_verifies_remote_mutation(
     }
     run_hook("post_tool_use.py", remote_result_payload)
 
-    ledger_path = tmp_path / ".fable-lite" / "ledger.json"
+    ledger_path = selected_ledger_path(str(tmp_path))
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
     turn = object_value(object_value(ledger["active_turns"])["claude_code:s1:claude"])
     assert isinstance(turn.get("last_remote_mutation_seq"), int)
@@ -798,7 +799,7 @@ def test_posttool_records_bash_script_and_make_test_as_verification(
         },
     )
     ledger = json.loads(
-        (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+        selected_ledger_path(str(tmp_path)).read_text(encoding="utf-8")
     )
 
     assert bash_result == {}

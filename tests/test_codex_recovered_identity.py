@@ -6,6 +6,7 @@ import subprocess
 import sys
 from typing import TypeAlias
 
+from core.agent_log import agent_log_path
 from core.contract import (
     evaluate_pretool_contract,
     namespaced_contract_path,
@@ -41,7 +42,7 @@ def run_codex_hook(name: str, payload: HookPayload) -> HookOutput:
 
 
 def read_agent_log(root: Path, agent: str) -> list[dict[str, JsonValue]]:
-    path = root / ".fable-lite" / "agents" / f"{agent}.jsonl"
+    path = agent_log_path(str(root), agent)
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -208,7 +209,7 @@ def test_codex_recovered_identity_end_to_end_promotes_authors_contract_and_passe
     # contract_authored event + content digest must be recorded (audit cross-check).
     events = [event for event in read_agent_log(tmp_path, "codex") if event.get("event") == "contract_authored"]
     assert len(events) == 1
-    assert events[0]["contract_path"] == f".fable-lite/contracts/{namespaced.name}"
+    assert events[0]["contract_path"] == namespaced.relative_to(tmp_path).as_posix()
     assert isinstance(events[0].get("content_digest"), str) and events[0]["content_digest"]
 
     # Turn 2 (same logical session, but this call omits session_id -- the recovered

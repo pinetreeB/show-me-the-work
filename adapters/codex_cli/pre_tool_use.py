@@ -13,11 +13,21 @@ def _fail_open(message: str) -> int:
 
 
 def main() -> int:
+    runtime_env_fail_closed = None
     try:
         root = Path(__file__).resolve().parents[2]
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
-        from adapters.codex_cli.common import canonical_invocation, emit, project_root, read_payload, tool_command, tool_file_paths, tool_input
+        from adapters.codex_cli.common import (
+            canonical_invocation,
+            emit,
+            fail_closed_runtime_env as runtime_env_fail_closed,
+            project_root,
+            read_payload,
+            tool_command,
+            tool_file_paths,
+            tool_input,
+        )
         from adapters.intent_command import intent_set_command
         payload = read_payload()
         from core.contract import EDIT_TOOLS, SHELL_TOOLS, evaluate_pretool_contract
@@ -101,6 +111,10 @@ def main() -> int:
             )
         return emit({})
     except Exception as exc:
+        if runtime_env_fail_closed is not None:
+            denied = runtime_env_fail_closed(exc)
+            if denied is not None:
+                return denied
         return _fail_open(str(exc))
 
 

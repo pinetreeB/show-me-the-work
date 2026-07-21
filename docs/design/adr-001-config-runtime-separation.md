@@ -1,6 +1,6 @@
 # ADR-001: 공유 설정(Config)과 런타임 상태(Runtime State)의 분리
 
-> **Status**: Accepted (2026-07-21) — 결정만 확정. 구현은 후속 백로그(§4 비범위 참조).
+> **Status**: Implemented (2026-07-22) — STATE-01 loader와 v3 Q4 tri-state 계약 반영.
 > **Context**: Sol 안정화 지시서 §5 STATE-01("v2.4 필수 수정과 섞지 말고 ADR부터").
 
 ## 1. 맥락 (Context)
@@ -40,15 +40,16 @@
 
 ## 3. 결정 (Decision)
 
-**대안 (A) `.smtw.toml` 공유 config + 상태는 `.fable-lite/` 유지**를 최종 권고안으로 채택합니다.
+**대안 (A) `.smtw.toml` 공유 config + 런타임 상태 트리 분리**를 최종 권고안으로 채택합니다.
 
 이 방식은 fable-lite의 기존 아키텍처 철학(프로젝트 내 종속, 0-dependency)을 위반하지 않으면서, 가장 적은 비용으로 팀 공유와 런타임 분리를 달성할 수 있습니다.
 
 ## 4. 마이그레이션 경로 및 구현 지침 (Migration & Implementation)
 
-1. **읽기 우선순위 변경**: `config`를 읽을 때 `[프로젝트 루트]/.smtw.toml` (또는 `pyproject.toml`의 `[tool.smtw]` 섹션)을 먼저 조회합니다.
-2. **폴백 유지**: 파일이 없다면 기존 `[프로젝트 루트]/.fable-lite/config.json`을 조회하여 **완벽한 하위 호환성**을 보장합니다.
-3. **.gitignore 추가 권고**: 초기화(CLI `init` 또는 문서) 시점에 사용자가 `.fable-lite/` 전체를 `.gitignore`에 추가하도록 가이드합니다.
-4. **비범위 (Out of Scope)**: 
+1. **읽기 우선순위 변경**: `[프로젝트 루트]/.smtw.toml` → `pyproject.toml`의 `[tool.smtw]` → 기존 `[프로젝트 루트]/.fable-lite/config.json` 순으로 조회합니다.
+2. **명시와 부재 구분**: 각 loader는 `ABSENT`, `VALID`, `DECLARED_INVALID` 중 하나를 반환합니다. 상위 source가 명시됐지만 잘못됐으면 하위로 폴백하지 않습니다. 유효한 pyproject에 섹션이 없거나, malformed pyproject에 실제 `[tool.smtw]` header가 없으면 `ABSENT`로 다음 source를 조회합니다.
+3. **동일 schema와 digest**: 세 source 모두 같은 validator와 canonical table digest를 사용합니다. pyproject의 무관한 dependency 변경은 config digest를 바꾸지 않습니다.
+4. **.gitignore 추가 권고**: 초기화(CLI `init` 또는 문서) 시점에 사용자가 런타임 상태 트리를 `.gitignore`에 추가하도록 가이드합니다.
+5. **비범위 (Out of Scope)**:
    - 본 ADR은 런타임 데이터 구조(원장 스키마 등) 자체의 변경은 포함하지 않습니다. 
-   - `goals/`, `contracts/` 등의 내부 구조 개편은 다루지 않으며 기존 `.fable-lite/` 내의 상태를 그대로 유지합니다.
+   - `goals/`, `contracts/` 등의 내부 구조 개편은 다루지 않으며 선택된 런타임 상태 트리의 내부 구조를 그대로 유지합니다.

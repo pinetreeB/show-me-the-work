@@ -15,6 +15,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from .agent_log import ledger_transaction
 from .ledger_schema import JsonObject, JsonValue
 from .scorecard import Attribution, SessionIdentity
+from .state_layout import state_dir
 
 
 COORDINATION_SCHEMA_VERSION: Final = 1
@@ -110,12 +111,7 @@ class CoordinationReplay:
 
 
 def coordination_journal_path(project_root: str | Path) -> Path:
-    return (
-        Path(project_root).resolve()
-        / ".fable-lite"
-        / "scorecard"
-        / "coordination.jsonl"
-    )
+    return state_dir(project_root) / "scorecard" / "coordination.jsonl"
 
 
 def new_coordination_event(

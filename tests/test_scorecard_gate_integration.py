@@ -14,6 +14,7 @@ import core.scorecard_store as scorecard_store
 import core.verify_state as verify_state
 from core.contract import evaluate_pretool_contract
 from core.ledger import JsonObject, JsonValue, load_ledger, record_event
+from core.state_layout import state_dir
 from core.verification_covers import active_turn
 from core.verify_state import evaluate_stop
 
@@ -80,7 +81,7 @@ def _decide(gate: GateName, payload: JsonObject) -> JsonObject:
 
 
 def _recover(root: Path, gate: GateName, payload: JsonObject) -> None:
-    state = root / ".fable-lite"
+    state = state_dir(root)
     match gate:
         case "stop":
             _ = record_event(
@@ -112,7 +113,7 @@ def _recover(root: Path, gate: GateName, payload: JsonObject) -> None:
 
 
 def _journal_events(root: Path) -> list[JsonObject]:
-    path = root / ".fable-lite" / "scorecard" / "gates.jsonl"
+    path = scorecard_store.scorecard_journal_path(root)
     assert path.exists(), "S2 gate wiring did not create the scorecard journal"
     raw_events: list[JsonValue] = [
         json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()

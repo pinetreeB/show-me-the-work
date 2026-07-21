@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.provenance_types import ProvenanceReason, ProvenanceStatus
+from core.state_layout import PROVENANCE_CONFIG_NAME, STATE_DIR_NAME
 from core.verify_state import evaluate_without_io
 
 
@@ -60,7 +61,7 @@ def test_byte_limit_block_message_includes_top_paths_breach_and_config_guide(
     assert "부분 관측" in message
     assert "src (entries=3, bytes=500)" in message
     assert "예산 초과 지점: src/big.bin" in message
-    assert ".fable-lite/provenance-config.json" in message
+    assert f"{STATE_DIR_NAME}/{PROVENANCE_CONFIG_NAME}" in message
     assert '"exclude"' in message
     assert "저장 후 다음 턴부터 반영" in message
     _assert_no_narrow_root_language(message)
@@ -86,7 +87,7 @@ def test_entry_limit_block_message_includes_top_paths_breach_and_config_guide(
     assert "부분 관측" in message
     assert "assets (entries=40, bytes=12)" in message
     assert "예산 초과 지점: assets/way-too-many/file.png" in message
-    assert ".fable-lite/provenance-config.json" in message
+    assert f"{STATE_DIR_NAME}/{PROVENANCE_CONFIG_NAME}" in message
     _assert_no_narrow_root_language(message)
 
 
@@ -121,7 +122,7 @@ def test_missing_reason_block_message_falls_back_to_general_config_guide(
     assert decision["decision"] == "block"
     message = decision["reason"]
     assert isinstance(message, str)
-    assert ".fable-lite/provenance-config.json" in message
+    assert f"{STATE_DIR_NAME}/{PROVENANCE_CONFIG_NAME}" in message
     assert "바이트 예산 초과" not in message
     assert "파일 개수 예산 초과" not in message
     assert "관측 시간 초과" not in message
@@ -144,7 +145,7 @@ def test_byte_limit_advisory_allow_message_includes_same_diagnostics(tmp_path: P
     assert "바이트 예산 초과" in message
     assert "src (entries=3, bytes=500)" in message
     assert "예산 초과 지점: src/big.bin" in message
-    assert ".fable-lite/provenance-config.json" in message
+    assert f"{STATE_DIR_NAME}/{PROVENANCE_CONFIG_NAME}" in message
     _assert_no_narrow_root_language(message)
 
 
@@ -198,7 +199,7 @@ def test_missing_reason_advisory_allow_falls_back_to_general_config_guide(
     assert decision["decision"] == "allow"
     message = decision["message"]
     assert isinstance(message, str)
-    assert ".fable-lite/provenance-config.json" in message
+    assert f"{STATE_DIR_NAME}/{PROVENANCE_CONFIG_NAME}" in message
     _assert_no_narrow_root_language(message)
 
 

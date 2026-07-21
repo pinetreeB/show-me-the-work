@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import core.agent_log as agent_log
 from core.ledger import JsonObject, load_ledger, record_event
+from core.state_layout import state_dir
 from core.verify_state import evaluate_stop
 from fable_lite.check_support import has_successful_verification
 
@@ -164,7 +165,7 @@ def test_stale_recovery_does_not_steal_lock_from_live_foreign_pid(
 
 def test_transaction_release_preserves_replaced_owner_lock(tmp_path: Path) -> None:
     # Given: another owner token replaces the lock metadata before release.
-    lock = tmp_path / ".fable-lite" / "ledger.lock"
+    lock = state_dir(tmp_path) / "ledger.lock"
     with agent_log.ledger_transaction(str(tmp_path)):
         lock.write_text("999999:successor-owner", encoding="ascii")
 
