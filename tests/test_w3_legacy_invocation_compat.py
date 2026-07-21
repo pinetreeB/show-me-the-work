@@ -248,7 +248,7 @@ def test_auto_migration_failure_logs_stage_and_detail_without_raising(
 
     # When: the ordinary event path encounters the real migration error.
     with (
-        patch("core.ledger.auto_migration_enabled", return_value=True),
+        patch("core.ledger.status_backfill_enabled", return_value=True),
         caplog.at_level(logging.WARNING, logger="core.ledger"),
     ):
         result = record_event(payload)
@@ -270,7 +270,7 @@ def test_auto_migration_off_has_no_failure_warning(
 
     # When: the normal event path runs in OFF mode.
     with (
-        patch("core.ledger.auto_migration_enabled", return_value=False),
+        patch("core.ledger.status_backfill_enabled", return_value=False),
         caplog.at_level(logging.WARNING, logger="core.ledger"),
     ):
         result = record_event(
@@ -296,7 +296,7 @@ def test_migration_failure_logger_cannot_break_hook_fail_open(
 
     # When: the normal event path catches the real migration error.
     with (
-        patch("core.ledger.auto_migration_enabled", return_value=True),
+        patch("core.ledger.status_backfill_enabled", return_value=True),
         patch("core.ledger.LOGGER.warning", side_effect=RuntimeError("log sink down")),
     ):
         result = record_event(
@@ -324,7 +324,7 @@ def test_auto_migration_off_preserves_legacy_bytes_and_degrades_fail_closed(
     }
 
     # When: an ordinary write path runs with automatic migration disabled.
-    with patch("core.ledger.auto_migration_enabled", return_value=False):
+    with patch("core.ledger.status_backfill_enabled", return_value=False):
         loaded = load_ledger(payload)
         result = record_event(payload)
 
@@ -386,7 +386,7 @@ def test_auto_migration_on_backfills_before_the_ordinary_event_write(
     original_rows = _turn_invocations(json.loads(original.decode("utf-8")))
 
     # When: the ordinary event path performs its one-shot migration.
-    with patch("core.ledger.auto_migration_enabled", return_value=True):
+    with patch("core.ledger.status_backfill_enabled", return_value=True):
         result = record_event(
             {
                 "project_root": str(tmp_path),

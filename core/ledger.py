@@ -38,7 +38,7 @@ from .ledger_schema import (
 from .ledger_storage import atomic_write_text, ledger_path as ledger_path, state_dir as state_dir
 from .ledger_v1 import apply_v1_event, classify_change_kind as classify_change_kind, default_ledger, sequence_value
 from .ledger_v2 import apply_v2_event, default_v2_ledger, turn_is_closed
-from .release_gate import auto_migration_enabled
+from .release_gate import auto_migration_enabled, status_backfill_enabled
 from .verification_covers import active_turn, agent_key, capture_covers
 
 
@@ -817,12 +817,10 @@ def _invocation_status_migration_required(destination: Path) -> bool:
 
 
 def _auto_migrate_ledger(root: str, destination: Path) -> bool:
-    if not auto_migration_enabled():
-        return True
     try:
-        if _legacy_ledger_exists(destination):
+        if auto_migration_enabled() and _legacy_ledger_exists(destination):
             _ = migrate_v1_ledger(root)
-        elif _invocation_status_migration_required(destination):
+        elif status_backfill_enabled() and _invocation_status_migration_required(destination):
             _ = migrate_v2_invocation_statuses(root)
     except LedgerMigrationError as exc:
         _log_auto_migration_failure(exc)
