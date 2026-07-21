@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -30,6 +32,172 @@ from core.runtime_env import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_ROOTS = ("core", "adapters", "fable_lite", "goals", "contrib", "scripts")
+ENV_GUARDED_HOOKS = (
+    "adapters/claude_code/user_prompt_submit.py",
+    "adapters/claude_code/pre_tool_use.py",
+    "adapters/claude_code/post_tool_use.py",
+    "adapters/claude_code/stop.py",
+    "adapters/claude_code/session_end.py",
+    "adapters/codex_cli/user_prompt_submit.py",
+    "adapters/codex_cli/pre_tool_use.py",
+    "adapters/codex_cli/post_tool_use.py",
+    "adapters/codex_cli/stop.py",
+    "adapters/antigravity/oma_hook.py",
+)
+
+
+def _conflicting_design_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment[canonical_env_key(DESIGN_GATE)] = "1"
+    environment[legacy_env_key(DESIGN_GATE)] = "0"
+    return environment
+
+
+def _assert_fail_closed_process(
+    process: subprocess.CompletedProcess[str],
+    expected_decision: str,
+) -> None:
+    assert process.returncode == 0
+    result: object = json.loads(process.stdout)
+    assert isinstance(result, dict)
+    assert result.get("decision") == expected_decision
+    assert "fail-closed" in str(result.get("reason", ""))
+    assert "fail-open" not in process.stdout
+
+
+def test_codex_adapter_denies_conflicting_runtime_env_fail_closed(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "cwd": str(tmp_path),
+        "prompt": "build a UI page",
+        "session_id": "runtime-env-conflict",
+        "turn_id": "turn:runtime-env-conflict",
+    }
+
+    process = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "adapters" / "codex_cli" / "user_prompt_submit.py"),
+        ],
+        input=json.dumps(payload),
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=_conflicting_design_environment(),
+    )
+
+    _assert_fail_closed_process(process, "block")
+
+
+def test_claude_adapter_denies_conflicting_runtime_env_fail_closed(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    config = project / ".fable-lite" / "config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        json.dumps({"schema_version": 1, "supervision": True}),
+        encoding="utf-8",
+    )
+    environment = _conflicting_design_environment()
+    environment["CLAUDE_PROJECT_DIR"] = str(project)
+    environment["CLAUDE_PLUGIN_DATA"] = str(tmp_path / "plugin-data")
+    environment.pop("SMTW_TEST_FORCE_ENABLE", None)
+    payload = {
+        "cwd": str(project),
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "build a UI page",
+        "session_id": "runtime-env-conflict",
+    }
+
+    process = subprocess.run(
+        [
+            sys.executable,
+            str(
+                REPO_ROOT
+                / "adapters"
+                / "claude_code"
+                / "user_prompt_submit.py"
+            ),
+        ],
+        input=json.dumps(payload),
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=project,
+        env=environment,
+    )
+
+    _assert_fail_closed_process(process, "block")
+
+
+def test_antigravity_adapter_denies_conflicting_runtime_env_fail_closed(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "cwd": str(tmp_path),
+        "prompt": "build a UI page",
+        "session_id": "runtime-env-conflict",
+    }
+
+    process = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "adapters" / "antigravity" / "oma_hook.py"),
+            "PreInvocation",
+        ],
+        input=json.dumps(payload),
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=tmp_path,
+        env=_conflicting_design_environment(),
+    )
+
+    _assert_fail_closed_process(process, "deny")
+
+
+def test_all_hook_broad_catches_guard_runtime_env_conflicts() -> None:
+    discovered: set[str] = set()
+    for path in (REPO_ROOT / "adapters").rglob("*.py"):
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=relative)
+        main = next(
+            (
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == "main"
+            ),
+            None,
+        )
+        if main is None:
+            continue
+        handlers = [
+            node
+            for node in ast.walk(main)
+            if isinstance(node, ast.ExceptHandler)
+            and isinstance(node.type, ast.Name)
+            and node.type.id == "Exception"
+        ]
+        if not handlers:
+            continue
+        discovered.add(relative)
+        for handler in handlers:
+            segment = ast.get_source_segment(source, handler) or ""
+            assert (
+                "fail_closed_runtime_env" in segment
+                or "runtime_env_fail_closed" in segment
+            ), relative
+
+    assert discovered == set(ENV_GUARDED_HOOKS)
 
 
 @pytest.mark.parametrize("suffix", sorted(RUNTIME_ENV_SUFFIXES))

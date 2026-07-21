@@ -231,6 +231,11 @@ def main() -> int:
             )
         return emit(response(context, {}))
     except Exception as exc:  # noqa: BLE001
+        denied = _bootstrap_module.fail_closed_runtime_env(
+            "PreToolUse", exc, context
+        )
+        if denied is not None:
+            return denied
         return fail_open(str(exc), context)
 
 

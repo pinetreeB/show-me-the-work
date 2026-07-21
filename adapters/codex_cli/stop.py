@@ -108,6 +108,7 @@ def _run_process_reaper(repo_root: Path, project_root: str) -> None:
 
 
 def main() -> int:
+    runtime_env_fail_closed = None
     try:
         root = Path(__file__).resolve().parents[2]
         if str(root) not in sys.path:
@@ -115,6 +116,7 @@ def main() -> int:
         from adapters.codex_cli.common import (
             canonical_invocation,
             emit,
+            fail_closed_runtime_env as runtime_env_fail_closed,
             last_assistant_text,
             project_root,
             read_payload,
@@ -145,6 +147,10 @@ def main() -> int:
         _run_process_reaper(root, project_root_value)
         return emit({"systemMessage": message})
     except Exception as exc:  # noqa: BLE001  # noqa: BROAD_EXCEPT_OK
+        if runtime_env_fail_closed is not None:
+            denied = runtime_env_fail_closed(exc)
+            if denied is not None:
+                return denied
         return _fail_open(str(exc))
 
 
