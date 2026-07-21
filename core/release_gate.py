@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Final
 
 from .ledger_schema import JsonObject, JsonValue
 
 DEFAULT_RECEIPTS_DIR: Final = Path(__file__).resolve().parent / "release_receipts"
+AUTO_MIGRATION_ENV: Final = "FABLE_LITE_AUTO_MIGRATION"
 
 
 def auto_migration_enabled(receipts_dir: Path | None = None) -> bool:
+    if os.environ.get(AUTO_MIGRATION_ENV) != "1":
+        return False
     directory = DEFAULT_RECEIPTS_DIR if receipts_dir is None else receipts_dir
     return _provenance_green(_load(directory / "provenance-latest.json")) and _benchmark_green(
         _load(directory / "bench-latest.json")
