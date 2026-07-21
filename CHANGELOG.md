@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — v2.4 stabilization (no new gate semantics)
+## [2.4.0] - 2026-07-21 — stabilization (no new gate semantics)
 
 Stabilization sweep closing the external audit (`docs/reviews/2026-07-20-sol-stabilization-handoff.md`, P0/P1/P2) plus real-world multi-agent friction. Each item shipped regression-first with adversarial (agy) P4 review; full review-debt closure in `docs/reviews/2026-07-21-v24-review-debt-closure.md` (13/13 FIXED or ALREADY_FIXED).
 
@@ -33,8 +33,6 @@ Stabilization sweep closing the external audit (`docs/reviews/2026-07-20-sol-sta
 - Reconciled `COMPLETE_WITH_EXCLUSIONS` PostTool observations by replaying trustworthy turn deltas in memory while filtering every excluded path under the result snapshot's canonical case policy. Excluded peer changes are never attributed to the caller; non-excluded observer contention remains visible.
 - Stopped deterministic probe runs from dirtying tracked files. `eval/results/` is ignored and CI writes probe receipts to runner temporary storage.
 - Made benchmark RSS accounting phase-local. Timing samples no longer reuse the process-lifetime high-water mark, and the dedicated memory probe polls current RSS during each action so earlier benchmark phases cannot create false SLO failures.
-- Fixed `scorecard --view coordination` reporting `first_observed_at`/`last_observed_at` from journal append order instead of event timestamps, which could show `last_observed_at` earlier than `first_observed_at` when coordination events are appended out of chronological order (retried/delayed outbox drains). Bounds are now the true `min`/`max` of `occurred_at` across each group.
-- Removed the committed `uv.lock`: it was not part of the documented install/CI workflow (plain `pip`/`python -m pytest`, no CI step reads it) and had drifted to a stale pinned package version. `uv.lock` is now git-ignored, and both `scripts/sync_version.py --check` and `tests/test_release_hygiene.py` fail if one is committed again, so this decision cannot silently regress.
 
 ### Changed
 
@@ -46,7 +44,6 @@ Stabilization sweep closing the external audit (`docs/reviews/2026-07-20-sol-sta
 - A tombstone-free stale turn written by a pre-upgrade version cannot always be distinguished from a live child turn.
 - Coordination payloads are count-bounded but have no per-entry byte ceiling; bootstrap timestamp validation is conservative at delivery time, and the journal/parser and ledger validators duplicate part of the schema contract.
 - `PEER_EXCLUSION` coordination audit, stronger peer-exclusion lease policy, and durable ledger events for cumulative replay remain follow-up work. The W3 replay fix intentionally changes only in-memory attribution; immediate PostTool deltas remain durably recorded as before.
-- REL-01's git-tag-matches-version and clean-wheel-install checks already ran in `.github/workflows/release-quality.yml` before this change and were left as-is; `test_all_release_version_surfaces_are_synchronized` only covers the offline, file-based version surfaces plus the uv.lock policy. A `smtw`/`fable-lite --version` output command remains PKG-01 follow-up work, not part of this fix.
 
 ## [2.3.0] - 2026-07-19
 
