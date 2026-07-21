@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+Merged after the `v2.4.0` tag; not part of a tagged release yet.
+
+### Fixed
+
+- **Invocation status hardening (B5)**: `invocations.status` is required again at the v2 schema boundary. Explicitly opted-in status backfill (`FABLE_LITE_AUTO_MIGRATION=1`) closes only omissions proven older than the invocation lease and preserves recent, fully evidenced peer windows as `open`; unclassifiable rows remain unchanged/degraded. Immutable archive and atomic validation remain intact, and ON-but-failing migration emits stage/detail diagnostics instead of looking identical to OFF mode.
+- **Release-gate separation**: `auto_migration_enabled()` (ledger v1→v2 schema migration, unlocked in v2.0.0) is receipts-gated and env-independent again, so a clean wheel keeps schema migration on (fixes a wheel-smoke `assert auto_migration_enabled()` regression). The opt-in invocation-status backfill moved to a distinct `status_backfill_enabled()` gate.
+
 ## [2.4.0] - 2026-07-21 — stabilization (no new gate semantics)
 
 Stabilization sweep closing the external audit (`docs/reviews/2026-07-20-sol-stabilization-handoff.md`, P0/P1/P2) plus real-world multi-agent friction. Each item shipped regression-first with adversarial (agy) P4 review; full review-debt closure in `docs/reviews/2026-07-21-v24-review-debt-closure.md` (13/13 FIXED or ALREADY_FIXED).
@@ -16,7 +25,6 @@ Stabilization sweep closing the external audit (`docs/reviews/2026-07-20-sol-sta
 - **HINT-01**: inline Python write-friction detects `Path.rename/replace` destinations and `open` update/binary write modes while leaving read forms unflagged.
 - **NEW-02**: `parse_unable_*` fail-closed reasons are mapped in `R2_COORDINATION_REASON_MAP`, so dynamic-command denials (e.g. PowerShell `$var` idioms) are labeled accurately instead of `unresolvable_target` — diagnostic only, gate decision unchanged.
 - **Multi-agent goals (B4)**: `goals.py` checkpoints are namespaced per session identity (`goals/<identity>.json`), preventing worker overwrite of the orchestrator's goals; N2 gate checks the active identity; single-identity sessions stay compatible via legacy fallback + on-write migration.
-- **Invocation status hardening (B5)**: `invocations.status` is required again at the v2 schema boundary. Explicitly opted-in auto migration closes only omissions proven older than the invocation lease and preserves recent, fully evidenced peer windows as `open`; unclassifiable rows remain unchanged/degraded. Immutable archive and atomic validation remain intact, and ON-but-failing migration now emits stage/detail diagnostics instead of looking identical to OFF mode.
 
 ### Changed
 
