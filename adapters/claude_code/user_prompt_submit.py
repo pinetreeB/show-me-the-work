@@ -264,6 +264,11 @@ def main() -> int:
         }
         return emit(_user_response(context, body, ledger_corrupt))
     except Exception as exc:  # noqa: BLE001
+        denied = _bootstrap_module.fail_closed_runtime_env(
+            "UserPromptSubmit", exc, context
+        )
+        if denied is not None:
+            return denied
         return fail_open(str(exc), context)
 
 

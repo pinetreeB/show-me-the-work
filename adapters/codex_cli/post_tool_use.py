@@ -13,6 +13,7 @@ def _fail_open(message: str) -> int:
 
 
 def main() -> int:
+    common: dict[str, object] = {}
     try:
         root = Path(__file__).resolve().parents[2]
         if str(root) not in sys.path:
@@ -133,6 +134,11 @@ def main() -> int:
             return common["emit"]({"systemMessage": f"[smtw] provenance: observed {len(paths)} change(s)."})
         return common["emit"]({})
     except Exception as exc:
+        runtime_env_fail_closed = common.get("fail_closed_runtime_env")
+        if callable(runtime_env_fail_closed):
+            denied = runtime_env_fail_closed(exc)
+            if denied is not None:
+                return denied
         return _fail_open(str(exc))
 
 

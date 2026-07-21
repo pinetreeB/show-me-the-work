@@ -66,6 +66,21 @@ def fail_open(message: str) -> int:
     return emit({"systemMessage": f"[smtw] fail-open: {message}"})
 
 
+def fail_closed_runtime_env(error: BaseException) -> int | None:
+    error_type = type(error)
+    if (
+        error_type.__module__ != "core.runtime_env"
+        or error_type.__name__ != "SmtwEnvConflictError"
+    ):
+        return None
+    from core.runtime_env import SmtwEnvConflictError
+
+    if not isinstance(error, SmtwEnvConflictError):
+        return None
+    reason = f"[smtw] runtime environment conflict; denied fail-closed: {error}"
+    return emit({"decision": "block", "reason": reason})
+
+
 def tool_input(payload: Mapping[str, JsonValue]) -> JsonObject:
     return _object(payload.get("tool_input"))
 
