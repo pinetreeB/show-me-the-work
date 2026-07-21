@@ -653,6 +653,75 @@ def evaluate_r2_destructive_gate(
     lookup_path_attribution: Callable[[JsonObject, str], JsonObject | None] = _default_lookup_path_attribution,
     attribution_health: Callable[[JsonObject], JsonObject] = _default_attribution_health,
 ) -> Decision:
+    # 판정 로직 자체는 _decide_r2에 그대로 있다 — 이 래퍼는 block 판정에 한해
+    # quarantine 백업(B1 Q-1~Q-4)을 best-effort로 덧붙일 뿐, decision/
+    # coordination_reason_code는 절대 바꾸지 않는다(백업 성패와 무관).
+    decision = _decide_r2(
+        payload,
+        lookup_path_attribution=lookup_path_attribution,
+        attribution_health=attribution_health,
+    )
+    if decision.get("decision") == "block":
+        decision = _apply_quarantine_backup(payload, decision)
+    return decision
+
+
+def _apply_quarantine_backup(
+    payload: Mapping[str, JsonValue], decision: Decision
+) -> Decision:
+    try:
+        command = payload.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return decision
+        root = payload.get("project_root")
+        root = root if isinstance(root, str) and root else "."
+        reason_code = decision.get("coordination_reason_code")
+        reason_code_text = reason_code if isinstance(reason_code, str) else "unknown"
+
+        from .quarantine import backup_blocked_command
+
+        saved = backup_blocked_command(
+            root,
+            command=command,
+            agent_key=_identity_agent_key(payload),
+            reason_code=reason_code_text,
+            target=_display_targets(command),
+        )
+        if saved is None:
+            return decision
+        existing_reason = decision.get("reason")
+        reason_text = existing_reason if isinstance(existing_reason, str) else ""
+        merged = dict(decision)
+        merged["reason"] = reason_text + _quarantine_note(saved)
+        return merged
+    except Exception:  # noqa: BLE001 - quarantine backup must never affect the deny decision.
+        return decision
+
+
+def _display_targets(command: str) -> str:
+    try:
+        parsed_commands = parse_destructive_commands(command)
+    except Exception:  # noqa: BLE001 - purely informational, never fatal.
+        return ""
+    targets = [target for parsed in parsed_commands for target in parsed.targets]
+    return ", ".join(targets)
+
+
+def _quarantine_note(path: Path) -> str:
+    return (
+        f" 작성하려던 내용은 유실되지 않았으며 `{path}`에 quarantine 보관됐습니다. "
+        "오케스트레이터에게 회수(smtw quarantine show/list)를 요청하세요. / "
+        f"Blocked content preserved in quarantine at {path}; "
+        "ask the orchestrator to review and apply it."
+    )
+
+
+def _decide_r2(
+    payload: Mapping[str, JsonValue],
+    *,
+    lookup_path_attribution: Callable[[JsonObject, str], JsonObject | None] = _default_lookup_path_attribution,
+    attribution_health: Callable[[JsonObject], JsonObject] = _default_attribution_health,
+) -> Decision:
     tool = payload.get("tool_name")
     if tool not in SHELL_TOOLS:
         return _allow("not a shell command")
