@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import json
+import logging
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -44,6 +46,8 @@ def _legacy_status_ledger() -> tuple[JsonObject, JsonObject]:
         "tool:missing-status": {
             "candidate_paths": ["app.py"],
             "legacy_note": "preserve me",
+            "started_seq": 1,
+            "started_at": "2020-01-01T00:00:00+00:00",
         },
         "tool:open": {
             "candidate_paths": ["open.py"],
@@ -126,11 +130,186 @@ def test_backfill_closes_only_missing_status_and_is_idempotent() -> None:
     assert migrated_rows["tool:missing-status"] == {
         "candidate_paths": ["app.py"],
         "legacy_note": "preserve me",
+        "started_seq": 1,
+        "started_at": "2020-01-01T00:00:00+00:00",
         "status": "closed",
     }
     assert migrated_rows["tool:open"] == original_rows["tool:open"]
     assert migrated_rows["tool:closed"] == original_rows["tool:closed"]
     assert validate_v2_ledger(migrated) is migrated
+
+
+def test_backfill_keeps_the_exact_lease_boundary_open_and_closes_only_expired() -> None:
+    # Given: status-less rows immediately inside, on, and beyond the 30-minute lease.
+    observed_at = datetime(2026, 7, 21, 6, 0, tzinfo=UTC)
+    ledger, _turn = _legacy_status_ledger()
+    rows = _turn_invocations(ledger)
+    rows["tool:inside-lease"] = {
+        "candidate_paths": ["inside.py"],
+        "started_seq": 10,
+        "started_at": (observed_at - timedelta(minutes=29, seconds=59)).isoformat(),
+    }
+    rows["tool:lease-boundary"] = {
+        "candidate_paths": ["boundary.py"],
+        "started_seq": 11,
+        "started_at": (observed_at - timedelta(minutes=30)).isoformat(),
+    }
+    rows["tool:expired"] = {
+        "candidate_paths": ["expired.py"],
+        "started_seq": 12,
+        "started_at": (
+            observed_at - timedelta(minutes=30, microseconds=1)
+        ).isoformat(),
+    }
+
+    # When: classification uses the same strict-greater-than expiry as R2.
+    migrated, _changed = migration_module.backfill_invocation_statuses(
+        ledger,
+        observed_at=observed_at,
+    )
+    migrated_rows = _turn_invocations(migrated)
+
+    # Then: only the provably expired row is closed.
+    assert migrated_rows["tool:inside-lease"]["status"] == "open"
+    assert migrated_rows["tool:lease-boundary"]["status"] == "open"
+    assert migrated_rows["tool:expired"]["status"] == "closed"
+
+
+def test_recent_statusless_invocation_stays_open_and_blocks_r2_after_migration(
+    tmp_path: Path,
+) -> None:
+    # Given: a mixed-version peer invocation started five minutes ago without status.
+    ledger, _turn = _legacy_status_ledger()
+    row = _turn_invocations(ledger)["tool:missing-status"]
+    assert isinstance(row, dict)
+    row["started_seq"] = 2
+    row["started_at"] = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    destination = ledger_path(str(tmp_path))
+    destination.parent.mkdir(parents=True)
+    destination.write_text(json.dumps(ledger), encoding="utf-8")
+
+    # When: the real migration runs and R2 evaluates the peer candidate afterward.
+    migrated = migration_module.migrate_v2_invocation_statuses(str(tmp_path))
+    decision = evaluate_r2_destructive_gate(
+        {
+            "project_root": str(tmp_path),
+            "host": "codex_cli",
+            "session_id": "caller",
+            "agent": "codex",
+            "tool_name": "Bash",
+            "command": "rm app.py",
+        }
+    )
+
+    # Then: migration preserves the live window instead of creating a block-to-allow bypass.
+    assert _turn_invocations(migrated)["tool:missing-status"]["status"] == "open"
+    assert decision["decision"] == "block"
+    assert "peer_open_invocation_candidate" in decision["reason"]
+
+
+def test_unprovable_recent_statusless_invocation_stays_degraded_without_rewrite(
+    tmp_path: Path,
+) -> None:
+    # Given: a recent status-less row lacks the sequence required by R2 open proof.
+    ledger, _turn = _legacy_status_ledger()
+    row = _turn_invocations(ledger)["tool:missing-status"]
+    assert isinstance(row, dict)
+    _ = row.pop("started_seq")
+    row["started_at"] = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    destination = ledger_path(str(tmp_path))
+    destination.parent.mkdir(parents=True)
+    original = json.dumps(ledger, ensure_ascii=False).encode("utf-8")
+    destination.write_bytes(original)
+
+    # When: migration cannot prove that persisting open would preserve R2 protection.
+    with pytest.raises(migration_module.LedgerMigrationError, match="classify"):
+        _ = migration_module.migrate_v2_invocation_statuses(str(tmp_path))
+
+    # Then: source stays untouched and the compatibility read remains fail-closed degraded.
+    loaded = load_ledger({"project_root": str(tmp_path)})
+    assert destination.read_bytes() == original
+    assert not destination.with_name(STATUS_ARCHIVE).exists()
+    assert loaded["attribution_degraded"] is True
+    assert _turn_invocations(loaded)["tool:missing-status"]["status"] == "open"
+
+
+def test_auto_migration_failure_logs_stage_and_detail_without_raising(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Given: migration is opted in but an immutable archive conflict makes it fail.
+    destination, original = _write_legacy_status_ledger(tmp_path)
+    destination.with_name(STATUS_ARCHIVE).write_bytes(b"conflicting archive")
+    payload = {
+        "project_root": str(tmp_path),
+        "event": "scope_warning",
+        "message": "migration failure must stay observable",
+    }
+
+    # When: the ordinary event path encounters the real migration error.
+    with (
+        patch("core.ledger.auto_migration_enabled", return_value=True),
+        caplog.at_level(logging.WARNING, logger="core.ledger"),
+    ):
+        result = record_event(payload)
+
+    # Then: the session remains alive/degraded and operators can distinguish ON failure.
+    assert result["attribution_degraded"] is True
+    assert destination.read_bytes() == original
+    assert "automatic ledger migration failed" in caplog.text
+    assert "stage=archive" in caplog.text
+    assert "existing archive differs from ledger.json" in caplog.text
+
+
+def test_auto_migration_off_has_no_failure_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Given: the same legacy shape with automatic migration deliberately disabled.
+    destination, original = _write_legacy_status_ledger(tmp_path)
+
+    # When: the normal event path runs in OFF mode.
+    with (
+        patch("core.ledger.auto_migration_enabled", return_value=False),
+        caplog.at_level(logging.WARNING, logger="core.ledger"),
+    ):
+        result = record_event(
+            {
+                "project_root": str(tmp_path),
+                "event": "scope_warning",
+                "message": "migration intentionally disabled",
+            }
+        )
+
+    # Then: it remains degraded without falsely reporting a migration failure.
+    assert result["attribution_degraded"] is True
+    assert destination.read_bytes() == original
+    assert "automatic ledger migration failed" not in caplog.text
+
+
+def test_migration_failure_logger_cannot_break_hook_fail_open(
+    tmp_path: Path,
+) -> None:
+    # Given: both migration and its best-effort diagnostic sink fail.
+    destination, original = _write_legacy_status_ledger(tmp_path)
+    destination.with_name(STATUS_ARCHIVE).write_bytes(b"conflicting archive")
+
+    # When: the normal event path catches the real migration error.
+    with (
+        patch("core.ledger.auto_migration_enabled", return_value=True),
+        patch("core.ledger.LOGGER.warning", side_effect=RuntimeError("log sink down")),
+    ):
+        result = record_event(
+            {
+                "project_root": str(tmp_path),
+                "event": "scope_warning",
+                "message": "diagnostics must not kill the session",
+            }
+        )
+
+    # Then: fail-open behavior and original bytes survive the diagnostic failure.
+    assert result["attribution_degraded"] is True
+    assert destination.read_bytes() == original
 
 
 def test_auto_migration_off_preserves_legacy_bytes_and_degrades_fail_closed(
