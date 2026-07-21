@@ -52,16 +52,13 @@ def _run_process_reaper(repo_root: Path, project_root: str) -> None:
         not in REAPER_TRUE_VALUES
     ):
         return
-    log_path = Path(
-        os.environ.get(
-            REAPER_LOG_ENV,
-            str(
-                Path(project_root).resolve()
-                / ".fable-lite"
-                / "codex-process-reaper.log"
-            ),
-        )
-    )
+    configured_log = os.environ.get(REAPER_LOG_ENV)
+    if configured_log is not None:
+        log_path = Path(configured_log)
+    else:
+        from core.state_layout import state_dir
+
+        log_path = state_dir(project_root) / "codex-process-reaper.log"
     env = os.environ.copy()
     env[REAPER_LOG_ENV] = str(log_path)
     try:

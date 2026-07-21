@@ -63,7 +63,7 @@ def test_agent_log_uses_extracted_primitive_without_changing_live_paths(
     assert agent_log._owned_lock is file_lock._owned_lock
     assert agent_log._stale_record is file_lock._stale_record
     assert agent_log.agent_log_path(str(tmp_path), "codex") == (
-        tmp_path.resolve() / ".fable-lite" / "agents" / "codex.jsonl"
+        tmp_path.resolve() / ".smtw" / "agents" / "codex.jsonl"
     )
 
 

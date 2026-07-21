@@ -27,6 +27,7 @@ from core.state_layout import (
     inspect_state_layout,
     inspect_state_layout_details,
     is_protected_state_name,
+    validate_published_marker,
 )
 
 
@@ -79,7 +80,7 @@ def test_layout_inspection_and_live_state_facade_have_no_write_side_effect(
 ) -> None:
     root = tmp_path / "not-created"
 
-    assert live_state_dir(str(root)) == root.resolve() / LEGACY_STATE_DIR_NAME
+    assert live_state_dir(str(root)) == root.resolve() / STATE_DIR_NAME
     assert inspect_state_layout(root) is StateLayout.EMPTY
     assert root.exists() is False
 
@@ -98,6 +99,9 @@ def test_layout_inspector_classifies_legacy_native_and_migrating(
     assert inspect_state_layout(legacy_root) is StateLayout.LEGACY
     assert inspect_state_layout(native_root) is StateLayout.NATIVE
     assert inspect_state_layout(migrating_root) is StateLayout.MIGRATING
+    assert live_state_dir(str(legacy_root)) == legacy_root / LEGACY_STATE_DIR_NAME
+    assert live_state_dir(str(native_root)) == native_root / STATE_DIR_NAME
+    assert live_state_dir(str(migrating_root)) == migrating_root / LEGACY_STATE_DIR_NAME
 
 
 def test_markerless_target_and_legacy_are_a_conflict(tmp_path: Path) -> None:
@@ -122,9 +126,34 @@ def test_valid_published_target_is_authoritative_even_with_legacy_and_orphan_sta
     (tmp_path / f"{MIGRATION_STAGING_PREFIX}999-orphan").mkdir()
 
     assert inspect_state_layout(tmp_path) is StateLayout.MIGRATED
+    assert live_state_dir(str(tmp_path)) == target
+
+    (target / "runtime-write.json").write_text("runtime", encoding="utf-8")
+    (legacy / "late-v2-write.json").write_text("legacy", encoding="utf-8")
+
+    assert inspect_state_layout(tmp_path) is StateLayout.MIGRATED
+    assert live_state_dir(str(tmp_path)) == target
 
 
-def test_tampered_or_malformed_published_target_is_a_conflict(tmp_path: Path) -> None:
+def test_published_target_stays_authoritative_when_legacy_residue_is_damaged(
+    tmp_path: Path,
+) -> None:
+    legacy = tmp_path / LEGACY_STATE_DIR_NAME
+    target = tmp_path / STATE_DIR_NAME
+    legacy.mkdir()
+    target.mkdir()
+    (target / "ledger.json").write_text("{}", encoding="utf-8")
+    _write_published_marker(target, legacy)
+    legacy.rmdir()
+    legacy.write_text("damaged rollback source", encoding="utf-8")
+
+    assert inspect_state_layout(tmp_path) is StateLayout.MIGRATED
+    assert live_state_dir(str(tmp_path)) == target
+
+
+def test_pristine_validation_detects_target_change_but_authority_remains_published(
+    tmp_path: Path,
+) -> None:
     legacy = tmp_path / LEGACY_STATE_DIR_NAME
     target = tmp_path / STATE_DIR_NAME
     legacy.mkdir()
@@ -134,11 +163,31 @@ def test_tampered_or_malformed_published_target_is_a_conflict(tmp_path: Path) ->
     _write_published_marker(target, legacy)
     ledger.write_text("after", encoding="utf-8")
 
-    assert inspect_state_layout(tmp_path) is StateLayout.CONFLICT
+    assert validate_published_marker(target)[0] is False
+    assert inspect_state_layout(tmp_path) is StateLayout.MIGRATED
 
-    ledger.write_text("before", encoding="utf-8")
+
+def test_malformed_published_marker_is_a_conflict(tmp_path: Path) -> None:
+    legacy = tmp_path / LEGACY_STATE_DIR_NAME
+    target = tmp_path / STATE_DIR_NAME
+    legacy.mkdir()
+    target.mkdir()
+    (target / "ledger.json").write_text("before", encoding="utf-8")
+    _write_published_marker(target, legacy)
+
     (target / MIGRATION_MARKER_NAME).write_text("not-json", encoding="utf-8")
     assert inspect_state_layout(tmp_path) is StateLayout.CONFLICT
+    with pytest.raises(StateLayoutError, match="no single authority"):
+        live_state_dir(str(tmp_path))
+
+
+def test_staging_without_legacy_source_is_a_conflict(tmp_path: Path) -> None:
+    (tmp_path / f"{MIGRATION_STAGING_PREFIX}123-orphan").mkdir()
+
+    inspection = inspect_state_layout_details(tmp_path)
+
+    assert inspection.layout is StateLayout.CONFLICT
+    assert "no authoritative legacy source" in inspection.reason
 
 
 def test_non_directory_layout_path_is_a_conflict(tmp_path: Path) -> None:

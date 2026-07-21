@@ -262,7 +262,7 @@ def _peer_change_event_matches(
     audit_path = agent_log_path(root, peer_agent).resolve()
     if audit_path.name != f"{peer_agent}.jsonl":
         return False
-    audit_root = Path(root).resolve() / ".fable-lite" / "agents"
+    audit_root = audit_path.parent
     try:
         _ = audit_path.relative_to(audit_root.resolve())
     except (OSError, ValueError):

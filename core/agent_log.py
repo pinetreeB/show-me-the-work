@@ -13,7 +13,7 @@ import time
 
 from . import file_lock as _file_lock
 from .ledger_schema import JsonObject, JsonValue
-from .state_layout import legacy_state_dir
+from .state_layout import state_dir
 
 LOCK_WAIT_SECONDS = 15.0
 STALE_LOCK_SECONDS = _file_lock.STALE_LOCK_SECONDS
@@ -59,7 +59,7 @@ def _safe_agent_name(agent: str) -> str:
 
 
 def agent_log_path(project_root: str, agent: str) -> Path:
-    return legacy_state_dir(project_root) / "agents" / f"{_safe_agent_name(agent)}.jsonl"
+    return state_dir(project_root) / "agents" / f"{_safe_agent_name(agent)}.jsonl"
 
 
 @contextmanager
@@ -71,7 +71,7 @@ def ledger_transaction(
 ) -> Iterator[_LedgerTransaction]:
     """Hold the root ledger lock; zero wait makes one immediate acquire attempt."""
     root = Path(project_root).resolve()
-    directory = legacy_state_dir(root)
+    directory = state_dir(root)
     directory.mkdir(parents=True, exist_ok=True)
     lock_path = directory / "ledger.lock"
     wait_seconds = (

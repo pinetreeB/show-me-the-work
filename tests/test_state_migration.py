@@ -123,7 +123,7 @@ def test_migrate_copy_verifies_publishes_preserves_source_and_is_idempotent(
     assert (target / "config.json").exists() is False
     assert (target / "ledger.guard").exists() is False
     assert (target / "abandoned.tmp").exists() is False
-    assert live_state_dir(str(tmp_path)) == source
+    assert live_state_dir(str(tmp_path)) == target
     assert assess_rollback(tmp_path) is RollbackSafety.SAFE_UNCHANGED
     assert (tmp_path / MIGRATION_RECEIPT_NAME).is_file()
     marker_before = (target / MIGRATION_MARKER_NAME).read_bytes()

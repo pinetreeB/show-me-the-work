@@ -23,6 +23,7 @@ from core.destructive_guard import (
     evaluate_r2_destructive_gate,
 )
 from core.ledger import enqueue_coordination_event, load_ledger, record_event, save_ledger
+from core.ledger_storage import ledger_path
 from core.ledger_schema import LedgerSchemaError, validate_v2_ledger
 from core.ledger_v1 import default_ledger
 from core.ledger_v2 import default_v2_ledger
@@ -43,6 +44,7 @@ from core.scorecard_coordination import (
     stable_coordination_event_id,
     try_record_coordination_event,
 )
+from core.state_layout import state_dir
 from fable_lite.scorecard import run_scorecard
 
 
@@ -738,7 +740,7 @@ def test_malformed_persisted_outbox_is_sanitized_fail_open(tmp_path: Path) -> No
         "event-malformed-outbox": malformed,
         valid.event_id: coordination_event_json(valid),
     }
-    path = tmp_path / ".fable-lite" / "ledger.json"
+    path = ledger_path(str(tmp_path))
     path.parent.mkdir(parents=True)
     _ = path.write_text(json.dumps(ledger), encoding="utf-8")
 
@@ -768,7 +770,7 @@ def test_malformed_enqueue_is_rejected_and_persists_degraded(tmp_path: Path) -> 
     accepted = enqueue_coordination_event(str(tmp_path), malformed)
 
     assert accepted is False
-    path = tmp_path / ".fable-lite" / "ledger.json"
+    path = ledger_path(str(tmp_path))
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert validate_v2_ledger(persisted) is persisted
     assert persisted["coordination_outbox"] == {}
@@ -795,7 +797,7 @@ def test_malformed_bootstrap_coordination_metadata_is_sanitized_fail_open(
     value: object,
 ) -> None:
     _ = record_event(_missing_bootstrap_payload(tmp_path))
-    path = tmp_path / ".fable-lite" / "ledger.json"
+    path = ledger_path(str(tmp_path))
     raw = json.loads(path.read_text(encoding="utf-8"))
     turn = next(iter(raw["active_turns"].values()))
     turn[field] = value
@@ -1130,7 +1132,7 @@ def test_r2_deny_response_does_not_wait_to_retry_lock_release(
         False,
         "",
     )
-    lock_path = tmp_path / ".fable-lite" / "ledger.lock"
+    lock_path = state_dir(tmp_path) / "ledger.lock"
     try:
         with patch("core.agent_log._unlink_matching_record", return_value=False):
             started = time.perf_counter()

@@ -32,6 +32,12 @@ from .scorecard_store import (
     record_gate_transition_locked,
     unresolved_block_ids,
 )
+from .state_layout import (
+    LEGACY_STATE_DIR_NAME,
+    RUNTIME_STATE_DIR_NAMES,
+    STATE_DIR_NAME,
+    StateLayoutError,
+)
 
 Decision: TypeAlias = dict[str, JsonValue]
 
@@ -140,14 +146,23 @@ def _command(payload: Mapping[str, JsonValue]) -> str:
 
 def _is_contract_authoring(path: str, payload: Mapping[str, JsonValue]) -> bool:
     normalized = path.replace("\\", "/")
-    if normalized.endswith(".fable-lite/contract.json"):
-        return True
+    root = _project_root(payload)
+    try:
+        if normalized.endswith(_selected_state_suffix(root, "contract.json")):
+            return True
+    except StateLayoutError:
+        return False
     if not _is_exact_identity(payload):
         return False
     agent_key = _identity_agent_key(payload)
-    root = _project_root(payload)
     namespaced = str(namespaced_contract_path(root, agent_key)).replace("\\", "/")
-    return normalized.endswith(f".fable-lite/{CONTRACTS_DIRNAME}/{namespaced.rsplit('/', 1)[-1]}")
+    return normalized.endswith(
+        _selected_state_suffix(
+            root,
+            CONTRACTS_DIRNAME,
+            namespaced.rsplit("/", 1)[-1],
+        )
+    )
 
 
 def _targets_state_dir(root: str, raw_path: str) -> bool:
@@ -159,14 +174,27 @@ def _targets_state_dir(root: str, raw_path: str) -> bool:
     candidate = Path(normalized)
     try:
         resolved = candidate.resolve() if candidate.is_absolute() else (Path(root) / candidate).resolve()
-        base = state_dir(root).resolve()
     except OSError:
         return False
+    for name in RUNTIME_STATE_DIR_NAMES:
+        try:
+            _ = resolved.relative_to((Path(root).resolve() / name).resolve())
+        except (OSError, ValueError):
+            continue
+        return True
+    return False
+
+
+def _selected_state_suffix(root: str, *parts: str) -> str:
+    return "/".join((state_dir(root).name, *parts))
+
+
+def _state_display_path(root: str, *parts: str) -> str:
     try:
-        _ = resolved.relative_to(base)
-    except ValueError:
-        return False
-    return True
+        return _selected_state_suffix(root, *parts)
+    except StateLayoutError:
+        names = f"{STATE_DIR_NAME}|{LEGACY_STATE_DIR_NAME}"
+        return "/".join((names, *parts))
 
 
 def _shell_state_dir_hints(command: str) -> list[str]:
@@ -198,7 +226,7 @@ def evaluate_state_file_friction(payload: Mapping[str, JsonValue]) -> Decision:
     return {
         "decision": "block",
         "reason": (
-            "[smtw] R2-friction: `.fable-lite/**` 상태 파일 직접 변경은 차단됩니다 "
+            f"[smtw] R2-friction: `{_state_display_path(root, '**')}` 상태 파일 직접 변경은 차단됩니다 "
             "(마찰 장치 — 실질 방어는 §6-5 이중 근거 교차 확인). "
             "정식 절차(계약 authoring·검증·오케스트레이터 경유)를 사용하세요. "
             f"target={offending[0]}"
@@ -206,10 +234,16 @@ def evaluate_state_file_friction(payload: Mapping[str, JsonValue]) -> Decision:
     }
 
 
-def _is_goals_authoring(paths: list[str], command: str) -> bool:
+def _is_goals_authoring(root: str, paths: list[str], command: str) -> bool:
     normalized_paths = [path.replace("\\", "/") for path in paths]
-    if any(path.endswith(".fable-lite/goals.json") for path in normalized_paths):
-        return True
+    try:
+        if any(
+            path.endswith(_selected_state_suffix(root, "goals.json"))
+            for path in normalized_paths
+        ):
+            return True
+    except StateLayoutError:
+        pass
     lowered = command.lower()
     return "goals.py" in lowered and " plan" in lowered
 
@@ -386,12 +420,17 @@ def _clean_token(token: str) -> str:
 def evaluate_r1_contract(payload: Mapping[str, JsonValue]) -> Decision:
     if not _high_risk(payload):
         return {"decision": "allow", "message": "not high-risk"}
-    if _valid_contract_for_payload(payload):
+    try:
+        valid_contract = _valid_contract_for_payload(payload)
+    except StateLayoutError:
+        valid_contract = False
+    if valid_contract:
         return {"decision": "allow", "message": "valid high-risk contract found"}
+    contract_display = _state_display_path(_project_root(payload), "contract.json")
     return {
         "decision": "block",
         "reason": (
-            "[smtw] R1: high-risk 수정은 `.fable-lite/contract.json` 계약이 먼저 필요합니다. "
+            f"[smtw] R1: high-risk 수정은 `{contract_display}` 계약이 먼저 필요합니다. "
             "restated_goal, acceptance, evidence를 기록한 뒤 다시 시도하세요. "
             "/ High-risk edits require a valid task contract first."
         ),
@@ -420,7 +459,7 @@ def evaluate_r1_contract_with_scorecard(
             ):
                 _ = save_ledger(payload, ledger)
             return decision
-    except (OSError, TimeoutError):
+    except (OSError, StateLayoutError, TimeoutError):
         return evaluate_r1_contract(payload)
 
 
@@ -479,10 +518,24 @@ def _valid_contract(root: str) -> bool:
 
 
 def _namespaced_contract_suffix(root: str, agent_key: str) -> str:
-    return f".fable-lite/{CONTRACTS_DIRNAME}/{namespaced_contract_path(root, agent_key).name}"
+    return _selected_state_suffix(
+        root,
+        CONTRACTS_DIRNAME,
+        namespaced_contract_path(root, agent_key).name,
+    )
 
 
-def _contract_authored_event_matches(root: str, agent: str, contract_suffix: str, digest: str) -> bool:
+def _legacy_namespaced_contract_suffix(agent_key: str) -> str:
+    filename = f"{_safe_key(agent_key)}-{_identity_hash(agent_key)}.json"
+    return f"{LEGACY_STATE_DIR_NAME}/{CONTRACTS_DIRNAME}/{filename}"
+
+
+def _contract_authored_event_matches(
+    root: str,
+    agent: str,
+    contract_suffixes: Sequence[str],
+    digest: str,
+) -> bool:
     from .agent_log import load_agent_events
 
     events = load_agent_events(root, agent)
@@ -491,7 +544,10 @@ def _contract_authored_event_matches(root: str, agent: str, contract_suffix: str
     for event in reversed(events):
         if event.get("event") != "contract_authored":
             continue
-        if str(event.get("contract_path", "")).replace("\\", "/") != contract_suffix:
+        if (
+            str(event.get("contract_path", "")).replace("\\", "/")
+            not in contract_suffixes
+        ):
             continue
         if event.get("content_digest") == digest:
             return True
@@ -514,8 +570,16 @@ def _valid_contract_for_payload(payload: Mapping[str, JsonValue]) -> bool:
             digest = ""
         # 설계 §6-5: 계약 파일 단독이 아니라 자기 감사 로그의 contract_authored 이벤트와
         # digest가 정합해야 R1이 인정한다 — 타 identity 계약을 복사해도 이벤트가 없어 무익화.
-        suffix = _namespaced_contract_suffix(root, agent_key)
-        if digest and _contract_authored_event_matches(root, agent_name, suffix, digest):
+        suffixes = (
+            _namespaced_contract_suffix(root, agent_key),
+            _legacy_namespaced_contract_suffix(agent_key),
+        )
+        if digest and _contract_authored_event_matches(
+            root,
+            agent_name,
+            suffixes,
+            digest,
+        ):
             return True
     if _single_active_exact_identity(root, agent_key):
         return _valid_contract(root)
@@ -569,9 +633,21 @@ def evaluate_pretool_contract(payload: Mapping[str, JsonValue]) -> Decision:
     if friction["decision"] == "block":
         return friction
 
+    root = _project_root(payload)
+    try:
+        _ = state_dir(root)
+    except StateLayoutError as exc:
+        return {
+            "decision": "block",
+            "reason": (
+                "[smtw] state layout conflict: writes are blocked until one "
+                f"authoritative state tree is restored. detail={exc}"
+            ),
+        }
+
     try:
         recover_checkpoint_gates(payload)
-    except (OSError, TimeoutError):
+    except (OSError, StateLayoutError, TimeoutError):
         pass
 
     paths = _string_list(payload.get("file_paths"))
@@ -581,7 +657,9 @@ def evaluate_pretool_contract(payload: Mapping[str, JsonValue]) -> Decision:
         if intent_result["decision"] == "block":
             return intent_result
 
-    if needs_goals_block(payload) and not _is_goals_authoring(paths, command):
+    if needs_goals_block(payload) and not _is_goals_authoring(
+        root, paths, command
+    ):
         return block_goals_once(payload)
 
     if tool in EDIT_TOOLS and paths and all(_is_contract_authoring(path, payload) for path in paths):

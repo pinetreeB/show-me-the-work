@@ -7,6 +7,8 @@ from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import Final, TypeAlias, override
 
+from .state_layout import LEGACY_STATE_DIR_NAME, PROVENANCE_CONFIG_NAME
+
 JsonInput: TypeAlias = (
     str
     | int
@@ -94,6 +96,9 @@ class ProvenanceConfig:
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
     generated: tuple[str, ...] = ()
+    config_relative_path: str = (
+        f"{LEGACY_STATE_DIR_NAME}/{PROVENANCE_CONFIG_NAME}"
+    )
 
     def is_generated(self, path: str) -> bool:
         return any(fnmatchcase(path, pattern) for pattern in self.generated)

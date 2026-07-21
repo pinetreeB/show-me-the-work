@@ -15,8 +15,10 @@ from .state_layout import (
     MIGRATION_RECEIPT_NAME,
     MIGRATION_RECEIPT_TEMP_PREFIX,
     MIGRATION_STAGING_PREFIX,
+    PROVENANCE_CONFIG_NAME,
     STATE_DIR_NAME,
     is_protected_state_name,
+    state_dir,
 )
 
 HARD_EXCLUDES: Final = (
@@ -61,7 +63,9 @@ SOFT_EXCLUDES: Final = (
 SOFT_EXCLUDE_CHAINS: Final = tuple(
     tuple(pattern.removesuffix("/**").split("/")) for pattern in SOFT_EXCLUDES
 )
-CONFIG_RELATIVE_PATH: Final = ".fable-lite/provenance-config.json"
+CONFIG_RELATIVE_PATH: Final = (
+    f"{LEGACY_STATE_DIR_NAME}/{PROVENANCE_CONFIG_NAME}"
+)
 PROJECT_PATH_IN_ROOT: Final = "in_root"
 PROJECT_PATH_OUT_OF_ROOT: Final = "out_of_root"
 PROJECT_PATH_UNRESOLVABLE: Final = "unresolvable"
@@ -116,11 +120,12 @@ def canonicalize_project_path(
 
 
 def load_provenance_config(root: Path) -> ProvenanceConfig:
-    config_path = root / CONFIG_RELATIVE_PATH
+    relative_path = provenance_config_relative_path(root)
+    config_path = root.resolve() / relative_path
     try:
         raw_text = config_path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return ProvenanceConfig()
+        return ProvenanceConfig(config_relative_path=relative_path)
     except OSError as exc:
         raise ProvenanceConfigError("config", f"cannot read: {exc.strerror or exc}") from exc
     try:
@@ -136,12 +141,17 @@ def load_provenance_config(root: Path) -> ProvenanceConfig:
         include=_patterns(raw.get("include"), "include"),
         exclude=_patterns(raw.get("exclude"), "exclude"),
         generated=_patterns(raw.get("generated"), "generated"),
+        config_relative_path=relative_path,
     )
+
+
+def provenance_config_relative_path(root: str | Path) -> str:
+    return f"{state_dir(root).name}/{PROVENANCE_CONFIG_NAME}"
 
 
 @lru_cache(maxsize=262_144)
 def is_path_in_scope(path: str, config: ProvenanceConfig) -> bool:
-    if path == CONFIG_RELATIVE_PATH:
+    if path == _config_relative_path(config):
         return True
     if is_hard_excluded(path):
         return False
@@ -154,7 +164,7 @@ def is_path_in_scope(path: str, config: ProvenanceConfig) -> bool:
 
 def is_user_config_excluded(path: str, config: ProvenanceConfig) -> bool:
     return (
-        path != CONFIG_RELATIVE_PATH
+        path != _config_relative_path(config)
         and not is_hard_excluded(path)
         and not _matches_any(path, config.include)
         and _matches_any(path, config.exclude)
@@ -172,7 +182,7 @@ def is_harness_state_path(path: str) -> bool:
 
 @lru_cache(maxsize=65_536)
 def should_descend(path: str, config: ProvenanceConfig) -> bool:
-    if path == CONFIG_RELATIVE_PATH.partition("/")[0]:
+    if path == _config_relative_path(config).partition("/")[0]:
         return True
     if is_hard_excluded(path):
         return False
@@ -197,6 +207,10 @@ def _patterns(value: JsonValue | None, field: str) -> tuple[str, ...]:
             raise ProvenanceConfigError(f"{field}[{index}]", "must be root-relative")
         patterns.append(normalized)
     return tuple(patterns)
+
+
+def _config_relative_path(config: ProvenanceConfig) -> str:
+    return config.config_relative_path or CONFIG_RELATIVE_PATH
 
 
 def _matches_any(path: str, patterns: tuple[str, ...]) -> bool:

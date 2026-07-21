@@ -13,6 +13,7 @@ from core.ledger import (
     load_ledger,
     save_ledger,
 )
+from core.ledger_storage import ledger_path
 from core.ledger_event_schema import (
     deserialize_v2_event,
     serialize_v2_event,
@@ -170,7 +171,7 @@ def test_save_ledger_rejects_invalid_v2_shape_before_writing(tmp_path: Path) -> 
         assert "ledger.active_turns" in str(exc)
     else:
         raise AssertionError("expected malformed v2 ledger to be rejected")
-    assert not (tmp_path / ".fable-lite" / "ledger.json").exists()
+    assert not ledger_path(str(tmp_path)).exists()
 
 
 def test_load_ledger_reads_v1_fixture_without_writing_or_migrating(tmp_path: Path) -> None:
@@ -218,7 +219,7 @@ def test_save_ledger_keeps_existing_destination_when_atomic_replace_fails(tmp_pa
 
 def test_save_ledger_retries_one_transient_atomic_replace_failure(tmp_path: Path) -> None:
     # Given: Windows denies the first atomic replacement but accepts the next attempt.
-    destination = tmp_path / ".fable-lite" / "ledger.json"
+    destination = ledger_path(str(tmp_path))
     real_replace = ledger_module.os.replace
     attempts = 0
 

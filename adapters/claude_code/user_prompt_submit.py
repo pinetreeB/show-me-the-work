@@ -98,7 +98,9 @@ def _score(value: object) -> int:
 
 
 def _ledger_is_corrupt(root: Path) -> bool:
-    path = root / ".fable-lite" / "ledger.json"
+    from core.ledger_storage import ledger_path
+
+    path = ledger_path(str(root))
     try:
         raw: object = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -171,10 +173,10 @@ def main() -> int:
             return emit(response(context, {}))
         if context.root is None:
             return emit(response(context, {}))
-        ledger_corrupt = _ledger_is_corrupt(context.root)
         repo_root = Path(__file__).resolve().parents[2]
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
+        ledger_corrupt = _ledger_is_corrupt(context.root)
         from adapters.claude_code.common import canonical_invocation
         from adapters.intent_command import intent_set_command
         from core.ambiguity import evaluate_ambiguity

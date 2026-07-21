@@ -21,6 +21,7 @@ from .provenance_types import (
     Snapshot,
     SnapshotExclusion,
 )
+from .state_layout import state_dir
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -48,7 +49,7 @@ class SnapshotStoreError(ValueError):
 
 
 def snapshots_dir(root: Path) -> Path:
-    return root.resolve() / ".fable-lite" / "snapshots"
+    return state_dir(root) / "snapshots"
 
 
 def workspace_current_path(root: Path) -> Path:

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from adapters.codex_cli.install import render_hooks
+from core.ledger_storage import ledger_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +47,7 @@ def list_value(value: JsonValue) -> list[JsonValue]:
 
 
 def read_ledger(root: Path) -> dict[str, JsonValue]:
-    raw = json.loads((root / ".fable-lite" / "ledger.json").read_text(encoding="utf-8"))
+    raw = json.loads(ledger_path(str(root)).read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
     return raw
 

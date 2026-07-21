@@ -9,7 +9,9 @@ from typing import TypeAlias, cast
 from unittest.mock import patch
 
 from core.adapter_observation import CanonicalInvocation, ObservationReport, start_turn
+from core.agent_log import agent_log_path
 from core.ledger import record_event
+from core.ledger_storage import ledger_path
 from core.ledger_schema import JsonObject as LedgerJsonObject
 from core.provenance_types import ProvenanceReason, ProvenanceStatus
 import fable_lite.check as check_module
@@ -177,8 +179,8 @@ def test_check_reports_red_for_unverified_scope_drift_r1_and_missing_sentinel(tm
 def test_record_event_writes_agent_jsonl_without_breaking_legacy_ledger(tmp_path: Path) -> None:
     record_event({"project_root": str(tmp_path), "event": "change", "path": "app.py", "kind": "code", "agent": "codex"})
 
-    ledger = read_json(tmp_path / ".fable-lite" / "ledger.json")
-    agent_log = tmp_path / ".fable-lite" / "agents" / "codex.jsonl"
+    ledger = read_json(ledger_path(str(tmp_path)))
+    agent_log = agent_log_path(str(tmp_path), "codex")
     lines = agent_log.read_text(encoding="utf-8").splitlines()
 
     assert ledger["agent"] == "codex"
