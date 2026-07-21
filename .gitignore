@@ -3,6 +3,10 @@ __pycache__/
 .omx/
 tmp/
 .fable-lite/
+.smtw/
+.smtw.migrating-*/
+.smtw-migration.lock
+.smtw-migration-receipt.json
 build/
 dist/
 *.bak

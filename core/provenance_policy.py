@@ -9,17 +9,37 @@ from collections.abc import Mapping, Sequence
 from typing import Final, TypeAlias
 
 from .provenance_types import ProvenanceConfig, ProvenanceConfigError, ProvenancePathError
+from .state_layout import (
+    LEGACY_STATE_DIR_NAME,
+    MIGRATION_LOCK_NAME,
+    MIGRATION_RECEIPT_NAME,
+    MIGRATION_STAGING_PREFIX,
+    STATE_DIR_NAME,
+    is_protected_state_name,
+)
 
 HARD_EXCLUDES: Final = (
     ".codegraph/**",
     ".git/**",
-    ".fable-lite/**",
+    f"{LEGACY_STATE_DIR_NAME}/**",
+    f"{STATE_DIR_NAME}/**",
+    f"{MIGRATION_STAGING_PREFIX}*/**",
+    MIGRATION_LOCK_NAME,
+    MIGRATION_RECEIPT_NAME,
     ".fablize/**",
     ".hg/**",
     ".svn/**",
 )
 HARD_EXCLUDE_DIRS: Final = frozenset(
-    (".codegraph", ".git", ".fable-lite", ".fablize", ".hg", ".svn")
+    (
+        ".codegraph",
+        ".git",
+        LEGACY_STATE_DIR_NAME,
+        STATE_DIR_NAME,
+        ".fablize",
+        ".hg",
+        ".svn",
+    )
 )
 SOFT_EXCLUDES: Final = (
     "node_modules/**",
@@ -144,7 +164,8 @@ def is_hard_excluded(path: str) -> bool:
 
 
 def is_harness_state_path(path: str) -> bool:
-    return _first_segment(path) in {".codegraph", ".fable-lite", ".fablize"}
+    head = _first_segment(path)
+    return head in {".codegraph", ".fablize"} or is_protected_state_name(head)
 
 
 @lru_cache(maxsize=65_536)

@@ -5,12 +5,14 @@ from pathlib import Path
 import tempfile
 import time
 
+from .state_layout import state_dir as _state_dir
+
 
 REPLACE_RETRY_DELAY_SECONDS = 0.01
 
 
 def state_dir(project_root: str) -> Path:
-    return Path(project_root).resolve() / ".fable-lite"
+    return _state_dir(project_root)
 
 
 def ledger_path(project_root: str) -> Path:
