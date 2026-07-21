@@ -30,15 +30,13 @@ def _prompt(root: Path, session_id: str, text: str) -> JsonObject:
     }
 
 
-@pytest.mark.parametrize("supervision", [None, False, 0, 1, "true", [], {}])
-def test_inactive_config_values_are_quiet_and_project_stateless(
+def test_explicit_false_config_is_quiet_and_project_stateless(
     tmp_path: Path,
-    supervision: JsonValue,
 ) -> None:
-    # Given: a project config whose supervision value is not exact boolean true.
+    # Given: a valid project config that explicitly keeps supervision off.
     root = tmp_path / "project"
     root.mkdir()
-    write_config(root, supervision)
+    write_config(root, False)
     data_dir = tmp_path / "plugin-data"
     harness = HookHarness(root, root, data_dir, profile_imports=True)
 
@@ -53,6 +51,28 @@ def test_inactive_config_values_are_quiet_and_project_stateless(
     assert "core." not in result.stderr
     assert ledger_path(root).exists() is False
     assert data_dir.exists() is False
+
+
+@pytest.mark.parametrize("supervision", [None, 0, 1, "true", [], {}])
+def test_schema_invalid_config_warns_without_importing_shared_core(
+    tmp_path: Path,
+    supervision: JsonValue,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    write_config(root, supervision)
+    data_dir = tmp_path / "plugin-data"
+    harness = HookHarness(root, root, data_dir, profile_imports=True)
+
+    result = harness.run(
+        "user_prompt_submit.py",
+        _prompt(root, "invalid-config", "app.py 수정"),
+    )
+
+    assert "config or session registry is corrupt" in result.stdout
+    assert "adapters.claude_code.common" not in result.stderr
+    assert "core." not in result.stderr
+    assert ledger_path(root).exists() is False
 
 
 def test_absent_config_and_exact_home_are_hard_off(tmp_path: Path) -> None:
