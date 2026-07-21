@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Blocked-artifact quarantine (B1)**: when R2 blocks a destructive command, the command is backed up to `.fable-lite/quarantine/` as a best-effort side effect so a worker's shell-written artifact is not lost — R2's block decision and reason code are unchanged (a backup failure never flips block to allow). `smtw quarantine list/show/clear` lets the orchestrator review and recover; there is no `apply` (auto-apply is out of scope). Backups are traversal-safe (sanitized agent key, three CLI path guards), live inside the R2-protected state dir, and are bounded by count/size/age GC.
+
 ## [2.4.1] - 2026-07-21
 
 ### Fixed
