@@ -10,6 +10,7 @@ from claude_hook_support import (
     registry_path,
     write_config,
 )
+from core.ledger_storage import ledger_path as selected_ledger_path
 
 
 def _prompt(root: Path, session_id: str, prompt_id: str) -> JsonObject:
@@ -36,6 +37,16 @@ def _latch_enabled_project(
     assert "hookSpecificOutput" in result.output
     assert ledger_path(root).exists()
     return read_json(registry_path(data_dir, session_id))
+
+
+def _write_shared_config(root: Path, *, supervision: bool = True) -> Path:
+    path = root / ".smtw.toml"
+    path.write_text(
+        "schema_version = 1\n"
+        f"supervision = {'true' if supervision else 'false'}\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def test_latched_enabled_project_does_not_activate_unconfigured_env_root(
@@ -78,6 +89,53 @@ def test_latched_enabled_project_can_use_separately_opted_in_env_root_if_policy_
 
     assert "hookSpecificOutput" in mismatch.output
     assert ledger_path(project_b).exists()
+    registry = read_json(registry_path(data_dir, session_id))
+    assert registry["root"] == original["root"]
+    assert registry["config_digest"] == original["config_digest"]
+
+
+def test_latched_project_accepts_mismatch_root_with_shared_toml_opt_in(
+    tmp_path: Path,
+) -> None:
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_b.mkdir()
+    _write_shared_config(project_b)
+    data_dir = tmp_path / "plugin-data"
+    session_id = "shared-enabled-mismatch"
+    original = _latch_enabled_project(project_a, data_dir, session_id)
+
+    mismatch = HookHarness(project_b, project_b, data_dir).run(
+        "user_prompt_submit.py",
+        _prompt(project_b, session_id, "prompt-shared-enabled-mismatch-b"),
+    )
+
+    assert "hookSpecificOutput" in mismatch.output
+    assert selected_ledger_path(str(project_b)).exists()
+    registry = read_json(registry_path(data_dir, session_id))
+    assert registry["root"] == original["root"]
+    assert registry["config_digest"] == original["config_digest"]
+
+
+def test_disabled_shared_config_shadows_legacy_on_mismatch_root(
+    tmp_path: Path,
+) -> None:
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_b.mkdir()
+    write_config(project_b)
+    _write_shared_config(project_b, supervision=False)
+    data_dir = tmp_path / "plugin-data"
+    session_id = "shared-disabled-mismatch"
+    original = _latch_enabled_project(project_a, data_dir, session_id)
+
+    mismatch = HookHarness(project_b, project_b, data_dir).run(
+        "user_prompt_submit.py",
+        _prompt(project_b, session_id, "prompt-shared-disabled-mismatch-b"),
+    )
+
+    assert mismatch.output == {}
+    assert ledger_path(project_b).exists() is False
     registry = read_json(registry_path(data_dir, session_id))
     assert registry["root"] == original["root"]
     assert registry["config_digest"] == original["config_digest"]

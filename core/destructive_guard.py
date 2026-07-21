@@ -15,8 +15,7 @@ from .provenance_policy import (
     canonicalize_project_path,
 )
 from .scorecard_coordination import CoordinationReason
-
-_STATE_DIR_NAME: Final[str] = Path(state_dir(".")).name
+from .state_layout import is_protected_state_name
 
 Decision: TypeAlias = dict[str, JsonValue]
 
@@ -540,10 +539,10 @@ def _canonicalize_lexical_target(root: str, target: str) -> str | None:
 
 
 def _is_state_dir_key(canonical: str) -> bool:
-    # provenance/감사 상태 디렉토리(.fable-lite)는 어느 에이전트도 직접 파괴하면 안 된다.
-    # attribution 인덱스에 등재되지 않으므로 소유권 조회로는 안 잡힌다 → 소유권 무관 하드 차단.
+    # Runtime state, its preserved legacy copy, and migration control paths never
+    # enter attribution. Protect all generations lexically and after resolution.
     head = canonical.split("/", 1)[0]
-    return head == canonical_manifest_key(_STATE_DIR_NAME, os.name == "nt")
+    return is_protected_state_name(head)
 
 
 def _has_durable_corrupt_marker(root: str) -> bool:

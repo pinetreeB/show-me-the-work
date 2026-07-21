@@ -8,6 +8,7 @@ import sys
 from core.contract import namespaced_contract_path
 from core.gate_counters import needs_goals_block
 from core.ledger import JsonObject, record_event
+from core.state_layout import state_dir
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +45,7 @@ def _goals_path(root: Path, session_id: str, agent: str) -> Path:
         str(root),
         _agent_key(session_id, agent),
     ).name
-    return root / ".fable-lite" / "goals" / filename
+    return state_dir(root) / "goals" / filename
 
 
 def _seed_turn(root: Path, session_id: str, agent: str) -> JsonObject:
@@ -109,7 +110,7 @@ def test_identity_plans_do_not_overwrite_each_other(tmp_path: Path) -> None:
     assert first_path.read_bytes() == first_bytes
     assert json.loads(first_path.read_text(encoding="utf-8"))["goal"] == "left goal"
     assert json.loads(second_path.read_text(encoding="utf-8"))["goal"] == "worker goal"
-    assert (tmp_path / ".fable-lite" / "goals.json").exists() is False
+    assert (state_dir(tmp_path) / "goals.json").exists() is False
 
     assert _status(tmp_path, "session-a", "codex-a")["goal"] == "left goal"
     assert _status(tmp_path, "session-b", "codex-b")["goal"] == "worker goal"
@@ -133,7 +134,7 @@ def test_n2_ignores_shared_legacy_goal_while_exact_identities_overlap(
 ) -> None:
     _ = _seed_turn(tmp_path, "session-a", "codex-a")
     second = _seed_turn(tmp_path, "session-b", "codex-b")
-    legacy = tmp_path / ".fable-lite" / "goals.json"
+    legacy = state_dir(tmp_path) / "goals.json"
     legacy.write_text('{"goal": "legacy"}\n', encoding="utf-8")
 
     assert needs_goals_block(second) is True
@@ -143,7 +144,7 @@ def test_n2_keeps_legacy_goal_fallback_for_one_active_identity(
     tmp_path: Path,
 ) -> None:
     identity = _seed_turn(tmp_path, "legacy-session", "codex")
-    legacy = tmp_path / ".fable-lite" / "goals.json"
+    legacy = state_dir(tmp_path) / "goals.json"
     legacy.write_text('{"goal": "legacy"}\n', encoding="utf-8")
 
     assert needs_goals_block(identity) is False

@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from core.state_layout import state_dir
+
 
 ROOT = Path(__file__).resolve().parents[1]
 GOALS = ROOT / "goals" / "goals.py"
@@ -49,8 +51,9 @@ def test_goals_cli_creates_and_verifies_checkpoint(tmp_path: Path) -> None:
     data = json.loads(status.stdout)
     assert data["goal"] == "페이지 만들기"
     assert data["stories"][0]["verified"] is True
-    assert (tmp_path / ".fable-lite" / "goals.json").exists()
-    assert b"\r\n" not in (tmp_path / ".fable-lite" / "goals.json").read_bytes()
+    goals_path = state_dir(tmp_path) / "goals.json"
+    assert goals_path.exists()
+    assert b"\r\n" not in goals_path.read_bytes()
 
 
 def test_goals_cli_fail_opens_as_json_on_bad_invocation() -> None:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from importlib import import_module
-import os
 from pathlib import Path
 import sys
 from typing import TYPE_CHECKING
@@ -47,6 +46,7 @@ def main() -> int:
             resolve_active_invocation,
             restart_blocked_turn,
         )
+        from core.runtime_env import SCORECARD, smtw_env
         from core.verify_state import evaluate_stop
 
         root = str(context.root)
@@ -72,7 +72,7 @@ def main() -> int:
                     {"decision": "block", "reason": str(result["reason"])},
                 )
             )
-        if os.environ.get("FABLE_LITE_SCORECARD") == "1":
+        if smtw_env(SCORECARD) == "1":
             message = str(result.get("message", ""))
             scorecard = "\n".join(
                 line
@@ -83,6 +83,9 @@ def main() -> int:
                 return emit(response(context, {"systemMessage": scorecard}))
         return emit(response(context, {}))
     except Exception as exc:  # noqa: BLE001
+        denied = _bootstrap_module.fail_closed_runtime_env("Stop", exc, context)
+        if denied is not None:
+            return denied
         return fail_open(str(exc), context)
 
 

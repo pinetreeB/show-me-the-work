@@ -16,6 +16,7 @@ from core.contract import (  # noqa: E402 - direct-script import needs repo boot
     _single_active_exact_identity,
     namespaced_contract_path,
 )
+from core.state_layout import state_dir  # noqa: E402 - direct-script bootstrap
 
 JsonScalar: TypeAlias = str | bool
 JsonValue: TypeAlias = JsonScalar | list[dict[str, JsonScalar]]
@@ -23,19 +24,15 @@ JsonObject: TypeAlias = dict[str, JsonValue]
 Identity: TypeAlias = Mapping[str, object]
 
 
-def _state_dir(root: str) -> Path:
-    return Path(root).resolve() / ".fable-lite"
-
-
 def _legacy_goals_path(root: str) -> Path:
-    return _state_dir(root) / "goals.json"
+    return state_dir(root) / "goals.json"
 
 
 def namespaced_goals_path(root: str, agent_key: str) -> Path:
     # Keep the contracts/<identity> safe-key + hash convention so Windows-invalid
     # identity characters and safe-key collisions cannot merge two sessions.
     filename = namespaced_contract_path(root, agent_key).name
-    return _state_dir(root) / "goals" / filename
+    return state_dir(root) / "goals" / filename
 
 
 def _goals_path(root: str, identity: Identity | None = None) -> Path:

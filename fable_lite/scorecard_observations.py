@@ -7,6 +7,7 @@ from pathlib import Path
 
 from core.ledger_schema import JsonObject, JsonValue
 from core.scorecard import SessionIdentity
+from core.state_layout import state_dir
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +20,7 @@ def load_observations(root: Path) -> ObservationReplay:
     observations: dict[str, JsonObject] = {}
     complete = True
     try:
-        paths = tuple((root / ".fable-lite" / "agents").glob("*.jsonl"))
+        paths = tuple((state_dir(root) / "agents").glob("*.jsonl"))
     except OSError:
         return ObservationReplay(observations, False)
     for path in paths:

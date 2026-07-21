@@ -12,6 +12,7 @@ from typing import Final
 
 from core.ledger import ledger_path, load_ledger, record_event
 from core.provenance_lifecycle import ProvenanceLifecycle
+from core.provenance_store import snapshots_dir
 
 from .provenance_bench_metrics import MIB, PhaseMeasurement, PhaseStats, SloResult, evaluate_slo, measure, measure_memory, summarize_phase
 from .provenance_bench_models import BenchResult, FileSpec, ScaleResult, ScenarioResult, StressResult
@@ -226,7 +227,7 @@ def _restore(root: Path, specs: tuple[FileSpec, ...]) -> None:
 
 
 def _drop_snapshots(root: Path) -> None:
-    shutil.rmtree(root / ".fable-lite" / "snapshots", ignore_errors=True)
+    shutil.rmtree(snapshots_dir(root), ignore_errors=True)
 
 
 def _ledger_valid(root: Path) -> bool:

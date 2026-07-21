@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from core.ledger import JsonObject, load_ledger, record_event
+from core.ledger_storage import ledger_path
 from core.verification_covers import active_turn
 
 
@@ -182,7 +183,7 @@ def test_new_budget_fields_round_trip_through_json_serialization(tmp_path: Path)
         provenance_budget_breach_path="src/oversized.bin",
     )
 
-    raw = (tmp_path / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")
+    raw = ledger_path(str(tmp_path)).read_text(encoding="utf-8")
     reparsed = json.loads(raw)
     turn = active_turn(reparsed, payload)
 

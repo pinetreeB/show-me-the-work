@@ -6,13 +6,17 @@ from pathlib import Path
 
 from core.intent import IntentInput, clear_intent, load_intent, save_intent
 from core.ledger import load_ledger
+from core.state_layout import STATE_DIR_NAME
 
 
 def add_intent_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     intent = subparsers.add_parser("intent", help="모호한 수정 의도를 기록하거나 조회합니다.")
     intent_subparsers = intent.add_subparsers(dest="intent_command", required=True)
 
-    set_parser = intent_subparsers.add_parser("set", help="확정된 의도를 .fable-lite/intent.json에 저장합니다.")
+    set_parser = intent_subparsers.add_parser(
+        "set",
+        help=f"확정된 의도를 선택된 상태 트리(새 프로젝트: {STATE_DIR_NAME})의 intent.json에 저장합니다.",
+    )
     set_parser.add_argument("--root", default=".")
     set_parser.add_argument("--goal", required=True)
     set_parser.add_argument("--scope", default="")

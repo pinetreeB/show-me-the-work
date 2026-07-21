@@ -15,6 +15,15 @@ from typing import TypeAlias
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTERS = ROOT / "adapters" / "claude_code"
 DEFAULT_OUTPUT = ROOT / "eval" / "results" / "probes-latest.json"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.ledger_storage import ledger_path  # noqa: E402
+from core.state_layout import (  # noqa: E402
+    RUNTIME_STATE_DIR_NAMES,
+    STATE_DIR_NAME,
+    state_dir,
+)
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -145,8 +154,12 @@ def _run_pytest(paths: list[str]) -> JsonObject:
 
 
 def _ledger(root: Path) -> JsonObject:
-    path = root / ".fable-lite" / "ledger.json"
+    path = ledger_path(str(root))
     return _parse_json(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def _project_state_exists(root: Path) -> bool:
+    return any((root / name).exists() for name in RUNTIME_STATE_DIR_NAMES)
 
 
 def _decision(hook: JsonObject) -> str:
@@ -250,7 +263,17 @@ def _prb08() -> ProbeCheck:
 
 def _prb09() -> ProbeCheck:
     with _project() as root:
-        _write(root / ".fable-lite" / "contract.json", json.dumps({"restated_goal": "DB migrate", "acceptance": ["tables updated"], "evidence": ["assumed pass"]}, ensure_ascii=False))
+        _write(
+            state_dir(root) / "contract.json",
+            json.dumps(
+                {
+                    "restated_goal": "DB migrate",
+                    "acceptance": ["tables updated"],
+                    "evidence": ["assumed pass"],
+                },
+                ensure_ascii=False,
+            ),
+        )
         pre = _run_hook("pre_tool_use.py", {"cwd": str(root), "tool_name": "Edit", "tool_input": {"file_path": "migrations/002.sql", "new_string": "DROP TABLE users;"}})
         return _permission_decision(pre) == "deny", {"pre": _object(pre.get("json"))}
 
@@ -263,12 +286,12 @@ def _prb10() -> ProbeCheck:
         passed = (
             all(result.get("returncode") == 0 for result in observed.values())
             and sum(message.startswith("[smtw] health: fail-open") for message in messages) == 1
-            and not (root / ".fable-lite").exists()
+            and not _project_state_exists(root)
         )
         return passed, _json_object({
             **observed,
             "visible_warning_count": sum(bool(message) for message in messages),
-            "project_state_exists": (root / ".fable-lite").exists(),
+            "project_state_exists": _project_state_exists(root),
         })
 
 
@@ -324,7 +347,8 @@ def _prb17() -> ProbeCheck:
         _run_hook("post_tool_use.py", {"cwd": str(root), "tool_name": "Edit", "tool_input": {"file_path": "app.py"}, "tool_response": {"filePath": "app.py", "success": True}})
         files = [path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()]
         state_files = [path for path in files if path.endswith(("ledger.json", "goals.json", "contract.json"))]
-        passed = bool(state_files) and all(path.startswith(".fable-lite/") for path in state_files)
+        prefix = f"{state_dir(root).name}/"
+        passed = bool(state_files) and all(path.startswith(prefix) for path in state_files)
         return passed, _json_object({"state_files": state_files, "all_files": files})
 
 
@@ -360,7 +384,7 @@ def _prb19() -> ProbeCheck:
             )
             for script, payload in scripts.items()
         }
-        project_state = (root / ".fable-lite").exists()
+        project_state = _project_state_exists(root)
         plugin_state = (root.parent / "plugin-data").exists()
         passed = all(_object(result.get("json")) == {} for result in observed.values())
         return passed and not project_state and not plugin_state, _json_object({
@@ -436,7 +460,7 @@ def build_results() -> list[JsonObject]:
         _auto("PRB-14", "N1 최소 마커 계약", _prb14()),
         _auto("PRB-15", "N1 훅 연결", _prb15()),
         _auto("PRB-16", "Stop 2회 상한", _prb16()),
-        _auto("PRB-17", ".fable-lite 단일 상태 디렉토리", _prb17()),
+        _auto("PRB-17", f"{STATE_DIR_NAME} 단일 상태 디렉토리", _prb17()),
         _auto("PRB-18", "AC10 언어 표면 스캔", _prb18()),
         _auto("PRB-19", "v2.2 비활성 무음·무상태", _prb19()),
         _auto("PRB-20", "v2.2 quick mutation 승격", _prb20()),

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-import os
 from typing import TypeAlias
 
 from .agent_log import append_agent_event, ledger_transaction
@@ -33,11 +32,17 @@ from .provenance_types import (
     normalize_budget_breach_path,
     normalize_budget_top_paths,
 )
+from .state_layout import (
+    LEGACY_STATE_DIR_NAME,
+    PROVENANCE_CONFIG_NAME,
+    state_dir,
+)
+from .runtime_env import SCORECARD, canonical_env_key, smtw_env
 
 Decision: TypeAlias = dict[str, JsonValue]
 
 MAX_STOP_BLOCKS = 2
-SCORECARD_ENV = "FABLE_LITE_SCORECARD"
+SCORECARD_ENV = canonical_env_key(SCORECARD)
 
 
 def _as_str_list(value: JsonValue | None) -> list[str]:
@@ -227,17 +232,21 @@ def _record_stop_block(
 
 
 _CONFIG_GUIDE = (
-    ".fable-lite/provenance-config.json 에 exclude 패턴을 추가한 뒤 저장하세요 "
+    f"{LEGACY_STATE_DIR_NAME}/{PROVENANCE_CONFIG_NAME} 에 exclude 패턴을 추가한 뒤 저장하세요 "
     "(저장 후 다음 턴부터 반영됩니다). "
     "예: {\"version\": 1, \"exclude\": [\"path/to/heavy/dir/**\"]} "
     "⚠️ 빌드·캐시·데이터 산출물만 제외하세요 — 소스 디렉토리(src/, app/ 등)를 제외하면 "
     "이후 그 안의 변조가 관측되지 않습니다. "
-    "/ Add an exclude pattern to .fable-lite/provenance-config.json and save "
+    f"/ Add an exclude pattern to {LEGACY_STATE_DIR_NAME}/{PROVENANCE_CONFIG_NAME} and save "
     "(takes effect starting next turn). "
     "Example: {\"version\": 1, \"exclude\": [\"path/to/heavy/dir/**\"]} "
     "Warning: exclude only build/cache/data artifacts - excluding source directories "
     "(src/, app/, ...) hides future tampering inside them from observation."
 )
+
+
+def _config_guide(project_root: str) -> str:
+    return _CONFIG_GUIDE.replace(LEGACY_STATE_DIR_NAME, state_dir(project_root).name)
 
 
 def _format_budget_paths(top_paths: Sequence[Mapping[str, str | int]]) -> str:
@@ -247,7 +256,9 @@ def _format_budget_paths(top_paths: Sequence[Mapping[str, str | int]]) -> str:
     )
 
 
-def _scope_too_large_detail(state: Mapping[str, JsonValue]) -> str:
+def _scope_too_large_detail(
+    state: Mapping[str, JsonValue], project_root: str
+) -> str:
     reason = state.get("provenance_status_reason")
     top_paths = list(normalize_budget_top_paths(state.get("provenance_budget_top_paths")))
     breach_path = normalize_budget_breach_path(state.get("provenance_budget_breach_path"))
@@ -264,7 +275,7 @@ def _scope_too_large_detail(state: Mapping[str, JsonValue]) -> str:
             )
         if breach_path:
             pieces.append(f"예산 초과 지점: {breach_path} / Budget breached at: {breach_path}.")
-        pieces.append(_CONFIG_GUIDE)
+        pieces.append(_config_guide(project_root))
         return " ".join(pieces)
     if reason == ProvenanceReason.DEADLINE.value:
         pieces = ["관측 시간 초과 / Observation timed out."]
@@ -274,9 +285,9 @@ def _scope_too_large_detail(state: Mapping[str, JsonValue]) -> str:
                 f"참고용 힌트(원인이 아니라 시간 초과 시점 근처 경로): {hint} "
                 f"/ Reference hint only, not the cause — path near the timeout: {hint}."
             )
-        pieces.append(_CONFIG_GUIDE)
+        pieces.append(_config_guide(project_root))
         return " ".join(pieces)
-    return _CONFIG_GUIDE
+    return _config_guide(project_root)
 
 
 def evaluate_without_io(
@@ -316,7 +327,7 @@ def evaluate_without_io(
             "reason": (
                 "[smtw] Stop gate: provenance 범위가 너무 커서 local-or-unknown 변경 가능성을 "
                 "안전하게 관측할 수 없습니다. "
-                f"{_scope_too_large_detail(state)} "
+                f"{_scope_too_large_detail(state, _project_root(payload))} "
                 "/ Scope too large cannot prove a clean local-or-unknown turn.\n"
                 "Show me the work."
             ),
@@ -364,7 +375,7 @@ def evaluate_without_io(
                 "message": (
                     "[smtw] provenance scope too large: 파일 관측 지원 범위를 초과해 "
                     "이번 턴은 차단하지 않고 안내만 제공합니다. "
-                    f"{_scope_too_large_detail(state)} "
+                    f"{_scope_too_large_detail(state, _project_root(payload))} "
                     "/ Provenance scope too large; advisory only."
                 ),
             }
@@ -479,7 +490,7 @@ def _with_scorecard_line(
     ledger: Mapping[str, JsonValue],
     payload: Mapping[str, JsonValue],
 ) -> Decision:
-    if decision.get("decision") != "allow" or os.environ.get(SCORECARD_ENV) == "0":
+    if decision.get("decision") != "allow" or smtw_env(SCORECARD) == "0":
         return decision
     try:
         summary = cached_session_summary(ledger, payload)

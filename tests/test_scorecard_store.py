@@ -12,6 +12,7 @@ from core.ledger_schema import LedgerSchemaError, validate_v2_ledger
 from core.ledger_v2 import apply_v2_event, default_v2_ledger
 from core.scorecard import GateAction, GateTransition, ReasonCode, Resolution
 import core.scorecard_store as scorecard_store
+from core.state_layout import STATE_DIR_NAME
 
 
 def _payload(root: Path, session_id: str = "session-1") -> JsonObject:
@@ -52,7 +53,7 @@ def test_record_gate_transition_locked_writes_independent_journal_and_cache(
     journal = scorecard_store.load_scorecard_journal(tmp_path)
     summary = scorecard_store.cached_session_summary(ledger, payload)
     assert scorecard_store.scorecard_journal_path(tmp_path) == (
-        tmp_path / ".fable-lite" / "scorecard" / "gates.jsonl"
+        tmp_path / STATE_DIR_NAME / "scorecard" / "gates.jsonl"
     )
     assert journal.complete is True
     assert [item.event_id for item in journal.transitions] == ["block-1"]

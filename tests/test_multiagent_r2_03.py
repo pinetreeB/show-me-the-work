@@ -9,6 +9,7 @@ import core.provenance_policy as provenance_policy
 from core.adapter_observation import CanonicalInvocation, begin_invocation
 from core.destructive_guard import evaluate_r2_destructive_gate
 from core.ledger import JsonObject, load_ledger
+from core.ledger_storage import ledger_path
 
 
 PEER_AGENT_KEY = "codex_cli:peer-session:peer"
@@ -120,11 +121,11 @@ def _overwrite_stored_candidate_paths(
     # canonicalize_project_path at write time. New writes can no longer produce this
     # shape; this directly edits the on-disk ledger to reproduce what an already-open
     # peer invocation from an older version would look like at read time.
-    ledger_path = root / ".fable-lite" / "ledger.json"
-    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    path = ledger_path(str(root))
+    ledger = json.loads(path.read_text(encoding="utf-8"))
     invocation = ledger["active_turns"][PEER_AGENT_KEY]["invocations"][invocation_id]
     invocation["candidate_paths"] = raw_paths
-    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    path.write_text(json.dumps(ledger), encoding="utf-8")
 
 
 def test_legacy_absolute_candidate_stored_before_write_side_fix_still_blocks_relative_target(

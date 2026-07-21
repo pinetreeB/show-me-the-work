@@ -73,8 +73,7 @@ def test_r2_blocks_normalized_lexical_paths_to_symlinked_state_dir(
 
 def test_r2_does_not_block_state_dir_prefix_lookalike(tmp_path: Path) -> None:
     root = tmp_path / "project"
-    external = tmp_path / "external-state"
-    _symlink_state_dir(root, external)
+    root.mkdir()
 
     result = _evaluate(root, "rm .fable-lite-backup/ledger.json")
 

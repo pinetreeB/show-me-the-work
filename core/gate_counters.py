@@ -69,6 +69,7 @@ def recover_checkpoint_gates(payload: Mapping[str, JsonValue]) -> None:
 
 def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
     root = _project_root(payload)
+    state_name = state_dir(root).name
     # A checkpoint created after this hint can consume one capped block, preserving short RMW locking.
     with ledger_transaction(root):
         ledger = load_ledger(payload)
@@ -107,8 +108,8 @@ def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
     return {
         "decision": "block",
         "reason": (
-            "[smtw] N2: 2+ 스토리 작업은 identity별 `.fable-lite/goals/<identity>.json` "
-            "체크포인트가 먼저 필요합니다(단일 identity는 기존 `.fable-lite/goals.json` 폴백). "
+            f"[smtw] N2: 2+ 스토리 작업은 identity별 `{state_name}/goals/<identity>.json` "
+            f"체크포인트가 먼저 필요합니다(단일 identity는 기존 `{state_name}/goals.json` 폴백). "
             "goals plan을 작성하거나 명시 확인 후 다시 시도하세요. "
             "/ Multi-story work requires a goals checkpoint first."
         ),
@@ -117,6 +118,7 @@ def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
 
 def block_intent_once(payload: Mapping[str, JsonValue], intent_command: str) -> Decision:
     root = _project_root(payload)
+    state_name = state_dir(root).name
     intent_present = has_intent(root)
     # A checkpoint created after this hint can consume one capped block, preserving short RMW locking.
     with ledger_transaction(root):
@@ -155,7 +157,7 @@ def block_intent_once(payload: Mapping[str, JsonValue], intent_command: str) -> 
     return {
         "decision": "block",
         "reason": (
-            "[smtw] intent gate: 요청 의도가 모호해 수정 전 `.fable-lite/intent.json` 확정이 필요합니다. "
+            f"[smtw] intent gate: 요청 의도가 모호해 수정 전 `{state_name}/intent.json` 확정이 필요합니다. "
             "`확인질문 N:` 형식으로 목표/범위/비목표를 확인한 뒤 "
             f"`{intent_command}` 명령을 그대로 실행해 기록하세요. "
             "/ Ambiguous edit intent requires intent.json first."

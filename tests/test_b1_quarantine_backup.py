@@ -6,6 +6,7 @@ import pytest
 
 from core.destructive_guard import evaluate_r2_destructive_gate
 from core.ledger import JsonObject
+from core.state_layout import state_dir
 
 
 def _payload(root: Path, command: str) -> JsonObject:
@@ -31,7 +32,7 @@ def _evaluate(root: Path, command: str) -> JsonObject:
 
 
 def _quarantine_files(root: Path) -> list[Path]:
-    directory = root / ".fable-lite" / "quarantine"
+    directory = state_dir(root) / "quarantine"
     if not directory.exists():
         return []
     return sorted(p for p in directory.iterdir() if p.is_file())

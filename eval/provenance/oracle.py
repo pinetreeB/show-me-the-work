@@ -6,10 +6,12 @@ from pathlib import Path
 import stat
 from typing import Final
 
+from core.state_layout import RUNTIME_STATE_DIR_NAMES
+
 from .models import Signature
 
 
-HARD_PREFIXES: Final = (".fable-lite", ".git", ".hg", ".svn")
+HARD_PREFIXES: Final = frozenset({*RUNTIME_STATE_DIR_NAMES, ".git", ".hg", ".svn"})
 SOFT_PREFIXES: Final = ("node_modules", ".venv", "venv", "__pycache__", ".pytest_cache")
 
 

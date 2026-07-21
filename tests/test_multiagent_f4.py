@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from core.contract import (
+    contract_path,
     evaluate_pretool_contract,
     evaluate_state_file_friction,
     namespaced_contract_path,
@@ -648,7 +649,7 @@ def test_state_file_friction_allows_own_contract_authoring(tmp_path: Path) -> No
         {
             "project_root": str(tmp_path),
             "tool_name": "Edit",
-            "file_paths": [str(tmp_path / ".fable-lite" / "contract.json")],
+            "file_paths": [str(contract_path(str(tmp_path)))],
         }
     )
     assert result["decision"] == "allow"
