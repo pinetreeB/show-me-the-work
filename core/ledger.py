@@ -16,7 +16,13 @@ from .agent_log import (
     ledger_transaction,
     load_agent_events,
 )
-from .ledger_migration import LedgerMigrationError as LedgerMigrationError, migrate_v1_ledger
+from .ledger_migration import (
+    LedgerMigrationError as LedgerMigrationError,
+    backfill_invocation_statuses,
+    invocation_status_backfill_required,
+    migrate_v1_ledger,
+    migrate_v2_invocation_statuses,
+)
 from .ledger_schema import (
     JsonObject as JsonObject,
     JsonScalar as JsonScalar,
@@ -46,6 +52,10 @@ class _RecordedEvent:
     saved: bool
 
 
+class _StatusMigrationRequiredLedger(dict[str, JsonValue]):
+    """A fail-closed compatibility view that must never reach persistence."""
+
+
 def _project_root(payload: Mapping[str, JsonValue]) -> str:
     root = payload.get("project_root") or payload.get("cwd")
     return root if isinstance(root, str) and root else "."
@@ -70,6 +80,16 @@ def load_ledger(payload: Mapping[str, JsonValue]) -> JsonObject:
     if isinstance(loaded, dict):
         schema_version = loaded.get("schema_version")
         if schema_version == 2:
+            if invocation_status_backfill_required(loaded):
+                backfilled, _changed = backfill_invocation_statuses(loaded)
+                backfilled["attribution_degraded"] = True
+                return _StatusMigrationRequiredLedger(
+                    _expose_attribution_health(
+                        _validate_v2_with_derived_cache_fail_open(backfilled),
+                        path,
+                        degraded=True,
+                    )
+                )
             return _expose_attribution_health(
                 _validate_v2_with_derived_cache_fail_open(loaded),
                 path,
@@ -208,12 +228,17 @@ def _preserve_corrupt_ledger(path: Path) -> None:
 
 
 def save_ledger(payload: Mapping[str, JsonValue], ledger: JsonObject) -> bool:
+    if isinstance(ledger, _StatusMigrationRequiredLedger):
+        return False
+    destination = ledger_path(_project_root(payload))
+    if _invocation_status_migration_required(destination):
+        return False
     schema_version = ledger.get("schema_version")
     serialized = serialize_v2_ledger(ledger) if schema_version == 2 else json.dumps(
         ledger, ensure_ascii=False, indent=2, sort_keys=True
     )
     try:
-        atomic_write_text(ledger_path(_project_root(payload)), serialized)
+        atomic_write_text(destination, serialized)
     except OSError:
         return False
     return True
@@ -222,11 +247,8 @@ def save_ledger(payload: Mapping[str, JsonValue], ledger: JsonObject) -> bool:
 def record_event(payload: Mapping[str, JsonValue]) -> JsonObject:
     root = _project_root(payload)
     destination = ledger_path(root)
-    if auto_migration_enabled() and _legacy_ledger_exists(destination):
-        try:
-            _ = migrate_v1_ledger(root)
-        except LedgerMigrationError:
-            return load_ledger(payload)
+    if not _auto_migrate_ledger(root, destination):
+        return load_ledger(payload)
     with ledger_transaction(root) as transaction:
         recorded = _record_event_locked(payload, transaction)
     if recorded.saved:
@@ -242,11 +264,8 @@ def record_event_if_current_turn(
     """Record only when an existing actor turn has not been replaced."""
     root = _project_root(payload)
     destination = ledger_path(root)
-    if auto_migration_enabled() and _legacy_ledger_exists(destination):
-        try:
-            _ = migrate_v1_ledger(root)
-        except LedgerMigrationError:
-            return False
+    if not _auto_migrate_ledger(root, destination):
+        return False
     recorded: _RecordedEvent | None = None
     with ledger_transaction(root) as transaction:
         ledger = load_ledger(payload)
@@ -785,6 +804,27 @@ def _legacy_ledger_exists(destination: Path) -> bool:
         and not isinstance(schema_version, bool)
         and schema_version == 1
     )
+
+
+def _invocation_status_migration_required(destination: Path) -> bool:
+    try:
+        loaded: JsonValue = json.loads(destination.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return invocation_status_backfill_required(loaded)
+
+
+def _auto_migrate_ledger(root: str, destination: Path) -> bool:
+    if not auto_migration_enabled():
+        return True
+    try:
+        if _legacy_ledger_exists(destination):
+            _ = migrate_v1_ledger(root)
+        elif _invocation_status_migration_required(destination):
+            _ = migrate_v2_invocation_statuses(root)
+    except LedgerMigrationError:
+        return False
+    return True
 
 
 def migrate_ledger_to_v2(payload: Mapping[str, JsonValue]) -> JsonObject:

@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
+from typing import Final
 from uuid import uuid4
 
 from .agent_log import ledger_transaction
-from .ledger_schema import JsonObject, JsonValue, LedgerSchemaError, deserialize_v2_ledger, serialize_v2_ledger
+from .ledger_schema import (
+    JsonObject,
+    JsonValue,
+    LedgerSchemaError,
+    deserialize_v2_ledger,
+    serialize_v2_ledger,
+)
 from .ledger_storage import atomic_write_bytes, atomic_write_text, ledger_path
 from .ledger_v1 import default_ledger, sequence_value
 from .ledger_v2 import refresh_v1_projection
+
+
+INVOCATION_STATUS_ARCHIVE_NAME: Final = "ledger.v2-invocation-status.json.bak"
 
 
 class LedgerMigrationError(RuntimeError):
@@ -51,6 +62,92 @@ def _migrate_v1_ledger(project_root: str) -> JsonObject:
         _restore_archive(destination, archive_bytes)
         raise LedgerMigrationError("write", str(exc)) from exc
     return restored
+
+
+def invocation_status_backfill_required(value: JsonValue) -> bool:
+    if not isinstance(value, dict) or value.get("schema_version") != 2:
+        return False
+    active_turns = value.get("active_turns")
+    if not isinstance(active_turns, dict):
+        return False
+    for raw_turn in active_turns.values():
+        if not isinstance(raw_turn, dict):
+            continue
+        invocations = raw_turn.get("invocations")
+        if not isinstance(invocations, dict):
+            continue
+        if any(
+            isinstance(raw_entry, dict) and "status" not in raw_entry
+            for raw_entry in invocations.values()
+        ):
+            return True
+    return False
+
+
+def backfill_invocation_statuses(ledger: JsonObject) -> tuple[JsonObject, int]:
+    """Return a detached ledger copy with legacy fieldless rows closed."""
+    migrated = deepcopy(ledger)
+    active_turns = migrated.get("active_turns")
+    if not isinstance(active_turns, dict):
+        return migrated, 0
+    changed = 0
+    for raw_turn in active_turns.values():
+        if not isinstance(raw_turn, dict):
+            continue
+        invocations = raw_turn.get("invocations")
+        if not isinstance(invocations, dict):
+            continue
+        for raw_entry in invocations.values():
+            if isinstance(raw_entry, dict) and "status" not in raw_entry:
+                raw_entry["status"] = "closed"
+                changed += 1
+    return migrated, changed
+
+
+def migrate_v2_invocation_statuses(project_root: str) -> JsonObject:
+    with ledger_transaction(project_root):
+        return _migrate_v2_invocation_statuses(project_root)
+
+
+def _migrate_v2_invocation_statuses(project_root: str) -> JsonObject:
+    destination = ledger_path(project_root)
+    try:
+        original = destination.read_bytes()
+    except OSError as exc:
+        raise LedgerMigrationError("read", str(exc)) from exc
+    raw = _load_v2_status_source(original)
+    converted, changed = backfill_invocation_statuses(raw)
+    if changed == 0:
+        return _load_v2(original)
+    try:
+        serialized = serialize_v2_ledger(converted)
+    except LedgerSchemaError as exc:
+        raise LedgerMigrationError("validate", str(exc)) from exc
+    archive = destination.with_name(INVOCATION_STATUS_ARCHIVE_NAME)
+    archive_bytes = _preserve_archive(archive, original)
+    wrote_v2 = False
+    try:
+        atomic_write_text(destination, serialized, prefix="ledger-status-")
+        wrote_v2 = True
+        restored = deserialize_v2_ledger(destination.read_text(encoding="utf-8"))
+    except (OSError, LedgerSchemaError, UnicodeDecodeError) as exc:
+        if wrote_v2:
+            _isolate_failed(destination)
+        _restore_archive(destination, archive_bytes)
+        raise LedgerMigrationError("write", str(exc)) from exc
+    return restored
+
+
+def _load_v2_status_source(content: bytes) -> JsonObject:
+    try:
+        raw: JsonValue = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LedgerMigrationError("parse", str(exc)) from exc
+    if not isinstance(raw, dict):
+        raise LedgerMigrationError("parse", "ledger root must be an object")
+    if raw.get("schema_version") != 2:
+        raise LedgerMigrationError("parse", "schema_version must equal 2")
+    return raw
 
 
 def _load_v1(content: bytes) -> JsonObject | None:
