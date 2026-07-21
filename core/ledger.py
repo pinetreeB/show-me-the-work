@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import logging
 import os as os
 from pathlib import Path
 from typing import Final
@@ -43,6 +44,7 @@ from .verification_covers import active_turn, agent_key, capture_covers
 
 MAX_COORDINATION_OUTBOX: Final = 256
 COORDINATION_DRAIN_BATCH: Final = 16
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -822,9 +824,21 @@ def _auto_migrate_ledger(root: str, destination: Path) -> bool:
             _ = migrate_v1_ledger(root)
         elif _invocation_status_migration_required(destination):
             _ = migrate_v2_invocation_statuses(root)
-    except LedgerMigrationError:
+    except LedgerMigrationError as exc:
+        _log_auto_migration_failure(exc)
         return False
     return True
+
+
+def _log_auto_migration_failure(exc: LedgerMigrationError) -> None:
+    try:
+        LOGGER.warning(
+            "automatic ledger migration failed: stage=%s detail=%s",
+            exc.stage,
+            exc.detail,
+        )
+    except Exception:  # noqa: BLE001 - diagnostics must not break hook fail-open.
+        return
 
 
 def migrate_ledger_to_v2(payload: Mapping[str, JsonValue]) -> JsonObject:

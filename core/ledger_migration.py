@@ -18,7 +18,7 @@ from .ledger_schema import (
 )
 from .ledger_storage import atomic_write_bytes, atomic_write_text, ledger_path
 from .ledger_v1 import default_ledger, sequence_value
-from .ledger_v2 import refresh_v1_projection
+from .ledger_v2 import INVOCATION_LEASE, refresh_v1_projection
 
 
 INVOCATION_STATUS_ARCHIVE_NAME: Final = "ledger.v2-invocation-status.json.bak"
@@ -84,9 +84,14 @@ def invocation_status_backfill_required(value: JsonValue) -> bool:
     return False
 
 
-def backfill_invocation_statuses(ledger: JsonObject) -> tuple[JsonObject, int]:
-    """Return a detached ledger copy with legacy fieldless rows closed."""
+def backfill_invocation_statuses(
+    ledger: JsonObject,
+    *,
+    observed_at: datetime | None = None,
+) -> tuple[JsonObject, int]:
+    """Return a detached copy with provably expired rows closed and live rows open."""
     migrated = deepcopy(ledger)
+    observed = _as_utc(observed_at or datetime.now(UTC))
     active_turns = migrated.get("active_turns")
     if not isinstance(active_turns, dict):
         return migrated, 0
@@ -99,9 +104,74 @@ def backfill_invocation_statuses(ledger: JsonObject) -> tuple[JsonObject, int]:
             continue
         for raw_entry in invocations.values():
             if isinstance(raw_entry, dict) and "status" not in raw_entry:
-                raw_entry["status"] = "closed"
+                status, _safe_to_persist = _missing_status_disposition(
+                    raw_entry,
+                    observed,
+                )
+                raw_entry["status"] = status
                 changed += 1
     return migrated, changed
+
+
+def _unsafe_invocation_status_backfills(
+    ledger: JsonObject,
+    observed_at: datetime,
+) -> int:
+    active_turns = ledger.get("active_turns")
+    if not isinstance(active_turns, dict):
+        return 0
+    unsafe = 0
+    for raw_turn in active_turns.values():
+        if not isinstance(raw_turn, dict):
+            continue
+        invocations = raw_turn.get("invocations")
+        if not isinstance(invocations, dict):
+            continue
+        for raw_entry in invocations.values():
+            if not isinstance(raw_entry, dict) or "status" in raw_entry:
+                continue
+            _status, safe_to_persist = _missing_status_disposition(
+                raw_entry,
+                observed_at,
+            )
+            if not safe_to_persist:
+                unsafe += 1
+    return unsafe
+
+
+def _missing_status_disposition(
+    entry: JsonObject,
+    observed_at: datetime,
+) -> tuple[str, bool]:
+    started_at = _parse_invocation_started_at(entry.get("started_at"))
+    if started_at is None:
+        return "open", False
+    if observed_at - started_at > INVOCATION_LEASE:
+        return "closed", True
+    started_seq = entry.get("started_seq")
+    candidate_paths = entry.get("candidate_paths")
+    protects_candidates = (
+        isinstance(started_seq, int)
+        and not isinstance(started_seq, bool)
+        and started_seq > 0
+        and isinstance(candidate_paths, list)
+        and any(isinstance(path, str) and path for path in candidate_paths)
+    )
+    return "open", protects_candidates
+
+
+def _parse_invocation_started_at(value: JsonValue | None) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _as_utc(parsed)
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def migrate_v2_invocation_statuses(project_root: str) -> JsonObject:
@@ -116,9 +186,19 @@ def _migrate_v2_invocation_statuses(project_root: str) -> JsonObject:
     except OSError as exc:
         raise LedgerMigrationError("read", str(exc)) from exc
     raw = _load_v2_status_source(original)
-    converted, changed = backfill_invocation_statuses(raw)
+    observed_at = datetime.now(UTC)
+    unsafe = _unsafe_invocation_status_backfills(raw, observed_at)
+    converted, changed = backfill_invocation_statuses(
+        raw,
+        observed_at=observed_at,
+    )
     if changed == 0:
         return _load_v2(original)
+    if unsafe:
+        raise LedgerMigrationError(
+            "classify",
+            f"{unsafe} status-less invocation(s) lack complete leased R2 evidence",
+        )
     try:
         serialized = serialize_v2_ledger(converted)
     except LedgerSchemaError as exc:
