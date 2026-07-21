@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 from pathlib import Path
 import subprocess
 from unittest.mock import patch
@@ -175,6 +176,10 @@ def test_migration_changes_scope_identity_for_the_selected_config_path(
     assert workspace_scope_policy_id(tmp_path) != legacy_policy
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="codex reaper is Windows-only; the os.name='nt' patch makes pathlib build WindowsPath, which is unavailable on POSIX",
+)
 def test_codex_reaper_default_log_uses_selected_tree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -196,6 +201,10 @@ def test_codex_reaper_default_log_uses_selected_tree(
     )
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="codex reaper is Windows-only; the os.name='nt' patch makes pathlib build WindowsPath, which is unavailable on POSIX",
+)
 def test_codex_reaper_preserves_an_explicit_empty_log_setting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

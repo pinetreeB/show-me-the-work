@@ -293,6 +293,10 @@ def test_design_gate_surfaces_generation_conflict(
             _ = design_gate_enabled(tmp_path)
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="codex reaper is Windows-only; the os.name='nt' patch makes pathlib build WindowsPath, which is unavailable on POSIX",
+)
 def test_reaper_parent_normalizes_all_child_controls_to_canonical(
     tmp_path: Path,
 ) -> None:
@@ -320,6 +324,10 @@ def test_reaper_parent_normalizes_all_child_controls_to_canonical(
         assert child_env[canonical_env_key(suffix)] == value
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="codex reaper is Windows-only; the os.name='nt' patch makes pathlib build WindowsPath, which is unavailable on POSIX",
+)
 def test_reaper_parent_does_not_launch_on_conflicting_controls(
     tmp_path: Path,
 ) -> None:
