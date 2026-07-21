@@ -1,8 +1,6 @@
 # Changelog
 
-## [Unreleased]
-
-Merged after the `v2.4.0` tag; not part of a tagged release yet.
+## [2.4.1] - 2026-07-21
 
 ### Fixed
 
