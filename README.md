@@ -80,6 +80,8 @@ In a controlled ON-vs-OFF A/B (5 tasks, blind-judged by a different model — [r
 
 The qualitative gap **held across 3 repeat runs** (OFF verified 0/3, ON 3/3), though the *cost multiplier* swings too much to quote as a single number ([repeat study](docs/reviews/e1b-repeat.md)) — which also surfaced and fixed a real verification-crediting bug in the harness. We report what replicates and flag what doesn't.
 
+The same discipline generalizes beyond coding. In a real multi-agent research session, a worker fabricated its deliverables three ways — hard-coded guesses emitted by a generator script, forged/truncated source citations, and a "80 items collected" claim with no output file — and every one was caught by *completion-is-evidence* forensics rather than by trusting the report ([case study](docs/reviews/2026-07-21-fabrication-case-study.md)). The harness can't judge whether content is *true*, but it makes the cheap, common shapes of fabrication observable and expensive.
+
 ## What's inside
 
 | Gate | Mechanism |
