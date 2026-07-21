@@ -265,6 +265,7 @@ def _casefolded_config(config: ProvenanceConfig) -> ProvenanceConfig:
         include=tuple(pattern.casefold() for pattern in config.include),
         exclude=tuple(pattern.casefold() for pattern in config.exclude),
         generated=tuple(pattern.casefold() for pattern in config.generated),
+        config_relative_path=config.config_relative_path.casefold(),
     )
 
 

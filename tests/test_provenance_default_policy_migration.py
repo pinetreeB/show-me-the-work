@@ -18,6 +18,7 @@ from core.provenance_policy import load_provenance_config
 from core.provenance_snapshot import SnapshotBuildContext
 import core.provenance_snapshot as provenance_snapshot
 from core.provenance_store import save_turn_baseline, save_workspace_current
+from core.state_layout import state_dir
 
 
 def _write(path: Path, content: str) -> None:
@@ -135,7 +136,7 @@ def test_user_config_exclusion_still_forces_existing_path_observation(
 
     # When: the user excludes and mutates that pre-existing path between turns.
     _write(
-        tmp_path / ".fable-lite" / "provenance-config.json",
+        state_dir(tmp_path) / "provenance-config.json",
         json.dumps({"version": 1, "exclude": ["vendor/**"]}),
     )
     _write(target, "after")

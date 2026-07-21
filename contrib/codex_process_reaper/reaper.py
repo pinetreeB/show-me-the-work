@@ -8,6 +8,8 @@ from pathlib import Path
 import time
 from typing import Final, TypeAlias
 
+from core.state_layout import state_dir
+
 from .decision import ReapDecision, select_reap_decision
 from .windows_runtime import (
     live_process_ids,
@@ -43,7 +45,7 @@ def _log_path() -> Path:
     return (
         Path(configured)
         if configured
-        else Path.cwd() / ".fable-lite" / "codex-process-reaper.log"
+        else state_dir(Path.cwd()) / "codex-process-reaper.log"
     )
 
 

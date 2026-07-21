@@ -8,6 +8,7 @@ import subprocess
 import sys
 from typing import TypeAlias
 
+from core.ledger_storage import ledger_path
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "adapters" / "codex_cli" / "install.py"
@@ -143,6 +144,6 @@ def test_external_self_located_stop_blocks_unverified_change(tmp_path: Path) -> 
     )
 
     # Then: self-location reaches the real core gate and blocks the unverified change.
-    ledger = _object(json.loads((target / ".fable-lite" / "ledger.json").read_text(encoding="utf-8")))
+    ledger = _object(json.loads(ledger_path(str(target)).read_text(encoding="utf-8")))
     assert ledger["task_mode"] == "normal"
     assert result["decision"] == "block"

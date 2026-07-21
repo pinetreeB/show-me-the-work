@@ -12,7 +12,6 @@ from core.provenance_lifecycle_scope import (
     persisted_force_paths,
 )
 from core.provenance_policy import (
-    CONFIG_RELATIVE_PATH,
     canonical_manifest_key,
     is_harness_state_path,
 )
@@ -45,8 +44,8 @@ def parse_porcelain(output: str) -> list[str]:
     return paths
 
 
-def is_state_path(path: str) -> bool:
-    return path != CONFIG_RELATIVE_PATH and is_harness_state_path(path)
+def is_state_path(path: str, config_relative_path: str) -> bool:
+    return path != config_relative_path and is_harness_state_path(path)
 
 
 def git_changes_since_baseline(

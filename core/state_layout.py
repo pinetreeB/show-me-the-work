@@ -14,6 +14,7 @@ STATE_DIR_NAME: Final = ".smtw"
 LEGACY_STATE_DIR_NAME: Final = ".fable-lite"
 PROJECT_CONFIG_NAME: Final = ".smtw.toml"
 LEGACY_ACTIVATION_CONFIG_NAME: Final = "config.json"
+PROVENANCE_CONFIG_NAME: Final = "provenance-config.json"
 
 MIGRATION_LOCK_NAME: Final = ".smtw-migration.lock"
 MIGRATION_RECEIPT_NAME: Final = ".smtw-migration-receipt.json"
@@ -87,12 +88,18 @@ def native_state_dir(project_root: str | Path) -> Path:
 
 
 def state_dir(project_root: str | Path) -> Path:
-    """Return the current live state path without creating or migrating anything.
-
-    Wave 1 deliberately preserves the v2 live layout. Consumer cutover is a later
-    change, so this facade remains legacy-only even after an explicit copy publish.
-    """
-    return legacy_state_dir(project_root)
+    """Select one authoritative state tree without creating or migrating it."""
+    inspection = inspect_state_layout_details(project_root)
+    if inspection.layout in {
+        StateLayout.EMPTY,
+        StateLayout.NATIVE,
+        StateLayout.MIGRATED,
+    }:
+        return inspection.target
+    if inspection.layout in {StateLayout.LEGACY, StateLayout.MIGRATING}:
+        return inspection.legacy
+    detail = f": {inspection.reason}" if inspection.reason else ""
+    raise StateLayoutError(f"state layout has no single authority{detail}")
 
 
 def migration_lock_path(project_root: str | Path) -> Path:
@@ -161,27 +168,18 @@ def inspect_state_layout_details(project_root: str | Path) -> LayoutInspection:
             f"cannot inspect project root: {type(exc).__name__}",
         )
 
-    invalid = _invalid_layout_path(legacy, "legacy") or _invalid_layout_path(
-        target, "target"
-    )
+    invalid = _invalid_layout_path(target, "target")
     if invalid:
         return LayoutInspection(
             StateLayout.CONFLICT, root, legacy, target, staging, invalid
         )
-    for candidate in staging:
-        invalid = _invalid_layout_path(candidate, "staging")
-        if invalid:
-            return LayoutInspection(
-                StateLayout.CONFLICT, root, legacy, target, staging, invalid
-            )
 
-    legacy_exists = legacy.is_dir()
     target_exists = target.is_dir()
     if target_exists:
         marker_path = target / MIGRATION_MARKER_NAME
         marker_exists = _lexists(marker_path)
         if marker_exists:
-            valid, reason = validate_published_marker(target)
+            valid, reason = validate_published_authority_marker(target)
             if not valid:
                 return LayoutInspection(
                     StateLayout.CONFLICT,
@@ -194,6 +192,21 @@ def inspect_state_layout_details(project_root: str | Path) -> LayoutInspection:
             return LayoutInspection(
                 StateLayout.MIGRATED, root, legacy, target, staging
             )
+
+    invalid = _invalid_layout_path(legacy, "legacy")
+    if invalid:
+        return LayoutInspection(
+            StateLayout.CONFLICT, root, legacy, target, staging, invalid
+        )
+    for candidate in staging:
+        invalid = _invalid_layout_path(candidate, "staging")
+        if invalid:
+            return LayoutInspection(
+                StateLayout.CONFLICT, root, legacy, target, staging, invalid
+            )
+
+    legacy_exists = legacy.is_dir()
+    if target_exists:
         if legacy_exists or staging:
             return LayoutInspection(
                 StateLayout.CONFLICT,
@@ -204,8 +217,17 @@ def inspect_state_layout_details(project_root: str | Path) -> LayoutInspection:
                 "markerless target conflicts with legacy or staging state",
             )
         return LayoutInspection(StateLayout.NATIVE, root, legacy, target, staging)
-    if staging:
+    if staging and legacy_exists:
         return LayoutInspection(StateLayout.MIGRATING, root, legacy, target, staging)
+    if staging:
+        return LayoutInspection(
+            StateLayout.CONFLICT,
+            root,
+            legacy,
+            target,
+            staging,
+            "migration staging has no authoritative legacy source",
+        )
     if legacy_exists:
         return LayoutInspection(StateLayout.LEGACY, root, legacy, target, staging)
     return LayoutInspection(StateLayout.EMPTY, root, legacy, target, staging)
@@ -260,10 +282,13 @@ def read_migration_marker(target: str | Path) -> dict[str, object]:
 
 
 def validate_published_marker(target: str | Path) -> tuple[bool, str]:
+    """Validate a just-published target while it is still pristine."""
     target_path = Path(target)
+    valid, reason = validate_published_authority_marker(target_path)
+    if not valid:
+        return False, reason
     try:
         marker = read_migration_marker(target_path)
-        _validate_marker_fields(marker, target_path)
         manifest = build_state_manifest(target_path)
     except (OSError, StateLayoutError) as exc:
         return False, str(exc)
@@ -275,6 +300,20 @@ def validate_published_marker(target: str | Path) -> tuple[bool, str]:
     actual = (manifest.digest, manifest.file_count, manifest.total_bytes)
     if actual != expected:
         return False, "published target does not match its migration marker manifest"
+    return True, ""
+
+
+def validate_published_authority_marker(
+    target: str | Path,
+) -> tuple[bool, str]:
+    """Validate the immutable marker fields that seal target authority."""
+    target_path = Path(target)
+    try:
+        _require_plain_directory(target_path, "target")
+        marker = read_migration_marker(target_path)
+        _validate_marker_fields(marker, target_path)
+    except (OSError, StateLayoutError) as exc:
+        return False, str(exc)
     return True, ""
 
 

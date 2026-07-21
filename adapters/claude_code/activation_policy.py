@@ -2,10 +2,32 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from hashlib import sha256
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
+import runpy
 import tempfile
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+@lru_cache(maxsize=1)
+def _legacy_config_names() -> tuple[str, str]:
+    # Activation runs before shared-core imports are allowed. Execute the pure
+    # constants module by path so this bootstrap boundary still has one name SSOT.
+    values = runpy.run_path(str(REPO_ROOT / "core" / "state_layout.py"))
+    state_name = values.get("LEGACY_STATE_DIR_NAME")
+    config_name = values.get("LEGACY_ACTIVATION_CONFIG_NAME")
+    if not isinstance(state_name, str) or not isinstance(config_name, str):
+        raise RuntimeError("state layout constants are unavailable")
+    return state_name, config_name
+
+
+def _legacy_config_path(root: Path) -> Path:
+    state_name, config_name = _legacy_config_names()
+
+    return root / state_name / config_name
 
 
 def plugin_data_dir(force: bool) -> Path:
@@ -43,13 +65,13 @@ def fallback_root(
     if force:
         return start
     for candidate in (start, *start.parents):
-        if (candidate / ".fable-lite" / "config.json").exists():
+        if _legacy_config_path(candidate).exists():
             return candidate
     return start
 
 
 def config_state(root: Path) -> tuple[bool, str, bool]:
-    path = root / ".fable-lite" / "config.json"
+    path = _legacy_config_path(root)
     try:
         raw_bytes = path.read_bytes()
         raw: object = json.loads(raw_bytes)

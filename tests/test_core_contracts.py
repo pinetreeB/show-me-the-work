@@ -7,6 +7,7 @@ from core.classify import classify_prompt
 from core.compliance import check_investigation_compliance
 from core.contract import evaluate_pretool_contract
 from core.ledger import load_ledger, record_event
+from core.ledger_storage import ledger_path
 from core.scope_guard import evaluate_scope
 from core.verify_state import evaluate_stop
 
@@ -216,7 +217,7 @@ def test_investigation_compliance_accepts_english_markers() -> None:
     assert result["hypothesis_count"] == 3
 
 
-def test_ledger_records_only_under_project_fable_lite_directory(tmp_path: Path) -> None:
+def test_ledger_records_only_under_selected_project_state_directory(tmp_path: Path) -> None:
     _ = record_event(
         {
             "project_root": str(tmp_path),
@@ -244,7 +245,7 @@ def test_ledger_records_only_under_project_fable_lite_directory(tmp_path: Path) 
     )
 
     ledger = load_ledger({"project_root": str(tmp_path)})
-    assert (tmp_path / ".fable-lite" / "ledger.json").exists()
+    assert ledger_path(str(tmp_path)).exists()
     assert ledger["task_mode"] == "deep"
     assert ledger["changed_files_seen"] == ["app.py"]
     results = ledger["verification_results"]
@@ -409,9 +410,9 @@ def test_scope_guard_still_warns_when_prompt_names_a_different_file_explicitly()
 
 def test_high_risk_contract_blocks_edit_until_valid_contract_exists(tmp_path: Path) -> None:
     payload = {"project_root": str(tmp_path), "tool_name": "Edit", "file_paths": ["migrations/001_init.sql"], "prompt": "DB 마이그 수정"}
-    blocked = evaluate_pretool_contract(payload)
     state_dir = tmp_path / ".fable-lite"
     state_dir.mkdir(exist_ok=True)
+    blocked = evaluate_pretool_contract(payload)
     _ = (state_dir / "contract.json").write_text(
         json.dumps({"restated_goal": "DB 마이그레이션 수정", "acceptance": ["python -m pytest tests/test_migration.py"], "evidence": ["test will be run before done"]}, ensure_ascii=False),
         encoding="utf-8",

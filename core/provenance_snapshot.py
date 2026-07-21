@@ -124,6 +124,9 @@ def _scope_policy_id_for_revision(
         "exclude": context.config.exclude,
         "casefolded": context.windows,
     }
+    legacy_config_path = ProvenanceConfig().config_relative_path
+    if context.config.config_relative_path != legacy_config_path:
+        payload["config_relative_path"] = context.config.config_relative_path
     if default_policy_revision is not None:
         payload["default_policy_revision"] = default_policy_revision
     encoded = json.dumps(

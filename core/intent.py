@@ -58,7 +58,7 @@ def save_intent(project_root: str, intent: IntentInput) -> JsonObject:
     }
     directory = state_dir(project_root)
     directory.mkdir(parents=True, exist_ok=True)
-    destination = intent_path(project_root)
+    destination = directory / "intent.json"
     serialized = json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True)
     handle = tempfile.NamedTemporaryFile(
         "w",

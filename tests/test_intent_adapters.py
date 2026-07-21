@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import TypeAlias
 
+from core.ledger_storage import ledger_path
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CLAUDE = ROOT / "adapters" / "claude_code"
@@ -50,7 +52,7 @@ def run_hook(script: Path, payload: HookPayload | str, *argv: str) -> HookOutput
 
 
 def read_ledger(root: Path) -> dict[str, JsonValue]:
-    raw = json.loads((root / ".fable-lite" / "ledger.json").read_text(encoding="utf-8"))
+    raw = json.loads(ledger_path(str(root)).read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
     return raw
 

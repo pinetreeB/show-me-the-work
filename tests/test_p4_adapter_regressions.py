@@ -9,6 +9,7 @@ from typing import TypeAlias
 from adapters.antigravity.tool_io import extract_tool_info, verification_result
 from adapters.claude_code.common import tool_success as claude_tool_success
 from adapters.codex_cli.common import tool_success as codex_tool_success
+from core.ledger_storage import ledger_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +47,7 @@ def _run_antigravity(event: str, payload: HookPayload) -> HookOutput:
 
 
 def _ledger(root: Path) -> HookOutput:
-    raw = json.loads((root / ".fable-lite" / "ledger.json").read_text(encoding="utf-8"))
+    raw = json.loads(ledger_path(str(root)).read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
     return raw
 

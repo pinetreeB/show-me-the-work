@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # MONKEY-PATCH to bypass Codex's CP949 encoding bug in ambiguity.py
 import core.ambiguity
+from core.state_layout import state_dir
 
 # The original regex is corrupted. We rewrite the imperative suffix check:
 core.ambiguity._imperative_suffix = lambda prompt: bool(re.search(r"(해|해주세요|해라|고쳐|바꿔|만들어|추가|please|fix|make|add|update|edit)\b?", prompt, re.IGNORECASE))
@@ -23,7 +24,7 @@ def main():
     false_negatives = []
 
     test_root = Path("eval/tmp_intent_test")
-    test_state_dir = test_root / ".fable-lite"
+    test_state_dir = state_dir(test_root)
     
     for item in corpus:
         if test_root.exists():

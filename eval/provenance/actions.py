@@ -7,6 +7,8 @@ from pathlib import Path
 import shutil
 from typing import assert_never
 
+from core.state_layout import PROVENANCE_CONFIG_NAME, state_dir
+
 from .models import CorpusCase, Family, Mutation, Origin
 
 
@@ -27,7 +29,10 @@ def prepare(root: Path, case: CorpusCase) -> ActionLayout:
         root.parent / f"{case.case_id}-outside.txt",
     )
     if case.origin is Origin.GENERATED:
-        _write(root / ".fable-lite" / "provenance-config.json", json.dumps({"version": 1, "generated": ["dist/**"]}))
+        _write(
+            state_dir(root) / PROVENANCE_CONFIG_NAME,
+            json.dumps({"version": 1, "generated": ["dist/**"]}),
+        )
     if case.positive:
         _prepare_positive(layout, case.mutation)
     else:
@@ -87,7 +92,7 @@ def command_for(case: CorpusCase, layout: ActionLayout) -> str:
         case Family.OUTSIDE:
             return f"printf outside > '{layout.outside}'"
         case Family.HARD_EXCLUDE:
-            return ".fable-lite/internal-write"
+            return f"{state_dir(layout.root).name}/internal-write"
         case Family.REVERT:
             return f"printf changed > '{target}'; printf base > '{target}'"
         case unreachable:
@@ -196,7 +201,7 @@ def _execute_negative(layout: ActionLayout, family: Family) -> None:
         case Family.OUTSIDE:
             _write(layout.outside, "outside")
         case Family.HARD_EXCLUDE:
-            _write(layout.root / ".fable-lite" / "hidden.txt", "hidden")
+            _write(state_dir(layout.root) / "hidden.txt", "hidden")
         case (
             Family.CAT
             | Family.RIPGREP

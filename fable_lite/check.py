@@ -10,6 +10,7 @@ from core.adapter_observation import CanonicalInvocation, reconcile_turn
 from core.contract import evaluate_r1_contract
 from core.ledger import JsonObject, load_agent_ledger, load_ledger
 from core.provenance_store import SnapshotStoreError, load_turn_baseline
+from core.provenance_policy import provenance_config_relative_path
 from core.scope_guard import evaluate_scope
 from core.provenance_types import ProvenanceStatus, Snapshot
 from .card import TaskCard, card_changed_excludes, card_completion_findings, card_forbidden_findings, card_scope_findings, card_validation_findings, card_verify_success, load_task_card
@@ -171,7 +172,12 @@ def changed_paths(
         paths = merge(paths, git_paths)
     else:
         warnings.append("git status 실행 실패: ledger 기준으로만 판정")
-    paths = [path for path in paths if not is_state_path(path)]
+    config_relative_path = provenance_config_relative_path(root)
+    paths = [
+        path
+        for path in paths
+        if not is_state_path(path, config_relative_path)
+    ]
     if since_file is not None:
         marker = relative_to_root(root, since_file)
         paths = [path for path in paths if path != marker]

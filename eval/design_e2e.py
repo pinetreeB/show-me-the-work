@@ -47,6 +47,10 @@ if callable(reconfigure):
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ADAPT = ROOT / "adapters" / "claude_code"
 DESIGN_ENV = "FABLE_LITE_DESIGN_GATE"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.ledger_storage import ledger_path  # noqa: E402
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -131,7 +135,7 @@ def rmtree(path: str) -> None:
 
 
 def ledger_of(proj: str) -> JsonObject:
-    path = pathlib.Path(proj, ".fable-lite", "ledger.json")
+    path = ledger_path(proj)
     if not path.exists():
         return {}
     try:
