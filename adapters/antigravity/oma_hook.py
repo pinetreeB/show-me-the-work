@@ -130,14 +130,11 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     if result.get("decision") == "block":
         return emit({"decision": "deny", "reason": str(result.get("reason", ""))})
     observation = begin_invocation(Path(common.project_root(payload)), invocation)
-    if (
-        observation.error_kind == "StaleTurn"
-        and invocation.identity_conflict
-        and invocation.mutation_capable
-    ):
+    if observation.error_kind == "StaleTurn" and invocation.mutation_capable:
+        detail = " identity conflict" if invocation.identity_conflict else ""
         return emit({
             "decision": "deny",
-            "reason": "[smtw] stale turn identity; submit a current prompt before mutation.",
+            "reason": f"[smtw] stale turn{detail}; submit a current prompt before mutation.",
         })
     return emit({"decision": "allow"})
 

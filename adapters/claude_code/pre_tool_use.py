@@ -218,15 +218,14 @@ def main() -> int:
         if result["decision"] == "block":
             return emit(response(context, _deny(str(result["reason"]))))
         observation = begin_invocation(context.root, invocation)
-        if (
-            observation.error_kind == "StaleTurn"
-            and invocation.identity_conflict
-            and invocation.mutation_capable
-        ):
+        if observation.error_kind == "StaleTurn" and invocation.mutation_capable:
+            detail = " identity conflict" if invocation.identity_conflict else ""
             return emit(
                 response(
                     context,
-                    _deny("[smtw] stale turn identity; submit a current prompt before mutation."),
+                    _deny(
+                        f"[smtw] stale turn{detail}; submit a current prompt before mutation."
+                    ),
                 )
             )
         return emit(response(context, {}))
