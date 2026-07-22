@@ -23,6 +23,7 @@ PARSE_UNABLE_REASONS = frozenset(
         "parse_unable_obfuscated",
         "parse_unable_pathspec_from_file",
         "parse_unable_pipeline",
+        "parse_unable_shell_syntax",
         "parse_unable_subcommand",
         "parse_unable_target",
         "parse_unable_wrapped",

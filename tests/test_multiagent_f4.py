@@ -60,7 +60,7 @@ TRUNCATE_CASES: list[tuple[str, bool]] = [
     ('Set-Content -Path file.txt -Value ""', True),
     ("type NUL > C:\\Users\\rotat\\fable-lite\\test.js", True),
     ('echo "old" > $FILE', False),
-    ("cat /dev/null | tee file.txt", False),
+    ("cat /dev/null | tee file.txt", True),
     ('eval "cat /dev/null > file.txt"', False),
     ('Out-File -FilePath (Join-Path $pwd "a.js")', False),
     ('Set-Content -Path "fi" + "le.txt" -Value ""', False),
