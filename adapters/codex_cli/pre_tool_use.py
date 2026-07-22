@@ -98,15 +98,14 @@ def main() -> int:
         if result["decision"] == "block":
             return emit({"decision": "block", "reason": str(result["reason"])})
         observation = begin_invocation(Path(project_root(payload)), invocation)
-        if (
-            observation.error_kind == "StaleTurn"
-            and invocation.identity_conflict
-            and invocation.mutation_capable
-        ):
+        if observation.error_kind == "StaleTurn" and invocation.mutation_capable:
+            detail = " identity conflict" if invocation.identity_conflict else ""
             return emit(
                 {
                     "decision": "block",
-                    "reason": "[smtw] stale turn identity; submit a current prompt before mutation.",
+                    "reason": (
+                        f"[smtw] stale turn{detail}; submit a current prompt before mutation."
+                    ),
                 }
             )
         return emit({})
