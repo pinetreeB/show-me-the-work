@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.6.0] - 2026-07-22 — canonical Python package (`fable_lite` → `smtw`)
 
 ### Changed
 

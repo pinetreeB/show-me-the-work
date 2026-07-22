@@ -13,8 +13,12 @@ jobs:
         include:
           - os: ubuntu-latest
             venv_python: ./.ci-venv/bin/python
+            venv_smtw: ./.ci-venv/bin/smtw
+            venv_fable_lite: ./.ci-venv/bin/fable-lite
           - os: windows-latest
             venv_python: ./.ci-venv/Scripts/python.exe
+            venv_smtw: ./.ci-venv/Scripts/smtw.exe
+            venv_fable_lite: ./.ci-venv/Scripts/fable-lite.exe
     runs-on: ${{ matrix.os }}
     env:
       PYTHONIOENCODING: utf-8
@@ -28,7 +32,7 @@ jobs:
       - name: Version synchronization
         run: python scripts/sync_version.py --check
       - name: Ruff
-        run: ruff check core adapters fable_lite goals tests eval contrib scripts --exclude eval/ab
+        run: ruff check core adapters smtw fable_lite goals tests eval contrib scripts --exclude eval/ab
       - name: Unit tests
         run: python -m pytest tests/ -q
       - name: Deterministic probes
@@ -36,16 +40,22 @@ jobs:
       - name: E2E smoke (hook chain)
         run: python eval/e2e_smoke.py
       - name: Python compile
-        run: python -m compileall -q core adapters fable_lite goals eval contrib scripts
+        run: python -m compileall -q core adapters smtw fable_lite goals eval contrib scripts
       - name: Fresh W9 provenance receipt
         run: python -m eval.provenance.run --output "${{ runner.temp }}/smtw-provenance.json"
       - name: Build wheel
         run: python -m build --wheel --outdir dist
+      - name: Validate wheel RECORD
+        run: python scripts/check_wheel_contents.py --wheel-dir dist
       - name: Install wheel in clean Python 3.12 environment
         run: |
           python -m venv .ci-venv
           ${{ matrix.venv_python }} -m pip install --no-index --find-links dist fable-lite
+          ${{ matrix.venv_python }} -P -m smtw --help
           ${{ matrix.venv_python }} -P -m fable_lite --help
+          ${{ matrix.venv_python }} -P -c "import fable_lite, fable_lite.cli, smtw, smtw.cli; assert fable_lite is smtw; assert fable_lite.cli is smtw.cli"
+          ${{ matrix.venv_smtw }} version
+          ${{ matrix.venv_fable_lite }} version
           ${{ matrix.venv_python }} -P -c "from core.release_gate import auto_migration_enabled; assert auto_migration_enabled()"
       - name: Upload fresh receipts and wheel
         if: always()
