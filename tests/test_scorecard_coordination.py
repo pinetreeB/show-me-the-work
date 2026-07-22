@@ -45,7 +45,7 @@ from core.scorecard_coordination import (
     try_record_coordination_event,
 )
 from core.state_layout import state_dir
-from fable_lite.scorecard import run_scorecard
+from smtw.scorecard import run_scorecard
 
 
 def _event(

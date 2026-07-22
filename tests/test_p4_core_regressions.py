@@ -13,7 +13,7 @@ import core.agent_log as agent_log
 from core.ledger import JsonObject, load_ledger, record_event
 from core.state_layout import state_dir
 from core.verify_state import evaluate_stop
-from fable_lite.check_support import has_successful_verification
+from smtw.check_support import has_successful_verification
 
 
 def _record_prompt(root: Path) -> None:

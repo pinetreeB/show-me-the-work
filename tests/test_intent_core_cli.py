@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def run_cli(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     python_path = os.pathsep.join([str(ROOT), os.environ.get("PYTHONPATH", "")])
     return subprocess.run(
-        [sys.executable, "-m", "fable_lite", *args],
+        [sys.executable, "-m", "smtw", *args],
         cwd=cwd or ROOT,
         env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONPATH": python_path},
         check=False,

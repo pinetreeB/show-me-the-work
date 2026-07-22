@@ -100,6 +100,14 @@ Pure-stdlib Python core (zero Claude Code imports — platform-neutral, adapters
 
 > Compatibility note: the internal state path remains `.fable-lite/` to avoid breaking existing installations. A public alias that separates shared config from per-user runtime state is still at the design stage with no version committed yet (follow-up ADR, STATE-01).
 
+The canonical Python package is `smtw`. The legacy `fable_lite` import and
+`python -m fable_lite` entry point remain as a deprecated compatibility shim
+through v3.x and emit `DeprecationWarning`; removal is reserved for v4 or later.
+Environments that explicitly promote that warning to an error, including
+`PYTHONWARNINGS=error`, are not compatibility targets. Running a source checkout
+while an older global `fable-lite` distribution is also installed is unsupported;
+use a clean virtual environment so module code and distribution metadata agree.
+
 Non-document file changes require a fresh successful verification in every task mode (`quick`, `normal`, and `deep`). No change and documentation-only turns retain their existing allow behavior.
 
 ### Host support

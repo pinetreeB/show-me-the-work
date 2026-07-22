@@ -24,7 +24,7 @@ HookOutput: TypeAlias = dict[str, JsonValue]
 def run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
     python_path = os.pathsep.join([str(ROOT), os.environ.get("PYTHONPATH", "")])
     return subprocess.run(
-        [sys.executable, "-m", "fable_lite", *args],
+        [sys.executable, "-m", "smtw", *args],
         env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONPATH": python_path},
         check=False,
         capture_output=True,
