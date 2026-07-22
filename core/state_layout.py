@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
@@ -7,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import threading
 from typing import Final
 
 
@@ -23,6 +26,7 @@ MIGRATION_STAGING_PREFIX: Final = ".smtw.migrating-"
 MIGRATION_MARKER_NAME: Final = ".smtw-migration.json"
 MIGRATION_MARKER_SCHEMA_VERSION: Final = 1
 MIGRATION_PUBLISHED_PHASE: Final = "published"
+DEFAULT_STATE_WRITE_WAIT_SECONDS: Final = 1.0
 
 RUNTIME_STATE_DIR_NAMES: Final = frozenset(
     {STATE_DIR_NAME, LEGACY_STATE_DIR_NAME}
@@ -51,6 +55,14 @@ class StateLayout(str, Enum):
 
 class StateLayoutError(RuntimeError):
     pass
+
+
+class _StateWriteScopes(threading.local):
+    def __init__(self) -> None:
+        self.held: dict[Path, tuple[Path, int]] = {}
+
+
+_STATE_WRITE_SCOPES = _StateWriteScopes()
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +120,46 @@ def migration_lock_path(project_root: str | Path) -> Path:
 
 def migration_receipt_path(project_root: str | Path) -> Path:
     return Path(project_root).resolve() / MIGRATION_RECEIPT_NAME
+
+
+@contextmanager
+def state_write_scope(
+    project_root: str | Path,
+    *,
+    wait_seconds: float = DEFAULT_STATE_WRITE_WAIT_SECONDS,
+) -> Iterator[Path]:
+    """Serialize project-state mutation with migration and yield its authority.
+
+    The authority is selected only after the layout lock is acquired.  Nested
+    state writers in the same thread reuse the outer scope so a ledger
+    transaction can safely cover its journals, snapshots, and agent logs.
+    """
+    root = Path(project_root).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    held = _STATE_WRITE_SCOPES.held.get(root)
+    if held is not None:
+        authority, depth = held
+        _STATE_WRITE_SCOPES.held[root] = (authority, depth + 1)
+        try:
+            yield authority
+        finally:
+            current = _STATE_WRITE_SCOPES.held.get(root)
+            if current is not None:
+                if current[1] <= 1:
+                    _STATE_WRITE_SCOPES.held.pop(root, None)
+                else:
+                    _STATE_WRITE_SCOPES.held[root] = (current[0], current[1] - 1)
+        return
+
+    from core.file_lock import owner_lock
+
+    with owner_lock(migration_lock_path(root), wait_seconds=wait_seconds):
+        authority = state_dir(root)
+        _STATE_WRITE_SCOPES.held[root] = (authority, 1)
+        try:
+            yield authority
+        finally:
+            _STATE_WRITE_SCOPES.held.pop(root, None)
 
 
 def is_migration_staging_name(name: str) -> bool:
