@@ -9,6 +9,7 @@ import tempfile
 from typing import TypeAlias
 
 from .ledger import JsonObject, state_dir
+from .state_layout import state_write_scope
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -56,35 +57,37 @@ def save_intent(project_root: str, intent: IntentInput) -> JsonObject:
         "confirmed_at_prompt": intent.confirmed_at_prompt.strip(),
         "ambiguity_score": _bounded_score(intent.ambiguity_score),
     }
-    directory = state_dir(project_root)
-    directory.mkdir(parents=True, exist_ok=True)
-    destination = directory / "intent.json"
     serialized = json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True)
-    handle = tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        newline="\n",
-        delete=False,
-        dir=directory,
-        prefix="intent-",
-        suffix=".tmp",
-    )
-    temp_name = handle.name
-    try:
-        with handle:
-            _ = handle.write(serialized)
-        os.replace(temp_name, destination)
-    except OSError:
+    with state_write_scope(project_root) as directory:
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / "intent.json"
+        handle = tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            delete=False,
+            dir=directory,
+            prefix="intent-",
+            suffix=".tmp",
+        )
+        temp_name = handle.name
         try:
-            Path(temp_name).unlink(missing_ok=True)
+            with handle:
+                _ = handle.write(serialized)
+            os.replace(temp_name, destination)
         except OSError:
-            pass
+            try:
+                Path(temp_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
     return record
 
 
 def clear_intent(project_root: str) -> bool:
     try:
-        intent_path(project_root).unlink(missing_ok=True)
+        with state_write_scope(project_root) as authority:
+            (authority / "intent.json").unlink(missing_ok=True)
     except OSError:
         return False
     return True

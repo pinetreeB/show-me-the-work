@@ -18,7 +18,11 @@ from .runtime_env import (
     canonical_env_key,
     smtw_env,
 )
-from .state_layout import state_dir
+from .state_layout import (
+    DEFAULT_STATE_WRITE_WAIT_SECONDS,
+    state_dir,
+    state_write_scope,
+)
 
 LOCK_WAIT_SECONDS = 15.0
 STALE_LOCK_SECONDS = _file_lock.STALE_LOCK_SECONDS
@@ -76,9 +80,6 @@ def ledger_transaction(
 ) -> Iterator[_LedgerTransaction]:
     """Hold the root ledger lock; zero wait makes one immediate acquire attempt."""
     root = Path(project_root).resolve()
-    directory = state_dir(root)
-    directory.mkdir(parents=True, exist_ok=True)
-    lock_path = directory / "ledger.lock"
     wait_seconds = (
         _lock_wait_seconds()
         if lock_wait_seconds is None
@@ -92,10 +93,24 @@ def ledger_transaction(
             "release_wait_seconds",
         )
     )
-    deadline = time.monotonic() + wait_seconds
-    transaction = _LedgerTransaction(root)
-    if os.name == "posix":
-        with _posix_guard(directory / "ledger.guard", deadline):
+    layout_wait = min(wait_seconds, DEFAULT_STATE_WRITE_WAIT_SECONDS)
+    with state_write_scope(root, wait_seconds=layout_wait) as directory:
+        directory.mkdir(parents=True, exist_ok=True)
+        lock_path = directory / "ledger.lock"
+        deadline = time.monotonic() + wait_seconds
+        transaction = _LedgerTransaction(root)
+        if os.name == "posix":
+            with _posix_guard(directory / "ledger.guard", deadline):
+                with _owned_lock(
+                    lock_path,
+                    deadline,
+                    release_wait_seconds=release_seconds,
+                ):
+                    try:
+                        yield transaction
+                    finally:
+                        transaction._deactivate()
+        else:
             with _owned_lock(
                 lock_path,
                 deadline,
@@ -105,16 +120,6 @@ def ledger_transaction(
                     yield transaction
                 finally:
                     transaction._deactivate()
-    else:
-        with _owned_lock(
-            lock_path,
-            deadline,
-            release_wait_seconds=release_seconds,
-        ):
-            try:
-                yield transaction
-            finally:
-                transaction._deactivate()
 
 
 def _lock_wait_seconds() -> float:
@@ -173,20 +178,22 @@ def append_agent_event(
     project_root: str,
     agent: str,
     payload: Mapping[str, JsonValue],
-) -> None:
+) -> bool:
     if not agent:
-        return
-    path = agent_log_path(project_root, agent)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    event = _event_payload(payload)
-    event["agent"] = agent
-    event["timestamp"] = datetime.now(UTC).isoformat()
+        return False
     try:
-        with path.open("a", encoding="utf-8", newline="\n") as handle:
-            _ = handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True))
-            _ = handle.write("\n")
+        with state_write_scope(project_root) as authority:
+            path = authority / "agents" / f"{_safe_agent_name(agent)}.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            event = _event_payload(payload)
+            event["agent"] = agent
+            event["timestamp"] = datetime.now(UTC).isoformat()
+            with path.open("a", encoding="utf-8", newline="\n") as handle:
+                _ = handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True))
+                _ = handle.write("\n")
+        return True
     except OSError:
-        return
+        return False
 
 
 def load_agent_events(project_root: str, agent: str) -> list[JsonObject] | None:

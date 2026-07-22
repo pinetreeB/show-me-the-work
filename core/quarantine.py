@@ -10,6 +10,7 @@ import time
 from typing import Final
 
 from .ledger_storage import state_dir
+from .state_layout import state_write_scope
 
 QUARANTINE_DIRNAME: Final[str] = "quarantine"
 ENTRY_PREFIX: Final[str] = "blocked-"
@@ -80,7 +81,38 @@ def backup_blocked_command(
     deny 판정에는 절대 영향을 주지 않는다(fail-open, but 게이트 판정 불변).
     """
     try:
-        directory = quarantine_dir(project_root)
+        with state_write_scope(project_root, wait_seconds=0) as authority:
+            return _backup_blocked_command_unlocked(
+                authority,
+                command=command,
+                agent_key=agent_key,
+                reason_code=reason_code,
+                target=target,
+                now=now,
+                max_entries=max_entries,
+                max_entry_bytes=max_entry_bytes,
+                max_total_bytes=max_total_bytes,
+                ttl_seconds=ttl_seconds,
+            )
+    except Exception:  # noqa: BLE001 - a deny must never wait or fail on backup.
+        return None
+
+
+def _backup_blocked_command_unlocked(
+    authority: Path,
+    *,
+    command: str,
+    agent_key: str,
+    reason_code: str,
+    target: str,
+    now: float | None,
+    max_entries: int,
+    max_entry_bytes: int,
+    max_total_bytes: int,
+    ttl_seconds: int,
+) -> Path | None:
+    try:
+        directory = authority / QUARANTINE_DIRNAME
         directory.mkdir(parents=True, exist_ok=True)
         stamp = _timestamp_compact(now)
         short_agent = _safe_agent_key(agent_key)
@@ -263,17 +295,21 @@ def show_entry(project_root: str, entry_id: str) -> str | None:
 def clear_entries(
     project_root: str, *, entry_id: str | None = None, clear_all: bool = False
 ) -> int:
-    directory = quarantine_dir(project_root)
-    if clear_all:
-        count = 0
-        for path in _entry_files(directory):
-            _safe_unlink(path)
-            count += 1
-        return count
-    if entry_id:
-        path = _resolve_entry_path(project_root, entry_id)
-        if path is None:
+    try:
+        with state_write_scope(project_root) as authority:
+            directory = authority / QUARANTINE_DIRNAME
+            if clear_all:
+                count = 0
+                for path in _entry_files(directory):
+                    _safe_unlink(path)
+                    count += 1
+                return count
+            if entry_id:
+                path = _resolve_entry_path(project_root, entry_id)
+                if path is None:
+                    return 0
+                _safe_unlink(path)
+                return 1
             return 0
-        _safe_unlink(path)
-        return 1
-    return 0
+    except OSError:
+        return 0

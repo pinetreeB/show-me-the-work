@@ -16,7 +16,10 @@ from core.contract import (  # noqa: E402 - direct-script import needs repo boot
     _single_active_exact_identity,
     namespaced_contract_path,
 )
-from core.state_layout import state_dir  # noqa: E402 - direct-script bootstrap
+from core.state_layout import (  # noqa: E402 - direct-script bootstrap
+    state_dir,
+    state_write_scope,
+)
 
 JsonScalar: TypeAlias = str | bool
 JsonValue: TypeAlias = JsonScalar | list[dict[str, JsonScalar]]
@@ -71,13 +74,20 @@ def _load(root: str, identity: Identity | None = None) -> JsonObject:
 
 
 def _save(root: str, data: JsonObject, identity: Identity | None = None) -> None:
-    path = _goals_path(root, identity)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _ = path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-        newline="\n",
-    )
+    with state_write_scope(root, wait_seconds=15) as authority:
+        if identity is None:
+            path = authority / "goals.json"
+        else:
+            filename = namespaced_contract_path(
+                root, _identity_agent_key(identity)
+            ).name
+            path = authority / "goals" / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+            newline="\n",
+        )
 
 
 def _stories(data: JsonObject) -> list[dict[str, JsonScalar]]:

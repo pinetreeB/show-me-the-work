@@ -39,6 +39,7 @@ from .ledger_storage import atomic_write_text, ledger_path as ledger_path, state
 from .ledger_v1 import apply_v1_event, classify_change_kind as classify_change_kind, default_ledger, sequence_value
 from .ledger_v2 import apply_v2_event, default_v2_ledger, turn_is_closed
 from .release_gate import auto_migration_enabled, status_backfill_enabled
+from .state_layout import StateLayoutError, state_write_scope
 from .verification_covers import active_turn, agent_key, capture_covers
 
 
@@ -73,7 +74,7 @@ def load_ledger(payload: Mapping[str, JsonValue]) -> JsonObject:
     try:
         loaded: JsonValue = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        _preserve_corrupt_ledger(path)
+        _preserve_corrupt_ledger(_project_root(payload), path)
         return _expose_attribution_health(default_ledger(), path, degraded=True)
     except FileNotFoundError:
         return _expose_attribution_health(default_ledger(), path)
@@ -105,7 +106,7 @@ def load_ledger(payload: Mapping[str, JsonValue]) -> JsonObject:
         merged = default_ledger()
         merged.update(loaded)
         return _expose_attribution_health(merged, path)
-    _preserve_corrupt_ledger(path)
+    _preserve_corrupt_ledger(_project_root(payload), path)
     return _expose_attribution_health(default_ledger(), path, degraded=True)
 
 
@@ -218,30 +219,36 @@ def _sanitize_bootstrap_coordination_fields(ledger: JsonObject) -> bool:
     return changed
 
 
-def _preserve_corrupt_ledger(path: Path) -> None:
-    if not path.exists():
-        return
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    backup = path.with_name(f"{path.name}.corrupt-{timestamp}-{uuid4().hex}.bak")
+def _preserve_corrupt_ledger(project_root: str, path: Path) -> None:
     try:
-        path.replace(backup)
-    except OSError:
+        with state_write_scope(project_root) as authority:
+            current = authority / path.name
+            if not current.exists():
+                return
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            backup = current.with_name(
+                f"{current.name}.corrupt-{timestamp}-{uuid4().hex}.bak"
+            )
+            current.replace(backup)
+    except (OSError, StateLayoutError):
         return
 
 
 def save_ledger(payload: Mapping[str, JsonValue], ledger: JsonObject) -> bool:
     if isinstance(ledger, _StatusMigrationRequiredLedger):
         return False
-    destination = ledger_path(_project_root(payload))
-    if _invocation_status_migration_required(destination):
-        return False
     schema_version = ledger.get("schema_version")
     serialized = serialize_v2_ledger(ledger) if schema_version == 2 else json.dumps(
         ledger, ensure_ascii=False, indent=2, sort_keys=True
     )
     try:
-        atomic_write_text(destination, serialized)
-    except OSError:
+        root = _project_root(payload)
+        with state_write_scope(root) as authority:
+            destination = authority / "ledger.json"
+            if _invocation_status_migration_required(destination):
+                return False
+            atomic_write_text(destination, serialized)
+    except (OSError, StateLayoutError):
         return False
     return True
 

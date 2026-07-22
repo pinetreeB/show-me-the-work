@@ -21,7 +21,7 @@ from .provenance_types import (
     Snapshot,
     SnapshotExclusion,
 )
-from .state_layout import state_dir
+from .state_layout import state_dir, state_write_scope
 
 JsonScalar: TypeAlias = str | int | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -61,9 +61,10 @@ def turn_baseline_path(root: Path, agent: str, turn_id: str) -> Path:
 
 
 def save_workspace_current(root: Path, snapshot: Snapshot) -> Path:
-    path = workspace_current_path(root)
-    _save(path, snapshot)
-    return path
+    with state_write_scope(root):
+        path = workspace_current_path(root)
+        _save(path, snapshot)
+        return path
 
 
 def load_workspace_current(root: Path) -> Snapshot | None:
@@ -71,15 +72,17 @@ def load_workspace_current(root: Path) -> Snapshot | None:
 
 
 def save_turn_baseline(root: Path, agent: str, turn_id: str, snapshot: Snapshot) -> Path:
-    path = turn_baseline_path(root, agent, turn_id)
-    _save(path, snapshot, (agent, turn_id))
-    return path
+    with state_write_scope(root):
+        path = turn_baseline_path(root, agent, turn_id)
+        _save(path, snapshot, (agent, turn_id))
+        return path
 
 
 def save_turn_baseline_from_current(root: Path, agent: str, turn_id: str, snapshot: Snapshot) -> Path:
-    destination = turn_baseline_path(root, agent, turn_id)
-    _save(destination, snapshot, (agent, turn_id))
-    return destination
+    with state_write_scope(root):
+        destination = turn_baseline_path(root, agent, turn_id)
+        _save(destination, snapshot, (agent, turn_id))
+        return destination
 
 
 def load_turn_baseline(root: Path, agent: str, turn_id: str) -> Snapshot | None:
@@ -196,13 +199,14 @@ def advance_turn_baseline(
 
 
 def delete_turn_baseline(root: Path, agent: str, turn_id: str) -> None:
-    path = turn_baseline_path(root, agent, turn_id)
-    try:
-        if path.exists():
-            _assert_baseline_identity(path, agent, turn_id)
-        path.unlink(missing_ok=True)
-    except OSError as exc:
-        raise SnapshotStoreError(path, str(exc)) from exc
+    with state_write_scope(root):
+        path = turn_baseline_path(root, agent, turn_id)
+        try:
+            if path.exists():
+                _assert_baseline_identity(path, agent, turn_id)
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise SnapshotStoreError(path, str(exc)) from exc
 
 
 def _save(
