@@ -252,6 +252,129 @@ def test_command_after_heredoc_delimiter_is_still_executable(tmp_path: Path) -> 
 @pytest.mark.parametrize(
     "command",
     (
+        'dash -c "rm peer.py"',
+        'zsh -c "rm peer.py"',
+        'ash -c "rm peer.py"',
+        'ksh -c "rm peer.py"',
+        'csh -c "rm peer.py"',
+        'tcsh -c "rm peer.py"',
+        'fish -c "rm peer.py"',
+        '/usr/bin/dash -c "rm peer.py"',
+        "dash <<EOF\nrm peer.py\nEOF",
+    ),
+)
+def test_reverify_shell_family_payloads_are_executable(
+    tmp_path: Path, command: str
+) -> None:
+    assert _decision(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "if rm peer.py; then echo safe; fi",
+        "while rm peer.py; do :; done",
+        "until rm peer.py; do :; done",
+        "if rm $f; then :; fi",
+        "if ! rm peer.py; then :; fi",
+        "coproc rm peer.py",
+        "coproc { rm peer.py; }",
+        "coproc MP rm peer.py",
+        "coproc mp rm peer.py",
+        "for rm peer.py; do :; done",
+        "select rm peer.py; do :; done",
+        "f(){ rm peer.py; }; f",
+        "g(){ rm $1; }; g peer.py",
+    ),
+)
+def test_reverify_control_positions_execute_destructive_commands(
+    tmp_path: Path, command: str
+) -> None:
+    assert _decision(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        r"find . -ok rm {} \;",
+        r"find . -okdir rm {} \;",
+        "find /tmp -depth -name peer.py -delete",
+        "echo safe && find . -delete",
+        "r[m] peer.py",
+        "/bin/r[m] peer.py",
+    ),
+)
+def test_reverify_find_actions_and_bracket_globs_are_destructive(
+    tmp_path: Path, command: str
+) -> None:
+    assert _decision(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "diff <(rm peer.py) x",
+        "wc <(rm peer.py)",
+        "paste <(rm) <(rm f2)",
+        "cat >(rm peer.py)",
+        "echo `echo `rm peer.py``",
+        "case 1 in\n1) rm peer.py;;\nesac",
+        "case 1 in\n1|2) rm peer.py;;\nesac",
+        "case 1 in a|b) rm peer.py;; esac",
+        'bash<<<"rm peer.py"',
+        "bash<<<'rm peer.py'",
+        'env --split-string="rm peer.py"',
+    ),
+)
+def test_reverify_nested_execution_forms_open_command_positions(
+    tmp_path: Path, command: str
+) -> None:
+    assert _decision(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "dash",
+        'dash -c "echo rm peer.py"',
+        "dash <<'EOF'\necho rm peer.py\nEOF",
+        "busybox ls",
+        "find . -name '*.py' -print",
+        "find . -name '-delete' -print",
+        r"find . -ok echo rm {} \;",
+        "coproc echo safe",
+        "coproc MP echo safe",
+        'if echo "rm peer.py"; then :; fi',
+        'case 1 in 1) echo "rm peer.py";; esac',
+        'case 1 in\n1|2) echo "rm peer.py";;\nesac',
+        "diff <(echo rm peer.py) x",
+        "cat >(echo rm peer.py)",
+        'bash<<<"echo rm peer.py"',
+        'env --split-string="echo rm peer.py"',
+        "env --split-string='echo rm peer.py'",
+        "f(){ rm peer.py; }",
+        'echo "f(){ rm peer.py; }; f"',
+    ),
+)
+def test_reverify_benign_family_controls_remain_allowed(
+    tmp_path: Path, command: str
+) -> None:
+    assert parse_destructive_commands(command) == (), command
+    assert _decision(tmp_path, command)["decision"] == "allow", command
+
+
+def test_runtime_eval_output_remains_the_documented_static_limit(
+    tmp_path: Path,
+) -> None:
+    command = "eval `echo rm peer.py`"
+
+    assert parse_destructive_commands(command) == ()
+    assert _decision(tmp_path, command)["decision"] == "allow"
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
         'echo "a & rm peer.py"',
         'python -c "print(\'rm peer.py\')"',
         'printf "x\ny"',
