@@ -988,13 +988,14 @@ def test_r2_static_block_points_map_to_closed_reasons() -> None:
         "parse_unable_obfuscated": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
         "parse_unable_pathspec_from_file": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
         "parse_unable_pipeline": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+        "parse_unable_shell_syntax": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
         "parse_unable_subcommand": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
         "parse_unable_target": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
         "parse_unable_wrapped": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
     }
 
     assert R2_COORDINATION_REASON_MAP == expected
-    assert len(R2_COORDINATION_REASON_MAP) == 19
+    assert len(R2_COORDINATION_REASON_MAP) == 20
     assert set(R2_COORDINATION_REASON_MAP.values()) == {
         CoordinationReason.ATTRIBUTION_DEGRADED,
         CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
