@@ -87,7 +87,7 @@ def append_intent_context(lines: list[str], intent_required: bool, intent_comman
     lines.extend([
         "의도 확인 필요: 수정 전 `확인질문 N:` 형식으로 목표/범위/비목표를 최대 3개만 물어보세요.",
         f"확인되면 정확히 이 명령을 그대로 실행하세요: `{intent_command}`",
-        "저장소 루트에서 직접 실행 중이면 `python -m fable_lite intent set ...`도 가능하지만, 플러그인 사용 중에는 위 절대경로 명령을 우선하세요.",
+        "저장소 루트에서 직접 실행 중이면 `python -m smtw intent set ...`도 가능하지만, 플러그인 사용 중에는 위 절대경로 명령을 우선하세요.",
         "사용자가 묻지 말라고 한 경우에만 합리적 가정을 기록하고 명령 끝에 `--assumed`를 붙이세요.",
     ])
 

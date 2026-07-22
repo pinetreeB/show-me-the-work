@@ -2,7 +2,7 @@
 
 **show-me-the-work** (`smtw`, Korean: **쇼미더워크**) is evidence-based AI work supervision: no executed proof, no credible "done."
 
-[![version](https://img.shields.io/badge/version-2.5.0-brightgreen.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.6.0-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > 🇰🇷 **한국어가 1차 문서입니다**: [`README.ko.md`](README.ko.md)
@@ -99,6 +99,14 @@ The same discipline generalizes beyond coding. In a real multi-agent research se
 Pure-stdlib Python core (zero Claude Code imports — platform-neutral, adapters are thin wrappers), single state dir `.fable-lite/`, every hook fail-open, Windows-native.
 
 > Compatibility note: the internal state path remains `.fable-lite/` to avoid breaking existing installations. A public alias that separates shared config from per-user runtime state is still at the design stage with no version committed yet (follow-up ADR, STATE-01).
+
+The canonical Python package is `smtw`. The legacy `fable_lite` import and
+`python -m fable_lite` entry point remain as a deprecated compatibility shim
+through v3.x and emit `DeprecationWarning`; removal is reserved for v4 or later.
+Environments that explicitly promote that warning to an error, including
+`PYTHONWARNINGS=error`, are not compatibility targets. Running a source checkout
+while an older global `fable-lite` distribution is also installed is unsupported;
+use a clean virtual environment so module code and distribution metadata agree.
 
 Non-document file changes require a fresh successful verification in every task mode (`quick`, `normal`, and `deep`). No change and documentation-only turns retain their existing allow behavior.
 

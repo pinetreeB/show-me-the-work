@@ -1,6 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [2.6.0] - 2026-07-22 — canonical Python package (`fable_lite` → `smtw`)
+
+### Changed
+
+- Renamed the canonical Python package from `fable_lite` to `smtw`. Both console scripts (`smtw` and `fable-lite`) now enter `smtw.cli`, and user-facing module commands use `python -m smtw`.
+
+### Compatibility
+
+- `fable_lite` remains as a deprecation shim through v3.x. The package and all public submodules are aliases of the corresponding `smtw` module objects, so legacy imports, `python -m fable_lite`, reload, Windows spawn, and old pickle module paths remain supported.
+- The shim emits `DeprecationWarning` once per process with the message `fable_lite is deprecated; import smtw instead`. Default warning handling is supported; explicitly promoting the warning to an error with `-W error::DeprecationWarning` or `PYTHONWARNINGS=error` is intentional failure behavior.
+- Running this source checkout while an older global `fable-lite` distribution remains installed is unsupported because distribution metadata can resolve to the older version. Use a clean virtual environment.
 
 ## [2.5.0] - 2026-07-22 — internal unification (`.fable-lite` → `.smtw`)
 

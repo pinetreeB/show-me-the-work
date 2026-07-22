@@ -35,7 +35,7 @@ jobs:
             throw "tag ${{ github.ref_name }} does not match plugin version $version"
           }
       - name: Ruff
-        run: ruff check core adapters fable_lite goals tests eval contrib scripts --exclude eval/ab
+        run: ruff check core adapters smtw fable_lite goals tests eval contrib scripts --exclude eval/ab
       - name: Unit tests
         run: python -m pytest tests/ -q
       - name: Deterministic probes
@@ -43,7 +43,7 @@ jobs:
       - name: E2E smoke
         run: python eval/e2e_smoke.py
       - name: Python compile
-        run: python -m compileall -q core adapters fable_lite goals eval contrib scripts
+        run: python -m compileall -q core adapters smtw fable_lite goals eval contrib scripts
       - name: W9 golden plus randomized 1000
         run: python -m eval.provenance.run --randomized 1000 --output "${{ runner.temp }}/smtw-provenance.json"
       - name: W10 1k and 10k benchmark (perf tracking, non-blocking)
@@ -58,6 +58,8 @@ jobs:
         run: python -m pytest tests/test_block_counter_atomic.py::test_eight_subprocess_stops_increment_one_turn_counter_exactly_twice -q
       - name: Build wheel
         run: python -m build --wheel --outdir dist
+      - name: Validate wheel RECORD
+        run: python scripts/check_wheel_contents.py --wheel-dir dist
       - name: Clean wheel install and help outside checkout
         shell: pwsh
         # Clear the job-level PYTHONPATH=. for this step only: with the repo
@@ -72,7 +74,11 @@ jobs:
           $wheelPython = (Resolve-Path .release-venv\Scripts\python.exe).Path
           Push-Location $env:RUNNER_TEMP
           try {
+            & $wheelPython -P -m smtw --help
             & $wheelPython -P -m fable_lite --help
+            & $wheelPython -P -c "import fable_lite, fable_lite.cli, smtw, smtw.cli; assert fable_lite is smtw; assert fable_lite.cli is smtw.cli"
+            & (Join-Path (Split-Path $wheelPython) "smtw.exe") version
+            & (Join-Path (Split-Path $wheelPython) "fable-lite.exe") version
             & $wheelPython -P -c "from core.release_gate import auto_migration_enabled; assert auto_migration_enabled()"
           } finally {
             Pop-Location

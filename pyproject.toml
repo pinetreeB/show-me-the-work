@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fable-lite"
-version = "2.5.0"
+version = "2.6.0"
 description = "Evidence-based AI work supervision with deterministic verification gates."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,14 +13,15 @@ authors = [{ name = "show-me-the-work team" }]
 dependencies = []
 
 [project.scripts]
-smtw = "fable_lite.cli:main"
-fable-lite = "fable_lite.cli:main"
+smtw = "smtw.cli:main"
+fable-lite = "smtw.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["adapters*", "core*", "fable_lite*", "goals*"]
+include = ["adapters*", "core*", "fable_lite*", "goals*", "smtw*"]
 
 [tool.setuptools.package-data]
 core = ["release_receipts/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["ignore:fable_lite is deprecated:DeprecationWarning"]

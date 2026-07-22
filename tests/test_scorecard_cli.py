@@ -21,7 +21,7 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 def _run_scorecard(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     python_path = os.pathsep.join([str(ROOT), os.environ.get("PYTHONPATH", "")])
     return subprocess.run(
-        [sys.executable, "-m", "fable_lite", "scorecard", "--root", str(root), *args],
+        [sys.executable, "-m", "smtw", "scorecard", "--root", str(root), *args],
         cwd=ROOT,
         env={
             **os.environ,

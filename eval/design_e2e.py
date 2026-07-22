@@ -98,12 +98,12 @@ def run_hook(script: str, payload: JsonObject, *, cwd: str, design_on: bool = Fa
 
 
 def run_design_check(proj: str) -> tuple[int, JsonObject]:
-    """fable_lite check --root <proj> --design (layer A 정적 린트 + Stop 재사용용 결과 기록)."""
+    """smtw check --root <proj> --design (layer A 정적 린트 + Stop 재사용용 결과 기록)."""
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONPATH"] = os.pathsep.join([str(ROOT), os.environ.get("PYTHONPATH", "")])
     proc = subprocess.run(
-        [sys.executable, "-m", "fable_lite", "check", "--root", proj, "--design"],
+        [sys.executable, "-m", "smtw", "check", "--root", proj, "--design"],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
