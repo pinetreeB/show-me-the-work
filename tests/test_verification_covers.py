@@ -5,8 +5,8 @@ from pathlib import Path
 import core.ledger as ledger_module
 from core.ledger import JsonObject, JsonValue, record_event
 from core.verify_state import evaluate_stop, has_successful_verification
-from fable_lite.check import evaluate as evaluate_check
-from fable_lite.check_support import has_successful_verification as check_has_successful
+from smtw.check import evaluate as evaluate_check
+from smtw.check_support import has_successful_verification as check_has_successful
 
 
 def _payload(root: Path, event: str, agent: str = "alpha") -> dict[str, JsonValue]:

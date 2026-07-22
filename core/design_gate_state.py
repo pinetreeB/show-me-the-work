@@ -119,8 +119,8 @@ def _block_reason(state: Mapping[str, JsonValue]) -> str:
             line = first.get("line")
             rule = first.get("rule_id")
             if isinstance(path, str) and isinstance(line, int) and isinstance(rule, str):
-                return f"[smtw] 디자인 규칙 위반: {path}:{line} ({rule}). `fable_lite check --design` 재실행 필요."
-    return "[smtw] UI 변경인데 통과한 design_lint 결과가 없습니다. `fable_lite check --design` 실행 후 다시 완료하세요."
+                return f"[smtw] 디자인 규칙 위반: {path}:{line} ({rule}). `smtw check --design` 재실행 필요."
+    return "[smtw] UI 변경인데 통과한 design_lint 결과가 없습니다. `smtw check --design` 실행 후 다시 완료하세요."
 
 
 def _candidate_turns(

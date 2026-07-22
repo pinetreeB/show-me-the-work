@@ -43,7 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_ROOTS = (
     "core",
     "adapters",
-    "fable_lite",
+    "smtw",
     "goals",
     "contrib",
     "scripts",

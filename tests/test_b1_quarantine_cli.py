@@ -25,7 +25,7 @@ def _run_cli(argv: list[str]) -> tuple[int, str]:
     import io
     from contextlib import redirect_stdout
 
-    from fable_lite.cli import build_parser
+    from smtw.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -36,7 +36,7 @@ def _run_cli(argv: list[str]) -> tuple[int, str]:
 
 
 def test_quarantine_subcommand_is_registered() -> None:
-    from fable_lite.cli import build_parser
+    from smtw.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args(["quarantine", "list", "--root", "."])
@@ -151,7 +151,7 @@ def test_cli_clear_all_removes_every_entry(tmp_path: Path) -> None:
 
 
 def test_cli_has_no_apply_subcommand() -> None:
-    from fable_lite.cli import build_parser
+    from smtw.cli import build_parser
 
     parser = build_parser()
     with pytest.raises(SystemExit):

@@ -37,7 +37,7 @@ def run_version(_args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="fable_lite")
+    parser = argparse.ArgumentParser(prog="smtw")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     version_parser = subparsers.add_parser("version", help="설치된 버전을 출력합니다.")

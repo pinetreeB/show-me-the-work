@@ -44,7 +44,7 @@ def _verify(root: Path) -> None:
 
 
 def _run_design(root: Path, agent: str = "") -> tuple[int, dict[str, object]]:
-    command = [sys.executable, "-m", "fable_lite", "check", "--root", str(root), "--design"]
+    command = [sys.executable, "-m", "smtw", "check", "--root", str(root), "--design"]
     if agent:
         command.extend(("--agent", agent))
     completed = subprocess.run(

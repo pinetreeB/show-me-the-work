@@ -35,8 +35,8 @@ def _scripts_section() -> dict[str, str]:
 
 def test_project_scripts_declares_smtw_and_fable_lite_aliases() -> None:
     scripts = _scripts_section()
-    assert scripts.get("smtw") == "fable_lite.cli:main"
-    assert scripts.get("fable-lite") == "fable_lite.cli:main"
+    assert scripts.get("smtw") == "smtw.cli:main"
+    assert scripts.get("fable-lite") == "smtw.cli:main"
 
 
 @pytest.mark.parametrize("script_name", ["smtw", "fable-lite"])
@@ -56,7 +56,7 @@ def test_declared_entry_point_target_actually_imports_and_is_callable(script_nam
 
 
 def test_cli_has_a_version_subcommand_matching_pyproject_version() -> None:
-    from fable_lite.cli import build_parser
+    from smtw.cli import build_parser
 
     parser = build_parser()
     args = parser.parse_args(["version"])
@@ -69,7 +69,7 @@ def test_version_subcommand_prints_the_pyproject_version() -> None:
     expected = match.group("version")
 
     result = subprocess.run(
-        [sys.executable, "-m", "fable_lite", "version"],
+        [sys.executable, "-m", "smtw", "version"],
         cwd=ROOT,
         check=False,
         capture_output=True,
