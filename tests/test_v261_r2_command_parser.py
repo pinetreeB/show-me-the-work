@@ -176,6 +176,82 @@ def test_command_substitutions_open_nested_command_positions(
 @pytest.mark.parametrize(
     "command",
     (
+        "echo `rm peer.py`",
+        'echo "result: `rm peer.py`"',
+        "case 1 in 1) rm peer.py;; esac",
+        'bash <<< "rm peer.py"',
+        "busybox rm peer.py",
+        r"find . -name '*.py' -exec rm {} \;",
+    ),
+)
+def test_p4_shell_execution_forms_fail_closed(
+    tmp_path: Path, command: str
+) -> None:
+    assert _decision(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "cat <<EOF\nrm peer.py\nEOF",
+        "cat <<-EOF\n\trm peer.py\nEOF",
+        "echo $'rm peer.py'",
+        r'echo \"rm\"',
+        r'echo \"rm peer.py\"',
+    ),
+)
+def test_p4_heredoc_and_quoted_data_remain_non_executable(
+    tmp_path: Path, command: str
+) -> None:
+    assert _decision(tmp_path, command)["decision"] == "allow", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "echo `rm peer.py",
+        "echo $(rm peer.py",
+        "case 1 in 0) echo safe;; 1) rm peer.py;; esac",
+        "find . -exec rm {}",
+        'bash <<< "$UNKNOWN_COMMAND"',
+    ),
+)
+def test_p4_unclosed_or_dynamic_execution_forms_fail_closed(
+    tmp_path: Path, command: str
+) -> None:
+    assert _decision(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "cat <<'EOF'\n`rm peer.py`\nEOF",
+        "cat <<EOF\nrm peer.py\nEOF\necho safe",
+        'bash <<< "echo rm peer.py"',
+        'bash -c "echo safe" <<< "rm peer.py"',
+        "busybox echo rm peer.py",
+        r"find . -exec echo rm {} \;",
+        r'echo "\`rm peer.py\`"',
+        "echo $((1 << 2))",
+        'echo "<<EOF"',
+    ),
+)
+def test_p4_recognized_shell_data_and_safe_exec_payloads_are_allowed(
+    tmp_path: Path, command: str
+) -> None:
+    assert parse_destructive_commands(command) == (), command
+    assert _decision(tmp_path, command)["decision"] == "allow", command
+
+
+def test_command_after_heredoc_delimiter_is_still_executable(tmp_path: Path) -> None:
+    command = "cat <<EOF\nrm peer.py\nEOF\nrm peer.py"
+
+    assert _decision(tmp_path, command)["decision"] == "block"
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
         'echo "a & rm peer.py"',
         'python -c "print(\'rm peer.py\')"',
         'printf "x\ny"',

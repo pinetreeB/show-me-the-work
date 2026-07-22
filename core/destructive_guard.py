@@ -35,6 +35,7 @@ TRUNCATE_COMMAND_NAMES: Final[frozenset[str]] = frozenset({"set-content", "out-f
 WRAPPER_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
     {
         "bash",
+        "busybox",
         "cmd",
         "cmd.exe",
         "command",
@@ -54,6 +55,7 @@ WRAPPER_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
         "sudo",
         "time",
         "timeout",
+        "toybox",
         "xargs",
     }
 )
@@ -83,6 +85,7 @@ R2_COORDINATION_REASON_MAP: Final[dict[str, CoordinationReason]] = {
     "parse_unable_obfuscated": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
     "parse_unable_pathspec_from_file": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
     "parse_unable_pipeline": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
+    "parse_unable_shell_syntax": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
     "parse_unable_subcommand": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
     "parse_unable_target": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
     "parse_unable_wrapped": CoordinationReason.COMMAND_PARSE_UNAVAILABLE,
@@ -108,7 +111,9 @@ class _ShellScanState(Enum):
 _COMMAND_POSITION_CONTROL_WORDS: Final[frozenset[str]] = frozenset(
     {"then", "do", "else", "elif", "{", "(", "!", "&"}
 )
-_COMMAND_TERMINATORS: Final[frozenset[str]] = frozenset({"fi", "done", "}", ")"})
+_COMMAND_TERMINATORS: Final[frozenset[str]] = frozenset(
+    {"fi", "done", "esac", "}", ")"}
+)
 # 07-16 사고 재발 방지 3절차(설계 §6-4) — 원복 자가발급 표면을 두지 않는 대신 안내만 한다.
 RESOLUTION_PROCEDURES: Final[str] = (
     "파괴 조치는 오케스트레이터 전결입니다. 해소 절차: "
@@ -429,6 +434,15 @@ def _detect_wrapper_indirect(tokens: list[str]) -> ParsedDestructiveCommand | No
     wrapper = _command_name(tokens[0])
     if wrapper not in WRAPPER_COMMAND_NAMES:
         return None
+    if wrapper in {"bash", "sh"}:
+        here_string = _shell_here_string_payload(tokens)
+        if here_string is not None:
+            if not here_string:
+                return _blocked(CATEGORY_REMOVE, "parse_unable_wrapped")
+            nested = parse_destructive_command(here_string)
+            if nested is not None:
+                return _blocked(nested.category, "parse_unable_wrapped")
+            return None
     payload_tokens = _wrapper_payload_tokens(tokens, wrapper)
     if not payload_tokens:
         return None
@@ -439,6 +453,20 @@ def _detect_wrapper_indirect(tokens: list[str]) -> ParsedDestructiveCommand | No
         return nested
     if wrapper not in OPAQUE_WRAPPER_COMMAND_NAMES:
         return None
+    return None
+
+
+def _shell_here_string_payload(tokens: list[str]) -> str | None:
+    for index, raw_token in enumerate(tokens[1:], start=1):
+        token = _unquote(raw_token)
+        if token in {"-c", "--command"}:
+            return None
+        if token == "<<<":
+            if index + 1 >= len(tokens):
+                return ""
+            return _unquote(tokens[index + 1])
+        if token.startswith("<<<"):
+            return _unquote(token[3:])
     return None
 
 
@@ -504,6 +532,169 @@ def _detect_dynamic_command_head(tokens: list[str]) -> ParsedDestructiveCommand 
     return None
 
 
+def _detect_find_exec(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    if _command_name(tokens[0]) != "find":
+        return None
+    index = 1
+    while index < len(tokens):
+        token = _unquote(tokens[index]).casefold()
+        if token not in {"-exec", "-execdir"}:
+            index += 1
+            continue
+        payload_start = index + 1
+        terminator = payload_start
+        while terminator < len(tokens) and _unquote(tokens[terminator]) not in {
+            ";",
+            r"\;",
+            "+",
+        }:
+            terminator += 1
+        if terminator == len(tokens) or terminator == payload_start:
+            return _blocked(CATEGORY_REMOVE, "parse_unable_shell_syntax")
+        nested = parse_destructive_command(
+            " ".join(_unquote(item) for item in tokens[payload_start:terminator])
+        )
+        if nested is not None:
+            return nested
+        index = terminator + 1
+    return None
+
+
+def _find_arithmetic_end(line: str, opening: int) -> int | None:
+    depth = 1
+    index = opening + 3
+    while index < len(line) - 1:
+        if line[index] == "\\":
+            index += 2
+            continue
+        if line[index : index + 2] == "((":
+            depth += 1
+            index += 2
+            continue
+        if line[index : index + 2] == "))":
+            depth -= 1
+            if depth == 0:
+                return index
+            index += 2
+            continue
+        index += 1
+    return None
+
+
+def _heredoc_declarations(line: str) -> tuple[list[tuple[str, bool]], bool]:
+    declarations: list[tuple[str, bool]] = []
+    quote = ""
+    escaped = False
+    index = 0
+    while index < len(line):
+        character = line[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if character == "\\" and quote != "'":
+            escaped = True
+            index += 1
+            continue
+        if quote:
+            if character == quote:
+                quote = ""
+            index += 1
+            continue
+        if character in "'\"":
+            quote = character
+            index += 1
+            continue
+        if line[index : index + 3] == "$((":
+            arithmetic_end = _find_arithmetic_end(line, index)
+            if arithmetic_end is None:
+                return declarations, True
+            index = arithmetic_end + 2
+            continue
+        if (
+            line[index : index + 2] != "<<"
+            or line[index : index + 3] == "<<<"
+            or (index > 0 and line[index - 1] == "<")
+        ):
+            index += 1
+            continue
+
+        cursor = index + 2
+        strip_tabs = cursor < len(line) and line[cursor] == "-"
+        if strip_tabs:
+            cursor += 1
+        while cursor < len(line) and line[cursor] in " \t":
+            cursor += 1
+        if cursor >= len(line):
+            return declarations, True
+
+        delimiter: list[str] = []
+        word_quote = ""
+        while cursor < len(line):
+            character = line[cursor]
+            if word_quote:
+                if character == word_quote:
+                    word_quote = ""
+                elif character == "\\" and word_quote == '"' and cursor + 1 < len(line):
+                    cursor += 1
+                    delimiter.append(line[cursor])
+                else:
+                    delimiter.append(character)
+                cursor += 1
+                continue
+            if character in "'\"":
+                word_quote = character
+                cursor += 1
+                continue
+            if character == "\\" and cursor + 1 < len(line):
+                cursor += 1
+                delimiter.append(line[cursor])
+                cursor += 1
+                continue
+            if character.isspace() or character in ";|&<>()":
+                break
+            delimiter.append(character)
+            cursor += 1
+        if word_quote or not delimiter:
+            return declarations, True
+        declarations.append(("".join(delimiter), strip_tabs))
+        index = cursor
+    return declarations, False
+
+
+def _without_heredoc_bodies(command: str) -> tuple[str, bool]:
+    pending: list[tuple[str, bool]] = []
+    retained: list[str] = []
+    malformed = False
+    for line in command.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        line_ending = line[len(content) :]
+        if pending:
+            delimiter, strip_tabs = pending[0]
+            candidate = content.lstrip("\t") if strip_tabs else content
+            retained.append(line_ending)
+            if candidate == delimiter:
+                pending.pop(0)
+            continue
+        retained.append(line)
+        declarations, invalid = _heredoc_declarations(content)
+        pending.extend(declarations)
+        malformed = malformed or invalid
+    return "".join(retained), malformed or bool(pending)
+
+
+def _find_backtick_end(command: str, opening: int) -> int | None:
+    index = opening + 1
+    while index < len(command):
+        if command[index] == "\\":
+            index += 2
+            continue
+        if command[index] == "`":
+            return index
+        index += 1
+    return None
+
+
 def _find_substitution_end(command: str, open_paren: int) -> int | None:
     """Find the balanced end of a ``$(`` command substitution."""
     depth = 1
@@ -527,6 +718,12 @@ def _find_substitution_end(command: str, open_paren: int) -> int | None:
                 state = _ShellScanState.ESCAPED
             elif character == '"':
                 state = _ShellScanState.IN_ARGUMENTS
+            elif character == "`":
+                nested_end = _find_backtick_end(command, index)
+                if nested_end is None:
+                    return None
+                index = nested_end + 1
+                continue
             elif command[index : index + 2] == "$(":
                 nested_end = _find_substitution_end(command, index + 1)
                 if nested_end is None:
@@ -542,6 +739,12 @@ def _find_substitution_end(command: str, open_paren: int) -> int | None:
             state = _ShellScanState.IN_SINGLE_QUOTE
         elif character == '"':
             state = _ShellScanState.IN_DOUBLE_QUOTE
+        elif character == "`":
+            nested_end = _find_backtick_end(command, index)
+            if nested_end is None:
+                return None
+            index = nested_end + 1
+            continue
         elif command[index : index + 2] == "$(":
             nested_end = _find_substitution_end(command, index + 1)
             if nested_end is None:
@@ -558,7 +761,12 @@ def _find_substitution_end(command: str, open_paren: int) -> int | None:
     return None
 
 
-def _command_segments(command: str) -> list[str]:
+def _starts_case_construct(segment: str) -> bool:
+    tokens = [_unquote(token).casefold() for token in _tokenize(segment)]
+    return bool(tokens) and tokens[0] == "case" and "in" in tokens[1:]
+
+
+def _command_segments(command: str) -> tuple[list[str], bool]:
     """Split shell text only at executable command boundaries.
 
     Quoted and escaped operators remain arguments.  Outside those lexical
@@ -567,9 +775,12 @@ def _command_segments(command: str) -> list[str]:
     """
     segments: list[str] = []
     nested_segments: list[str] = []
+    malformed = False
     start = 0
     state = _ShellScanState.EXPECT_COMMAND
     return_state = _ShellScanState.EXPECT_COMMAND
+    case_active = False
+    case_expects_pattern = False
     index = 0
     while index < len(command):
         character = command[index]
@@ -590,10 +801,30 @@ def _command_segments(command: str) -> list[str]:
                 state = _ShellScanState.IN_ARGUMENTS
             elif command[index : index + 2] == "$(":
                 closing = _find_substitution_end(command, index + 1)
-                if closing is not None:
-                    nested_segments.extend(_command_segments(command[index + 2 : closing]))
-                    index = closing + 1
+                if closing is None:
+                    malformed = True
+                    index += 2
                     continue
+                nested, nested_malformed = _command_segments(
+                    command[index + 2 : closing]
+                )
+                nested_segments.extend(nested)
+                malformed = malformed or nested_malformed
+                index = closing + 1
+                continue
+            elif character == "`":
+                closing = _find_backtick_end(command, index)
+                if closing is None:
+                    malformed = True
+                    index += 1
+                    continue
+                nested, nested_malformed = _command_segments(
+                    command[index + 1 : closing]
+                )
+                nested_segments.extend(nested)
+                malformed = malformed or nested_malformed
+                index = closing + 1
+                continue
             index += 1
             continue
         if character == "\\":
@@ -611,16 +842,37 @@ def _command_segments(command: str) -> list[str]:
             continue
         if command[index : index + 2] == "$(":
             closing = _find_substitution_end(command, index + 1)
-            if closing is not None:
-                nested_segments.extend(_command_segments(command[index + 2 : closing]))
-                index = closing + 1
+            if closing is None:
+                malformed = True
+                index += 2
                 continue
+            nested, nested_malformed = _command_segments(command[index + 2 : closing])
+            nested_segments.extend(nested)
+            malformed = malformed or nested_malformed
+            index = closing + 1
+            continue
+        if character == "`":
+            closing = _find_backtick_end(command, index)
+            if closing is None:
+                malformed = True
+                index += 1
+                continue
+            nested, nested_malformed = _command_segments(command[index + 1 : closing])
+            nested_segments.extend(nested)
+            malformed = malformed or nested_malformed
+            index = closing + 1
+            continue
 
         separator_width = 0
         if character in "\r\n":
             separator_width = 2 if command[index : index + 2] == "\r\n" else 1
         elif character == ";":
-            separator_width = 1
+            if command[index : index + 3] == ";;&":
+                separator_width = 3
+            elif command[index : index + 2] in {";;", ";&"}:
+                separator_width = 2
+            else:
+                separator_width = 1
         elif character == "|" and (index == 0 or command[index - 1] != ">"):
             separator_width = 2 if command[index : index + 2] in {"||", "|&"} else 1
         elif character == "&" and not (
@@ -631,7 +883,16 @@ def _command_segments(command: str) -> list[str]:
                 separator_width = 2 if command[index : index + 2] == "&&" else 1
 
         if separator_width:
-            segments.append(command[start:index])
+            segment = command[start:index]
+            if _starts_case_construct(segment):
+                case_active = True
+            if case_expects_pattern and segment.strip():
+                segment = f"case _ in {segment}"
+                case_expects_pattern = False
+            segments.append(segment)
+            separator = command[index : index + separator_width]
+            if case_active and separator in {";;", ";&", ";;&"}:
+                case_expects_pattern = True
             index += separator_width
             start = index
             state = _ShellScanState.AFTER_SEPARATOR
@@ -639,8 +900,11 @@ def _command_segments(command: str) -> list[str]:
         if not character.isspace():
             state = _ShellScanState.IN_ARGUMENTS
         index += 1
-    segments.append(command[start:])
-    return segments + nested_segments
+    final_segment = command[start:]
+    if case_expects_pattern and final_segment.strip():
+        final_segment = f"case _ in {final_segment}"
+    segments.append(final_segment)
+    return segments + nested_segments, malformed
 
 
 _FALLBACK_SCAN_WINDOW: Final[int] = 6
@@ -650,7 +914,12 @@ def _detect_obfuscated_fallback(tokens: list[str]) -> ParsedDestructiveCommand |
     # 난독화된 파괴 명령은 corpus 전 사례에서 명령 앞부분(토큰 0~2)에 등장한다. 스캔
     # 창을 앞부분으로 제한해, python -c "<긴 스크립트 문자열>"처럼 뒤쪽 인자 안에 우연히
     # rm/git 같은 단어가 데이터로 섞여 있는 무관한 명령까지 오탐하지 않게 한다.
-    for token in tokens[:_FALLBACK_SCAN_WINDOW]:
+    scan_window = (
+        tokens[:_FALLBACK_SCAN_WINDOW]
+        if tokens and _NOISE_RE.search(tokens[0])
+        else tokens[:1]
+    )
+    for token in scan_window:
         if not _NOISE_RE.search(token):
             # 노이즈 문자(따옴표/백슬래시/괄호/&/$)가 전혀 없는 깨끗한 토큰은 이미
             # 전용 탐지기가 정확히 평가했다 — 여기서 재매치하면 "git commit"처럼
@@ -674,11 +943,37 @@ _DETECTORS: Final[tuple[Callable[[list[str]], ParsedDestructiveCommand | None], 
     _detect_git,
     _detect_remove,
     _detect_truncate_cmdlet,
+    _detect_find_exec,
     _detect_wrapper_indirect,
 )
 
 
 def _command_position_tokens(tokens: list[str]) -> list[str]:
+    if tokens and _unquote(tokens[0]).casefold() == "case":
+        in_index = next(
+            (
+                index
+                for index, token in enumerate(tokens[1:], start=1)
+                if _unquote(token).casefold() == "in"
+            ),
+            None,
+        )
+        if in_index is None:
+            return []
+        pattern_end = next(
+            (
+                index
+                for index, token in enumerate(tokens[in_index + 1 :], start=in_index + 1)
+                if ")" in _unquote(token)
+            ),
+            None,
+        )
+        if pattern_end is None:
+            return []
+        pattern_token = _unquote(tokens[pattern_end])
+        _pattern, _closing, remainder = pattern_token.partition(")")
+        tokens = ([remainder] if remainder else []) + tokens[pattern_end + 1 :]
+
     state = _ShellScanState.EXPECT_COMMAND
     index = 0
     closing_stack: list[str] = []
@@ -738,8 +1033,12 @@ def parse_destructive_commands(command: str) -> tuple[ParsedDestructiveCommand, 
     non-destructive segment는 제외한다. resolved=False 결과가 하나라도 있으면 호출자는
     전체 command를 fail-closed로 처리해야 한다.
     """
+    executable_text, heredoc_malformed = _without_heredoc_bodies(command)
+    segments, substitution_malformed = _command_segments(executable_text)
     parsed: list[ParsedDestructiveCommand] = []
-    for segment in _command_segments(command):
+    if heredoc_malformed or substitution_malformed:
+        parsed.append(_blocked(CATEGORY_REMOVE, "parse_unable_shell_syntax"))
+    for segment in segments:
         result = _parse_destructive_segment(segment)
         if result is not None:
             parsed.append(result)
