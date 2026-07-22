@@ -2,9 +2,9 @@
 
 ## [Unreleased]
 
-## [3.0.0] - 2026-07-22 — internal unification (`.fable-lite` → `.smtw`)
+## [2.5.0] - 2026-07-22 — internal unification (`.fable-lite` → `.smtw`)
 
-Internal identifier unification kept deferred at the v2.0 rebrand. Design of record: `docs/design/smtw-unification-v3.md` (3-AI). P4 summary: `docs/reviews/2026-07-22-smtw-unification-v3-p4.md`. Existing (unmigrated) projects keep running unchanged on the legacy tree — this release adds an explicit `smtw migrate` path and reads both generations; nothing auto-migrates.
+Internal identifier unification kept deferred at the v2.0 rebrand (design track "v3": `docs/design/smtw-unification-v3.md`, 3-AI). P4 summary: `docs/reviews/2026-07-22-smtw-unification-v3-p4.md`. Released as a **minor** version because it is fully backward compatible: existing (unmigrated) projects keep running unchanged on the legacy tree, this release only adds an explicit `smtw migrate` path and reads both generations, and nothing auto-migrates. The breaking removal of legacy read paths is reserved for a future major (v3/v4).
 
 ### Added
 
