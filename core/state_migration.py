@@ -34,9 +34,9 @@ from .state_layout import (
     StateManifest,
     build_state_manifest,
     inspect_state_layout_details,
-    migration_lock_path,
     migration_receipt_path,
     read_migration_marker,
+    state_write_scope,
     validate_published_marker,
 )
 
@@ -185,7 +185,7 @@ def migrate_state(
 
     _fault(fault_injector, "after_activation", root)
     try:
-        with owner_lock(migration_lock_path(root), wait_seconds=wait):
+        with state_write_scope(root, wait_seconds=wait):
             return _migrate_with_layout_lock(
                 root,
                 wait_seconds=wait,
