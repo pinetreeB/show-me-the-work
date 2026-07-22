@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from enum import Enum, auto
 import os
 from pathlib import Path
 import re
@@ -24,7 +25,6 @@ COMMAND_SEPARATORS: Final[frozenset[str]] = frozenset({"&&", "||", ";", "|"})
 
 GIT_SUBCOMMANDS_ALWAYS_IMPLICIT: Final[frozenset[str]] = frozenset({"reset", "clean", "stash", "read-tree"})
 GIT_SUBCOMMANDS_PATHSPEC: Final[frozenset[str]] = frozenset({"checkout", "restore"})
-GIT_CHECKOUT_DISCARD_FLAGS: Final[frozenset[str]] = frozenset({"-f", "--force"})
 GIT_SWITCH_DISCARD_FLAGS: Final[frozenset[str]] = frozenset({"--discard-changes"})
 GIT_SUBCOMMAND_NAMES: Final[frozenset[str]] = (
     GIT_SUBCOMMANDS_ALWAYS_IMPLICIT | GIT_SUBCOMMANDS_PATHSPEC | frozenset({"switch"})
@@ -37,9 +37,11 @@ WRAPPER_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
         "bash",
         "cmd",
         "cmd.exe",
+        "command",
         "doas",
         "env",
         "eval",
+        "exec",
         "ionice",
         "nice",
         "nohup",
@@ -87,11 +89,26 @@ R2_COORDINATION_REASON_MAP: Final[dict[str, CoordinationReason]] = {
 }
 
 _STRIP_RE = re.compile(r"[^A-Za-z0-9.-]+")
-_WORD_RE = re.compile(r"[A-Za-z][A-Za-z-]*")
 _NOISE_RE = re.compile(r"['\"\\()&$]")
 _REDIRECT_RE = re.compile(r"^(?P<operator>(?:\d*)>(?:[|&])?|&>\|?)(?P<target>.*)$")
 _APPEND_REDIRECT_RE = re.compile(r"^(?:\d*|&)>>")
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+class _ShellScanState(Enum):
+    EXPECT_COMMAND = auto()
+    IN_ARGUMENTS = auto()
+    AFTER_SEPARATOR = auto()
+    AFTER_CONTROL_WORD = auto()
+    IN_SINGLE_QUOTE = auto()
+    IN_DOUBLE_QUOTE = auto()
+    ESCAPED = auto()
+
+
+_COMMAND_POSITION_CONTROL_WORDS: Final[frozenset[str]] = frozenset(
+    {"then", "do", "else", "elif", "{", "(", "!", "&"}
+)
+_COMMAND_TERMINATORS: Final[frozenset[str]] = frozenset({"fi", "done", "}", ")"})
 # 07-16 사고 재발 방지 3절차(설계 §6-4) — 원복 자가발급 표면을 두지 않는 대신 안내만 한다.
 RESOLUTION_PROCEDURES: Final[str] = (
     "파괴 조치는 오케스트레이터 전결입니다. 해소 절차: "
@@ -168,16 +185,18 @@ def _blocked(category: str, reason: str) -> ParsedDestructiveCommand:
 def _parse_git_pathspec(subcommand: str, rest: list[str]) -> ParsedDestructiveCommand | None:
     positionals: list[str] = []
     index = 0
+    after_double_dash = False
     while index < len(rest):
         token = rest[index]
         if token in COMMAND_SEPARATORS:
             break
-        if token == "--":
+        if not after_double_dash and token == "--":
+            after_double_dash = True
             index += 1
             continue
-        if token.startswith("--pathspec-from-file"):
+        if not after_double_dash and token.startswith("--pathspec-from-file"):
             return _blocked(CATEGORY_GIT, "parse_unable_pathspec_from_file")
-        if token.startswith("-"):
+        if not after_double_dash and token.startswith("-"):
             index += 1
             continue
         positionals.append(token)
@@ -204,6 +223,52 @@ def _parse_git_pathspec(subcommand: str, rest: list[str]) -> ParsedDestructiveCo
     return ParsedDestructiveCommand(CATEGORY_GIT, True, tuple(targets), "")
 
 
+_CHECKOUT_CLUSTER_FLAGS: Final[frozenset[str]] = frozenset(
+    {"f", "q", "l", "m", "d", "t", "p"}
+)
+
+
+def _parse_checkout_options(rest: list[str]) -> tuple[bool, bool]:
+    """Return effective force and branch-creation states before ``--``."""
+    force = False
+    branch_creation = False
+    index = 0
+    while index < len(rest):
+        token = rest[index]
+        if token == "--":
+            break
+        if token == "--force":
+            force = True
+        elif token == "--no-force":
+            force = False
+        elif token in {"-b", "-B"}:
+            branch_creation = True
+            index += 1
+        elif token.startswith(("-b", "-B")) and len(token) > 2:
+            branch_creation = True
+            suffix = token[2:]
+            # Attached branch values remain data.  An all-flag suffix, such
+            # as the contracted ``-Bf`` case, remains part of the cluster.
+            if suffix and set(suffix) <= _CHECKOUT_CLUSTER_FLAGS:
+                force = force or "f" in suffix
+        elif token.startswith("-") and not token.startswith("--"):
+            cluster = token[1:]
+            cluster_index = 0
+            while cluster_index < len(cluster):
+                flag = cluster[cluster_index]
+                if flag == "f":
+                    force = True
+                if flag in {"b", "B"}:
+                    branch_creation = True
+                    suffix = cluster[cluster_index + 1 :]
+                    if suffix and set(suffix) <= _CHECKOUT_CLUSTER_FLAGS:
+                        force = force or "f" in suffix
+                    break
+                cluster_index += 1
+        index += 1
+    return force, branch_creation
+
+
 def _detect_git(tokens: list[str]) -> ParsedDestructiveCommand | None:
     if _command_name(tokens[0]) != "git":
         return None
@@ -228,10 +293,10 @@ def _detect_git(tokens: list[str]) -> ParsedDestructiveCommand | None:
         return None
     rest = tokens[2:]
     if subcommand == "checkout":
-        option_tokens = rest[: rest.index("--")] if "--" in rest else rest
-        if any(token in GIT_CHECKOUT_DISCARD_FLAGS for token in option_tokens):
+        force, branch_creation = _parse_checkout_options(rest)
+        if force:
             return _blocked(CATEGORY_GIT, "implicit_scope")
-        if any(token in {"-b", "-B"} for token in option_tokens):
+        if branch_creation:
             return None
     return _parse_git_pathspec(subcommand, rest)
 
@@ -315,17 +380,49 @@ def _detect_truncate_redirect(tokens: list[str]) -> ParsedDestructiveCommand | N
     return None
 
 
-def _detect_truncate_pipe_tee(tokens: list[str]) -> ParsedDestructiveCommand | None:
-    # 복수 명령 파서는 실제 파이프 경계에서 segment를 나눈다. 파이프 오른쪽의
-    # `tee` command head도 직접 인식해야 기존 truncate 정책을 유지할 수 있다.
-    if _command_name(tokens[0]) == "tee":
-        return _blocked(CATEGORY_TRUNCATE, "parse_unable_pipeline")
-    if "|" not in tokens:
+def _detect_tee(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    if _command_name(tokens[0]) != "tee":
         return None
-    pipe_idx = tokens.index("|")
-    if pipe_idx + 1 < len(tokens) and _command_name(tokens[pipe_idx + 1]) == "tee":
-        return _blocked(CATEGORY_TRUNCATE, "parse_unable_pipeline")
-    return None
+    append = False
+    targets: list[str] = []
+    after_double_dash = False
+    for raw_token in tokens[1:]:
+        token = _unquote(raw_token)
+        if not after_double_dash and token == "--":
+            after_double_dash = True
+            continue
+        if not after_double_dash and token in {"--help", "--version"}:
+            return None
+        if not after_double_dash and token == "--append":
+            append = True
+            continue
+        if not after_double_dash and (
+            token in {"--ignore-interrupts", "-p"}
+            or token.startswith("--output-error=")
+        ):
+            continue
+        if not after_double_dash and token.startswith("--"):
+            return _blocked(CATEGORY_TRUNCATE, "parse_unable_pipeline")
+        if not after_double_dash and token.startswith("-") and token != "-":
+            short_flags = token[1:]
+            if not short_flags or not set(short_flags) <= {"a", "i", "p"}:
+                return _blocked(CATEGORY_TRUNCATE, "parse_unable_pipeline")
+            append = append or "a" in short_flags
+            continue
+        if token != "-":
+            targets.append(token)
+    if append or not targets:
+        return None
+    validated: list[str] = []
+    for target in targets:
+        validity = _validate_target(target)
+        if validity == "ok":
+            validated.append(target)
+        elif validity == "implicit_scope":
+            return _blocked(CATEGORY_TRUNCATE, "implicit_scope")
+        else:
+            return _blocked(CATEGORY_TRUNCATE, "parse_unable_target")
+    return ParsedDestructiveCommand(CATEGORY_TRUNCATE, True, tuple(validated), "")
 
 
 def _detect_wrapper_indirect(tokens: list[str]) -> ParsedDestructiveCommand | None:
@@ -342,36 +439,56 @@ def _detect_wrapper_indirect(tokens: list[str]) -> ParsedDestructiveCommand | No
         return nested
     if wrapper not in OPAQUE_WRAPPER_COMMAND_NAMES:
         return None
-    wrapped = " ".join(_unquote(t) for t in payload_tokens)
-    if ">" in wrapped:
-        return _blocked(CATEGORY_TRUNCATE, "parse_unable_wrapped")
-    words = {match.group(0).casefold() for match in _WORD_RE.finditer(wrapped)}
-    if words & REMOVE_COMMAND_NAMES:
-        return _blocked(CATEGORY_REMOVE, "parse_unable_wrapped")
-    if "git" in words or (words & GIT_SUBCOMMAND_NAMES):
-        return _blocked(CATEGORY_GIT, "parse_unable_wrapped")
-    if words & TRUNCATE_COMMAND_NAMES:
-        return _blocked(CATEGORY_TRUNCATE, "parse_unable_wrapped")
     return None
 
 
 _WRAPPER_OPTIONS_WITH_VALUE: Final[dict[str, frozenset[str]]] = {
     "doas": frozenset({"-a", "-C", "-u"}),
     "env": frozenset({"-C", "-S", "-u", "--chdir", "--split-string", "--unset"}),
+    "exec": frozenset({"-a"}),
     "ionice": frozenset({"-c", "-n", "-p", "-P", "-u"}),
     "nice": frozenset({"-n", "--adjustment"}),
     "stdbuf": frozenset({"-e", "-i", "-o", "--error", "--input", "--output"}),
-    "sudo": frozenset({"-C", "-D", "-g", "-h", "-p", "-R", "-r", "-T", "-u"}),
+    "sudo": frozenset(
+        {
+            "-C",
+            "-D",
+            "-g",
+            "-h",
+            "-p",
+            "-R",
+            "-r",
+            "-T",
+            "-u",
+            "--chdir",
+            "--chroot",
+            "--close-from",
+            "--command-timeout",
+            "--group",
+            "--host",
+            "--prompt",
+            "--role",
+            "--type",
+            "--user",
+        }
+    ),
     "timeout": frozenset({"-k", "-s", "--kill-after", "--signal"}),
     "xargs": frozenset({"-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s"}),
 }
 
 
 def _wrapper_payload_tokens(tokens: list[str], wrapper: str) -> list[str]:
+    if wrapper == "command" and any(token in {"-v", "-V"} for token in tokens[1:]):
+        return []
     index = 1
     options_with_value = _WRAPPER_OPTIONS_WITH_VALUE.get(wrapper, frozenset())
     while index < len(tokens) and tokens[index].startswith(("-", "/")):
         option = tokens[index].split("=", 1)[0]
+        if wrapper == "env" and option in {"-S", "--split-string"}:
+            if "=" in tokens[index]:
+                split_payload = tokens[index].split("=", 1)[1]
+                return [split_payload, *tokens[index + 1 :]]
+            return tokens[index + 1 :]
         index += 2 if option in options_with_value and "=" not in tokens[index] else 1
     if wrapper == "env":
         while index < len(tokens) and _ASSIGNMENT_RE.match(tokens[index]):
@@ -381,45 +498,149 @@ def _wrapper_payload_tokens(tokens: list[str], wrapper: str) -> list[str]:
     return tokens[index:]
 
 
-def _detect_dynamic_command_head(command: str) -> ParsedDestructiveCommand | None:
-    for segment in _command_segments(command):
-        segment_tokens = _tokenize(segment)
-        index = 0
-        while index < len(segment_tokens) and _ASSIGNMENT_RE.match(segment_tokens[index]):
+def _detect_dynamic_command_head(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    if tokens and _has_environment_reference(_unquote(tokens[0])):
+        return _blocked(CATEGORY_REMOVE, "parse_unable_dynamic_command")
+    return None
+
+
+def _find_substitution_end(command: str, open_paren: int) -> int | None:
+    """Find the balanced end of a ``$(`` command substitution."""
+    depth = 1
+    state = _ShellScanState.EXPECT_COMMAND
+    return_state = _ShellScanState.EXPECT_COMMAND
+    index = open_paren + 1
+    while index < len(command):
+        character = command[index]
+        if state is _ShellScanState.ESCAPED:
+            state = return_state
             index += 1
-        if index < len(segment_tokens) and _has_environment_reference(segment_tokens[index]):
-            return _blocked(CATEGORY_REMOVE, "parse_unable_dynamic_command")
+            continue
+        if state is _ShellScanState.IN_SINGLE_QUOTE:
+            if character == "'":
+                state = _ShellScanState.IN_ARGUMENTS
+            index += 1
+            continue
+        if state is _ShellScanState.IN_DOUBLE_QUOTE:
+            if character == "\\":
+                return_state = state
+                state = _ShellScanState.ESCAPED
+            elif character == '"':
+                state = _ShellScanState.IN_ARGUMENTS
+            elif command[index : index + 2] == "$(":
+                nested_end = _find_substitution_end(command, index + 1)
+                if nested_end is None:
+                    return None
+                index = nested_end + 1
+                continue
+            index += 1
+            continue
+        if character == "\\":
+            return_state = state
+            state = _ShellScanState.ESCAPED
+        elif character == "'":
+            state = _ShellScanState.IN_SINGLE_QUOTE
+        elif character == '"':
+            state = _ShellScanState.IN_DOUBLE_QUOTE
+        elif command[index : index + 2] == "$(":
+            nested_end = _find_substitution_end(command, index + 1)
+            if nested_end is None:
+                return None
+            index = nested_end + 1
+            continue
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
     return None
 
 
 def _command_segments(command: str) -> list[str]:
+    """Split shell text only at executable command boundaries.
+
+    Quoted and escaped operators remain arguments.  Outside those lexical
+    states, ``&`` and physical newlines open a command position just like the
+    separators handled by the original parser.
+    """
     segments: list[str] = []
+    nested_segments: list[str] = []
     start = 0
-    quote = ""
-    escaped = False
+    state = _ShellScanState.EXPECT_COMMAND
+    return_state = _ShellScanState.EXPECT_COMMAND
     index = 0
     while index < len(command):
         character = command[index]
-        if escaped:
-            escaped = False
-        elif character == "\\" and quote != "'":
-            escaped = True
-        elif quote:
-            if character == quote:
-                quote = ""
-        elif character in "'\"":
-            quote = character
-        elif character == ";" or (
-            character == "|" and (index == 0 or command[index - 1] != ">")
-        ) or (
-            character == "&" and index + 1 < len(command) and command[index + 1] == "&"
+        if state is _ShellScanState.ESCAPED:
+            state = return_state
+            index += 1
+            continue
+        if state is _ShellScanState.IN_SINGLE_QUOTE:
+            if character == "'":
+                state = _ShellScanState.IN_ARGUMENTS
+            index += 1
+            continue
+        if state is _ShellScanState.IN_DOUBLE_QUOTE:
+            if character == "\\":
+                return_state = state
+                state = _ShellScanState.ESCAPED
+            elif character == '"':
+                state = _ShellScanState.IN_ARGUMENTS
+            elif command[index : index + 2] == "$(":
+                closing = _find_substitution_end(command, index + 1)
+                if closing is not None:
+                    nested_segments.extend(_command_segments(command[index + 2 : closing]))
+                    index = closing + 1
+                    continue
+            index += 1
+            continue
+        if character == "\\":
+            return_state = state
+            state = _ShellScanState.ESCAPED
+            index += 1
+            continue
+        if character == "'":
+            state = _ShellScanState.IN_SINGLE_QUOTE
+            index += 1
+            continue
+        if character == '"':
+            state = _ShellScanState.IN_DOUBLE_QUOTE
+            index += 1
+            continue
+        if command[index : index + 2] == "$(":
+            closing = _find_substitution_end(command, index + 1)
+            if closing is not None:
+                nested_segments.extend(_command_segments(command[index + 2 : closing]))
+                index = closing + 1
+                continue
+
+        separator_width = 0
+        if character in "\r\n":
+            separator_width = 2 if command[index : index + 2] == "\r\n" else 1
+        elif character == ";":
+            separator_width = 1
+        elif character == "|" and (index == 0 or command[index - 1] != ">"):
+            separator_width = 2 if command[index : index + 2] in {"||", "|&"} else 1
+        elif character == "&" and not (
+            (index > 0 and command[index - 1] == ">")
+            or (index + 1 < len(command) and command[index + 1] == ">")
         ):
+            if command[start:index].strip():
+                separator_width = 2 if command[index : index + 2] == "&&" else 1
+
+        if separator_width:
             segments.append(command[start:index])
-            index += 1 if command[index : index + 2] in {"&&", "||"} else 0
-            start = index + 1
+            index += separator_width
+            start = index
+            state = _ShellScanState.AFTER_SEPARATOR
+            continue
+        if not character.isspace():
+            state = _ShellScanState.IN_ARGUMENTS
         index += 1
     segments.append(command[start:])
-    return segments
+    return segments + nested_segments
 
 
 _FALLBACK_SCAN_WINDOW: Final[int] = 6
@@ -448,7 +669,7 @@ def _detect_obfuscated_fallback(tokens: list[str]) -> ParsedDestructiveCommand |
 
 
 _DETECTORS: Final[tuple[Callable[[list[str]], ParsedDestructiveCommand | None], ...]] = (
-    _detect_truncate_pipe_tee,
+    _detect_tee,
     _detect_truncate_redirect,
     _detect_git,
     _detect_remove,
@@ -457,12 +678,50 @@ _DETECTORS: Final[tuple[Callable[[list[str]], ParsedDestructiveCommand | None], 
 )
 
 
+def _command_position_tokens(tokens: list[str]) -> list[str]:
+    state = _ShellScanState.EXPECT_COMMAND
+    index = 0
+    closing_stack: list[str] = []
+    command_states = {
+        _ShellScanState.EXPECT_COMMAND,
+        _ShellScanState.AFTER_CONTROL_WORD,
+    }
+    while index < len(tokens) and state in command_states:
+        token = _unquote(tokens[index])
+        if token.casefold() in _COMMAND_POSITION_CONTROL_WORDS:
+            if token == "(":
+                closing_stack.append(")")
+            elif token == "{":
+                closing_stack.append("}")
+            state = _ShellScanState.AFTER_CONTROL_WORD
+            index += 1
+            continue
+        if _ASSIGNMENT_RE.match(token):
+            state = _ShellScanState.EXPECT_COMMAND
+            index += 1
+            continue
+        state = _ShellScanState.IN_ARGUMENTS
+    normalized = tokens[index:]
+    if normalized and all(
+        _unquote(token).casefold() in _COMMAND_TERMINATORS for token in normalized
+    ):
+        return []
+    while (
+        normalized
+        and closing_stack
+        and _unquote(normalized[-1]) == closing_stack[-1]
+    ):
+        normalized = normalized[:-1]
+        closing_stack.pop()
+    return normalized
+
+
 def _parse_destructive_segment(command: str) -> ParsedDestructiveCommand | None:
     """연산자 경계가 제거된 단일 shell segment를 분류한다."""
-    tokens = _tokenize(command)
+    tokens = _command_position_tokens(_tokenize(command))
     if not tokens:
         return None
-    dynamic = _detect_dynamic_command_head(command)
+    dynamic = _detect_dynamic_command_head(tokens)
     if dynamic is not None:
         return dynamic
     for detector in _DETECTORS:
