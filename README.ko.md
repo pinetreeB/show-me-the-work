@@ -193,10 +193,18 @@ probes pass=17 fail=0 manual=3 total=20 result=PASS
 
 wmux 좌상 오케스트레이터는 위임 전 `brief`로 작업 규율 블록을 만들고, 워커 완료 후 `check`로 원장과 git diff를 대조합니다.
 
+canonical Python 패키지는 `smtw`입니다. 기존 `fable_lite` import와
+`python -m fable_lite` 호출은 v3.x까지 deprecation shim으로 유지되며
+`DeprecationWarning`을 냅니다. shim 제거는 v4 이후입니다.
+`PYTHONWARNINGS=error`처럼 이 경고를 명시적으로 오류로 승격하는 환경은
+호환 보장 대상이 아닙니다. 또한 소스 체크아웃과 더 오래된 global
+`fable-lite` 설치본을 함께 사용하는 구성은 지원하지 않으므로, 모듈 코드와
+배포 메타데이터가 일치하는 clean virtual environment를 사용하십시오.
+
 ```powershell
-python -m fable_lite brief --paths "core/**,tests/**" --verify-cmd "python -m pytest tests/" --sentinel tmp/.done-x --target codex
-python -m fable_lite check --root . --agent codex --since-file tmp/.delegation-start
-python -m fable_lite brief --card C:\Users\rotat\.claude\tmp\cards\work.json && python -m fable_lite check --card C:\Users\rotat\.claude\tmp\cards\work.json
+python -m smtw brief --paths "core/**,tests/**" --verify-cmd "python -m pytest tests/" --sentinel tmp/.done-x --target codex
+python -m smtw check --root . --agent codex --since-file tmp/.delegation-start
+python -m smtw brief --card C:\Users\rotat\.claude\tmp\cards\work.json && python -m smtw check --card C:\Users\rotat\.claude\tmp\cards\work.json
 ```
 
 `check`는 변경 파일, 미검증 변경, scope 이탈, R1 계약 필요, sentinel 약속 미이행을 한국어로 요약합니다. exit code `0`만 green이며, sentinel 존재만으로 완료로 보지 않습니다.

@@ -29,7 +29,7 @@ Confirm N: [the question]
 
 ## 3. Once you have what you need, don't restate it — just run intent set
 
-Don't paraphrase the answers back ("Got it," "So to summarize...") — that's filler in itself. As soon as you have answers to whatever you needed to ask (or didn't need to ask anything to begin with), **call the exact absolute-path `fable-lite-cli.py` command shown in the hook context or block message**. Fill only the `--goal`, `--scope`, and optional `--non-goal` values. When you are working directly from the repository root, `python -m fable_lite intent set ...` is also valid, but in plugin-installed projects prefer the displayed absolute-path command.
+Don't paraphrase the answers back ("Got it," "So to summarize...") — that's filler in itself. As soon as you have answers to whatever you needed to ask (or didn't need to ask anything to begin with), **call the exact absolute-path `fable-lite-cli.py` command shown in the hook context or block message**. Fill only the `--goal`, `--scope`, and optional `--non-goal` values. When you are working directly from the repository root, `python -m smtw intent set ...` is also valid, but in plugin-installed projects prefer the displayed absolute-path command.
 `--scope` can be a file path (globs are fine, e.g. `"src/auth/**"`), or — if a specific file still isn't identified — the natural-language area the user described (e.g., `"the login form"`).
 Running this command is the confirmation itself — until it runs, intent stays unconfirmed and Edit/Write-class tools keep getting blocked. Bash isn't blocked before intent is confirmed, so looking at the code first (to ask fewer questions) is fine too.
 

@@ -48,7 +48,7 @@ def _write(project: Path, relative: str, text: str) -> None:
 def _run_design(project: Path) -> tuple[subprocess.CompletedProcess[str], JsonObject]:
     python_path = os.pathsep.join([str(ROOT), os.environ.get("PYTHONPATH", "")])
     process = subprocess.run(
-        [sys.executable, "-m", "fable_lite", "check", "--root", str(project), "--design"],
+        [sys.executable, "-m", "smtw", "check", "--root", str(project), "--design"],
         cwd=ROOT,
         env={
             **os.environ,

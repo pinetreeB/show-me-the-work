@@ -26,7 +26,7 @@ Below is the immutable floor for all Korean-language UI. The rule text and numbe
 
 The 8 items of the §4 checklist split into three verdict methods. **This distinction is the core of this pack** — for most items you cannot claim a pass by looking at the file alone:
 
-- **(a) Static — judged by lint/AST**: ① zero hardcoded tokens (§4-1) · ⑧ component-state *spec* exists · ⑥ dark-mode *token reference*. Checkable from the file alone (`fable_lite check --design` catches these — implementation is Phase 2).
+- **(a) Static — judged by lint/AST**: ① zero hardcoded tokens (§4-1) · ⑧ component-state *spec* exists · ⑥ dark-mode *token reference*. Checkable from the file alone (`smtw check --design` catches these — implementation is Phase 2).
 - **(b) Judged only after rendering + observing**: ② heading ≤ ceiling (computed style — static CSS misses `clamp()`, inheritance, responsive) · ③ zero mid-word breaks (line boxes) · ④ WCAG AA + a11y (axe, per state) · ⑥ dark-mode *actual contrast* · ⑦ responsive overflow (per viewport) · ⑧ per-state render (hover·focus·disabled·loading·empty·error). **These items are decided only by rendering and looking with your eyes.**
 - **(c) Human eye required — not an automatic gate**: ⑤ AI-smell (§1.4). With no threshold or reference image, and given a judging AI's self-pass bias, this is not decided by a binary automatic verdict. Filter once by the §1.4 observable criteria; the final call is a human (intervention ③) saying "good / this is off."
 
@@ -45,7 +45,7 @@ The point of this pack is not to repeat the rules — it is to **make the actual
 ### Gate contract (design Stop gate · opt-in)
 
 The design gate is project opt-in (OFF by default — turn it on with the env var `FABLE_LITE_DESIGN_GATE=1` or `enabled: true` in `design/gate.config`). When it is on and a turn changed a UI file (`ledger.design_required` AND `design_touched`), the Stop hook judges two things:
-- ① `fable_lite check --design` (layer A, static lint) fails → block ("design rule violation: `<file:line>`. See DESIGN-OPS §N").
+- ① `smtw check --design` (layer A, static lint) fails → block ("design rule violation: `<file:line>`. See DESIGN-OPS §N").
 - ② no recorded call to a render-verification tool (layer B) → block ("UI change with no render observation. Confirm with a screenshot before finishing").
 
 Consecutive blocks are capped at 2, then pass through (fail-open). Bash-only, investigation-only, and question-only turns are not blocked. On pass, the check result and screenshot paths are recorded as completion evidence in the ledger.

@@ -116,7 +116,7 @@ def test_real_payload_recovers_prompt_and_blocks_design_stop(tmp_path: Path) -> 
     assert _run_hook("PostToolUse", verify, tmp_path).returncode == 0
 
     design = subprocess.run(
-        [sys.executable, "-m", "fable_lite", "check", "--root", str(tmp_path), "--design"],
+        [sys.executable, "-m", "smtw", "check", "--root", str(tmp_path), "--design"],
         check=False,
         capture_output=True,
         text=True,

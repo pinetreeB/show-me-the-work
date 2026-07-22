@@ -31,7 +31,7 @@ from core.runtime_env import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PRODUCTION_ROOTS = ("core", "adapters", "fable_lite", "goals", "contrib", "scripts")
+PRODUCTION_ROOTS = ("core", "adapters", "smtw", "goals", "contrib", "scripts")
 ENV_GUARDED_HOOKS = (
     "adapters/claude_code/user_prompt_submit.py",
     "adapters/claude_code/pre_tool_use.py",

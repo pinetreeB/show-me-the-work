@@ -621,7 +621,7 @@ def _intent_set_command(payload: Mapping[str, JsonValue]) -> str:
     value = payload.get("intent_set_command")
     if isinstance(value, str) and value:
         return value
-    return 'python -m fable_lite intent set --root . --goal "..." --scope "..." [--non-goal "..."]'
+    return 'python -m smtw intent set --root . --goal "..." --scope "..." [--non-goal "..."]'
 
 
 def evaluate_pretool_contract(payload: Mapping[str, JsonValue]) -> Decision:

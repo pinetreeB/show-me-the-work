@@ -57,7 +57,7 @@ def run_brief(args: Namespace) -> int:
         "- sentinel은 완료 감지 신호일 뿐이며, 검증 증거를 대체하지 않습니다.",
         "",
         "사후 check 예고:",
-        "- 완료 후 오케스트레이터가 `python -m fable_lite check --root <project> --agent <agent> --since-file <marker>`를 실행합니다.",
+        "- 완료 후 오케스트레이터가 `python -m smtw check --root <project> --agent <agent> --since-file <marker>`를 실행합니다.",
         "- check가 RED이면 완료로 인정되지 않습니다.",
     ]
     print("\n".join(lines))
