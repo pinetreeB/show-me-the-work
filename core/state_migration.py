@@ -4,7 +4,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import Enum
-from importlib.metadata import PackageNotFoundError, version
 import json
 import math
 import os
@@ -58,6 +57,7 @@ class _MigrationStageFailure(RuntimeError):
 
 
 class MigrationStatus(str, Enum):
+    READY = "ready"
     MIGRATED = "migrated"
     ALREADY_MIGRATED = "already_migrated"
     NOT_NEEDED = "not_needed"
@@ -105,6 +105,7 @@ class MigrationResult:
             MigrationStatus.MIGRATED,
             MigrationStatus.ALREADY_MIGRATED,
             MigrationStatus.NOT_NEEDED,
+            MigrationStatus.READY,
         }
 
     @property
@@ -209,6 +210,71 @@ def migrate_state(
             str(exc),
             error_type=type(exc).__name__,
         )
+
+
+def check_migration_state(
+    project_root: str | Path,
+    *,
+    activation: bool = True,
+) -> MigrationResult:
+    """Assess migration readiness without taking locks or writing any file."""
+    preparation = prepare_state_layout(project_root, activation)
+    inspection = preparation.inspection
+    if not activation:
+        return _result(MigrationStatus.INACTIVE, inspection, "inactive")
+    if preparation.reason_code == "exact_home":
+        return _result(MigrationStatus.HOME_REFUSED, inspection, "exact_home")
+    if inspection.layout is StateLayout.MIGRATED:
+        return _already_migrated_result(inspection)
+    if inspection.layout in {StateLayout.EMPTY, StateLayout.NATIVE}:
+        return _result(MigrationStatus.NOT_NEEDED, inspection, "no_legacy_state")
+    if inspection.layout is StateLayout.CONFLICT:
+        return _result(
+            MigrationStatus.CONFLICT,
+            inspection,
+            "layout_conflict",
+            inspection.reason,
+        )
+    if inspection.layout is StateLayout.MIGRATING:
+        return _result(
+            MigrationStatus.DEFERRED,
+            inspection,
+            "migration_in_progress",
+            "migration staging exists; retry after the current owner settles",
+        )
+
+    source = inspection.legacy
+    quiescence = _quiescence_reason(source)
+    try:
+        manifest = build_state_manifest(source)
+    except (OSError, StateLayoutError) as exc:
+        return _result(
+            MigrationStatus.FAILED,
+            inspection,
+            "manifest_unreadable",
+            str(exc),
+            error_type=type(exc).__name__,
+        )
+    if quiescence:
+        return MigrationResult(
+            MigrationStatus.DEFERRED,
+            inspection.layout,
+            str(inspection.root),
+            reason_code=quiescence,
+            detail="legacy state has an active turn or open invocation",
+            source_digest=manifest.digest,
+            file_count=manifest.file_count,
+            total_bytes=manifest.total_bytes,
+        )
+    return MigrationResult(
+        MigrationStatus.READY,
+        inspection.layout,
+        str(inspection.root),
+        reason_code="ready",
+        source_digest=manifest.digest,
+        file_count=manifest.file_count,
+        total_bytes=manifest.total_bytes,
+    )
 
 
 def assess_rollback(project_root: str | Path) -> RollbackSafety:
@@ -898,7 +964,6 @@ def _now() -> str:
 
 
 def _tool_version() -> str:
-    try:
-        return version("fable-lite")
-    except PackageNotFoundError:
-        return "unknown"
+    from smtw.versioning import package_version
+
+    return package_version()

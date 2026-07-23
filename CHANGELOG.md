@@ -4,10 +4,19 @@
 
 ### Added
 
+- **CLI-02 operator onboarding**: added secret-safe human/JSON `smtw doctor`
+  and concise `smtw status`, explicit non-overwriting `smtw init`, and a
+  write-free `smtw migrate --check` with human migration summaries and stable
+  healthy/unsafe/action-required exit codes.
 - **GOALS-02 identity-aware goals UX**: added canonical `smtw goals plan`, `verify`, and `status` commands with automatic selection of a sole exact active identity, unique host/session environment matching, explicit `--identity` or matching `--host`/`--session-id`/`--agent` selection, and explicit errors for ambiguity, wrong identities, and synthetic-only turns.
 
 ### Fixed
 
+- **COMPAT-01/02 source and legacy execution semantics**: source checkouts now
+  prefer their adjacent repository version over stale installed metadata,
+  `doctor` exposes module/distribution mismatches, and physical legacy thin
+  shims support `python -m fable_lite.<public-submodule>` without loader alias
+  failures while ordinary legacy imports retain object identity.
 - **N2 recovery guidance**: checkpoint denials now include a complete copyable identity-specific plan command. Following that command writes the checkpoint N2 actually checks, immediately clears the gate for that identity, and cannot borrow a foreign identity's checkpoint; legacy single-agent fallback remains available.
 - **Quarantine durability (QUAR-01)**: blocked-command records now reserve
   UUID-suffixed destinations with an exclusive create instead of overwriting a

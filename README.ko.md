@@ -193,13 +193,14 @@ probes pass=17 fail=0 manual=3 total=20 result=PASS
 
 wmux 좌상 오케스트레이터는 위임 전 `brief`로 작업 규율 블록을 만들고, 워커 완료 후 `check`로 원장과 git diff를 대조합니다.
 
-canonical Python 패키지는 `smtw`입니다. 기존 `fable_lite` import와
-`python -m fable_lite` 호출은 v3.x까지 deprecation shim으로 유지되며
+canonical Python 패키지는 `smtw`입니다. 기존 `fable_lite` import,
+`python -m fable_lite`, `python -m fable_lite.scorecard` 같은 public
+submodule 호출은 v3.x까지 deprecation shim으로 유지되며
 `DeprecationWarning`을 냅니다. shim 제거는 v4 이후입니다.
 `PYTHONWARNINGS=error`처럼 이 경고를 명시적으로 오류로 승격하는 환경은
-호환 보장 대상이 아닙니다. 또한 소스 체크아웃과 더 오래된 global
-`fable-lite` 설치본을 함께 사용하는 구성은 지원하지 않으므로, 모듈 코드와
-배포 메타데이터가 일치하는 clean virtual environment를 사용하십시오.
+호환 보장 대상이 아닙니다. 소스 체크아웃에서는 인접 `pyproject.toml`
+버전을 설치 메타데이터보다 우선하며, `smtw doctor`가 모듈/배포 경로와
+버전 불일치를 함께 보고합니다.
 
 ```powershell
 python -m smtw brief --paths "core/**,tests/**" --verify-cmd "python -m pytest tests/" --sentinel tmp/.done-x --target codex

@@ -68,7 +68,7 @@ def _staging(root: Path) -> tuple[Path, ...]:
 def _run_cli(root: Path) -> subprocess.CompletedProcess[str]:
     python_path = os.pathsep.join([str(ROOT), os.environ.get("PYTHONPATH", "")])
     return subprocess.run(
-        [sys.executable, "-m", "smtw", "migrate", "--root", str(root)],
+        [sys.executable, "-m", "smtw", "migrate", "--root", str(root), "--json"],
         cwd=ROOT,
         env={**os.environ, "PYTHONPATH": python_path, "PYTHONIOENCODING": "utf-8"},
         check=False,
@@ -535,6 +535,7 @@ def test_concurrent_cli_migrators_have_exactly_one_publisher(tmp_path: Path) -> 
         "migrate",
         "--root",
         str(tmp_path),
+        "--json",
     ]
     processes = [
         subprocess.Popen(
