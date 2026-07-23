@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -21,7 +22,13 @@ from .ledger_v1 import default_ledger, sequence_value
 from .ledger_v2 import INVOCATION_LEASE, refresh_v1_projection
 
 
-INVOCATION_STATUS_ARCHIVE_NAME: Final = "ledger.v2-invocation-status.json.bak"
+INVOCATION_STATUS_ARCHIVE_PREFIX: Final = "ledger.v2-invocation-status."
+INVOCATION_STATUS_ARCHIVE_INDEX_NAME: Final = (
+    "ledger.v2-invocation-status.index.json"
+)
+INVOCATION_STATUS_ARCHIVE_REASON: Final = "invocation_status_backfill"
+INVOCATION_STATUS_ARCHIVE_MAX_COUNT: Final = 8
+INVOCATION_STATUS_ARCHIVE_MAX_BYTES: Final = 16 * 1024 * 1024
 
 
 class LedgerMigrationError(RuntimeError):
@@ -203,8 +210,14 @@ def _migrate_v2_invocation_statuses(project_root: str) -> JsonObject:
         serialized = serialize_v2_ledger(converted)
     except LedgerSchemaError as exc:
         raise LedgerMigrationError("validate", str(exc)) from exc
-    archive = destination.with_name(INVOCATION_STATUS_ARCHIVE_NAME)
-    archive_bytes = _preserve_archive(archive, original)
+    archive_bytes, source_digest = _preserve_invocation_status_archive(
+        destination,
+        original,
+    )
+    _enforce_invocation_status_archive_retention(
+        destination,
+        protected_digest=source_digest,
+    )
     wrote_v2 = False
     try:
         atomic_write_text(destination, serialized, prefix="ledger-status-")
@@ -262,7 +275,12 @@ def _load_v2(content: bytes) -> JsonObject:
         raise LedgerMigrationError("parse", str(exc)) from exc
 
 
-def _preserve_archive(archive: Path, original: bytes) -> bytes:
+def _preserve_archive(
+    archive: Path,
+    original: bytes,
+    *,
+    prefix: str = "ledger-v1-",
+) -> bytes:
     if archive.exists():
         try:
             archived = archive.read_bytes()
@@ -272,10 +290,277 @@ def _preserve_archive(archive: Path, original: bytes) -> bytes:
             raise LedgerMigrationError("archive", "existing archive differs from ledger.json")
         return archived
     try:
-        atomic_write_bytes(archive, original, prefix="ledger-v1-")
+        atomic_write_bytes(archive, original, prefix=prefix)
     except OSError as exc:
         raise LedgerMigrationError("archive", str(exc)) from exc
     return original
+
+
+def _preserve_invocation_status_archive(
+    destination: Path,
+    original: bytes,
+) -> tuple[bytes, str]:
+    digest = sha256(original).hexdigest()
+    archive = _invocation_status_archive_path(destination, digest)
+    index_path = destination.with_name(INVOCATION_STATUS_ARCHIVE_INDEX_NAME)
+    index = _load_invocation_status_archive_index(index_path)
+    entries = _archive_entries(index)
+    archive_bytes = _preserve_archive(
+        archive,
+        original,
+        prefix="ledger-v2-status-archive-",
+    )
+    existing = next(
+        (
+            entry
+            for entry in entries
+            if entry.get("digest") == digest
+        ),
+        None,
+    )
+    if existing is not None:
+        if existing.get("path") != archive.name:
+            raise LedgerMigrationError(
+                "archive",
+                f"archive index path mismatch for digest {digest}",
+            )
+        return archive_bytes, digest
+
+    entries.append(
+        {
+            "digest": digest,
+            "path": archive.name,
+            "created_at": datetime.now(UTC).isoformat(),
+            "reason": INVOCATION_STATUS_ARCHIVE_REASON,
+        }
+    )
+    _write_invocation_status_archive_index(index_path, entries)
+    return archive_bytes, digest
+
+
+def _invocation_status_archive_path(
+    destination: Path,
+    digest: str,
+) -> Path:
+    return destination.with_name(
+        f"{INVOCATION_STATUS_ARCHIVE_PREFIX}{digest}.bak"
+    )
+
+
+def _load_invocation_status_archive_index(path: Path) -> JsonObject:
+    try:
+        raw_bytes = path.read_bytes()
+    except FileNotFoundError:
+        return {"schema_version": 1, "archives": []}
+    except OSError as exc:
+        raise LedgerMigrationError("archive", str(exc)) from exc
+    try:
+        raw: JsonValue = json.loads(raw_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LedgerMigrationError(
+            "archive",
+            f"cannot parse archive index: {type(exc).__name__}",
+        ) from exc
+    if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+        raise LedgerMigrationError(
+            "archive",
+            "archive index schema_version must equal 1",
+        )
+    entries = raw.get("archives")
+    if not isinstance(entries, list):
+        raise LedgerMigrationError(
+            "archive",
+            "archive index archives must be a list",
+        )
+    seen: set[str] = set()
+    normalized: list[JsonObject] = []
+    for raw_entry in entries:
+        entry = _validated_archive_entry(path, raw_entry)
+        digest = entry["digest"]
+        assert isinstance(digest, str)
+        if digest in seen:
+            raise LedgerMigrationError(
+                "archive",
+                f"duplicate archive digest {digest}",
+            )
+        seen.add(digest)
+        normalized.append(entry)
+    return {"schema_version": 1, "archives": normalized}
+
+
+def _validated_archive_entry(
+    index_path: Path,
+    raw_entry: JsonValue,
+) -> JsonObject:
+    if not isinstance(raw_entry, dict):
+        raise LedgerMigrationError(
+            "archive",
+            "archive index entry must be an object",
+        )
+    digest = raw_entry.get("digest")
+    relative_path = raw_entry.get("path")
+    created_at = raw_entry.get("created_at")
+    reason = raw_entry.get("reason")
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise LedgerMigrationError("archive", "archive digest must be sha256")
+    expected_name = f"{INVOCATION_STATUS_ARCHIVE_PREFIX}{digest}.bak"
+    if relative_path != expected_name:
+        raise LedgerMigrationError(
+            "archive",
+            f"archive path must equal {expected_name}",
+        )
+    if not isinstance(created_at, str) or not created_at:
+        raise LedgerMigrationError(
+            "archive",
+            "archive created_at must be a non-empty string",
+        )
+    try:
+        _ = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise LedgerMigrationError(
+            "archive",
+            "archive created_at must be ISO-8601",
+        ) from exc
+    if reason != INVOCATION_STATUS_ARCHIVE_REASON:
+        raise LedgerMigrationError(
+            "archive",
+            f"archive reason must equal {INVOCATION_STATUS_ARCHIVE_REASON}",
+        )
+    archive = index_path.with_name(expected_name)
+    try:
+        content = archive.read_bytes()
+    except OSError as exc:
+        raise LedgerMigrationError("archive", str(exc)) from exc
+    if sha256(content).hexdigest() != digest:
+        raise LedgerMigrationError(
+            "archive",
+            f"archive content digest mismatch for {expected_name}",
+        )
+    return {
+        "digest": digest,
+        "path": expected_name,
+        "created_at": created_at,
+        "reason": reason,
+    }
+
+
+def _archive_entries(index: JsonObject) -> list[JsonObject]:
+    entries = index.get("archives")
+    if not isinstance(entries, list):
+        raise LedgerMigrationError(
+            "archive",
+            "archive index archives must be a list",
+        )
+    return [
+        entry
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
+
+
+def _write_invocation_status_archive_index(
+    path: Path,
+    entries: list[JsonObject],
+) -> None:
+    serialized = json.dumps(
+        {
+            "schema_version": 1,
+            "archives": entries,
+        },
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
+    try:
+        atomic_write_text(
+            path,
+            f"{serialized}\n",
+            prefix="ledger-status-index-",
+        )
+    except OSError as exc:
+        raise LedgerMigrationError("archive", str(exc)) from exc
+
+
+def _enforce_invocation_status_archive_retention(
+    destination: Path,
+    *,
+    protected_digest: str,
+) -> None:
+    index_path = destination.with_name(INVOCATION_STATUS_ARCHIVE_INDEX_NAME)
+    index = _load_invocation_status_archive_index(index_path)
+    entries = _archive_entries(index)
+    sizes: dict[str, int] = {}
+    for entry in entries:
+        digest = entry.get("digest")
+        relative_path = entry.get("path")
+        if not isinstance(digest, str) or not isinstance(relative_path, str):
+            raise LedgerMigrationError("archive", "invalid archive index entry")
+        try:
+            sizes[digest] = destination.with_name(relative_path).stat().st_size
+        except OSError as exc:
+            raise LedgerMigrationError("archive", str(exc)) from exc
+
+    retained = list(entries)
+    evicted: list[JsonObject] = []
+    while (
+        len(retained) > INVOCATION_STATUS_ARCHIVE_MAX_COUNT
+        or sum(
+            sizes[str(entry["digest"])]
+            for entry in retained
+        )
+        > INVOCATION_STATUS_ARCHIVE_MAX_BYTES
+    ):
+        candidates = [
+            entry
+            for entry in retained
+            if entry.get("digest") != protected_digest
+        ]
+        if not candidates:
+            break
+        victim = min(
+            candidates,
+            key=lambda entry: (
+                _archive_created_at(entry),
+                str(entry.get("digest")),
+            ),
+        )
+        retained.remove(victim)
+        evicted.append(victim)
+    if not evicted:
+        return
+
+    _write_invocation_status_archive_index(index_path, retained)
+    for entry in evicted:
+        relative_path = entry.get("path")
+        if not isinstance(relative_path, str):
+            continue
+        try:
+            destination.with_name(relative_path).unlink(missing_ok=True)
+        except OSError:
+            # The published index is authoritative; a leftover unindexed
+            # archive is harmless and can be removed on a later maintenance run.
+            continue
+
+
+def _archive_created_at(entry: JsonObject) -> datetime:
+    value = entry.get("created_at")
+    if not isinstance(value, str):
+        raise LedgerMigrationError(
+            "archive",
+            "archive created_at must be a string",
+        )
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise LedgerMigrationError(
+            "archive",
+            "archive created_at must be ISO-8601",
+        ) from exc
+    return _as_utc(parsed)
 
 
 def _convert_legacy(legacy: JsonObject) -> JsonObject:
