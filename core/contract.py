@@ -245,7 +245,15 @@ def _is_goals_authoring(root: str, paths: list[str], command: str) -> bool:
     except StateLayoutError:
         pass
     lowered = command.lower()
-    return "goals.py" in lowered and " plan" in lowered
+    if "goals.py" in lowered and " plan" in lowered:
+        return True
+    return bool(
+        re.search(
+            r"(?:^|\s)(?:smtw|smtw\.exe|fable-lite|fable-lite\.exe)"
+            r"\s+goals\s+plan(?:\s|$)",
+            lowered,
+        )
+    )
 
 
 def _high_risk(payload: Mapping[str, JsonValue]) -> bool:

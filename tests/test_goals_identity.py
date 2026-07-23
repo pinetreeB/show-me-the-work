@@ -153,7 +153,6 @@ def test_n2_keeps_legacy_goal_fallback_for_one_active_identity(
 def test_identity_cli_reads_legacy_goal_then_migrates_on_verify(
     tmp_path: Path,
 ) -> None:
-    _ = _seed_turn(tmp_path, "legacy-session", "codex")
     legacy_plan = _run_goals(
         "plan",
         "--root",
@@ -166,6 +165,7 @@ def test_identity_cli_reads_legacy_goal_then_migrates_on_verify(
         "python -m pytest",
     )
     assert legacy_plan.returncode == 0
+    _ = _seed_turn(tmp_path, "legacy-session", "codex")
 
     assert _status(tmp_path, "legacy-session", "codex")["goal"] == "legacy goal"
 

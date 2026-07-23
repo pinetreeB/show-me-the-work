@@ -56,10 +56,10 @@ def test_goals_cli_creates_and_verifies_checkpoint(tmp_path: Path) -> None:
     assert b"\r\n" not in goals_path.read_bytes()
 
 
-def test_goals_cli_fail_opens_as_json_on_bad_invocation() -> None:
+def test_goals_cli_fails_explicitly_as_json_on_bad_invocation() -> None:
     result = run_goals()
 
-    assert result.returncode == 0
+    assert result.returncode == 2
     data = json.loads(result.stdout)
-    assert data["fail_open"] is True
+    assert data["error"] == "missing_command"
     assert "usage" not in result.stderr.lower()
