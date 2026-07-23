@@ -23,7 +23,11 @@ from .provenance_manifest import (
     ensure_turn_bootstrap,
     record_turn_event_if_ready,
 )
-from .provenance_policy import PROJECT_PATH_IN_ROOT, canonicalize_project_path
+from .provenance_policy import (
+    PROJECT_PATH_IN_ROOT,
+    canonicalize_project_logical_path,
+    canonicalize_project_path,
+)
 from .provenance_lifecycle import ProvenanceLifecycle
 from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
@@ -234,7 +238,7 @@ def begin_invocation(root: Path, invocation: CanonicalInvocation) -> Observation
                 invocation.agent_key,
                 invocation.turn_id,
                 invocation.invocation_id,
-                invocation.candidate_paths,
+                _logical_candidate_paths(root, invocation.candidate_paths),
                 event_agent=invocation.agent,
                 host=invocation.host,
                 session_id=invocation.session_id,
@@ -675,11 +679,15 @@ def _record_invocation(
     covers: JsonObject | None,
     baseline_snapshot_id: str = "",
 ) -> TurnEventCommit:
+    logical_candidates = _logical_candidate_paths(root, invocation.candidate_paths)
+    resolved_candidates = _resolved_candidate_paths(root, invocation.candidate_paths)
     payload = _ledger_payload(root, invocation) | {
         "event": "invocation",
-        "candidate_paths": list(
-            _canonical_candidate_paths(root, invocation.candidate_paths)
-        ),
+        # candidate_paths remains the resolved compatibility projection for
+        # pre-ATTR-02 readers.  New readers use the two explicit fields.
+        "candidate_paths": list(resolved_candidates),
+        "candidate_logical_paths": list(logical_candidates),
+        "candidate_resolved_paths": list(resolved_candidates),
     }
     classification = _shell_classification(invocation)
     if _mutation_capable(invocation, classification):
@@ -709,13 +717,34 @@ def _record_invocation(
     )
 
 
-def _canonical_candidate_paths(
+def _logical_candidate_paths(
     root: Path,
     candidates: tuple[str, ...],
 ) -> tuple[str, ...]:
+    return _candidate_keys(root, candidates, resolve=False)
+
+
+def _resolved_candidate_paths(
+    root: Path,
+    candidates: tuple[str, ...],
+) -> tuple[str, ...]:
+    return _candidate_keys(root, candidates, resolve=True)
+
+
+def _candidate_keys(
+    root: Path,
+    candidates: tuple[str, ...],
+    *,
+    resolve: bool,
+) -> tuple[str, ...]:
     normalized: dict[str, None] = {}
     for candidate in candidates:
-        disposition, canonical = canonicalize_project_path(root, candidate)
+        canonicalize = (
+            canonicalize_project_path
+            if resolve
+            else canonicalize_project_logical_path
+        )
+        disposition, canonical = canonicalize(root, candidate)
         if disposition != PROJECT_PATH_IN_ROOT or canonical is None:
             continue
         normalized.setdefault(canonical, None)
@@ -912,7 +941,11 @@ def _stored_candidates(root: Path, invocation: CanonicalInvocation) -> tuple[str
     stored = invocations.get(invocation.invocation_id)
     if not isinstance(stored, dict):
         return invocation.candidate_paths
-    paths = stored.get("candidate_paths")
+    paths = stored.get("candidate_logical_paths")
+    if not isinstance(paths, list):
+        # Live ledgers written before ATTR-02 have only candidate_paths.  Their
+        # historical resolved projection is the best available PostTool filter.
+        paths = stored.get("candidate_paths")
     if not isinstance(paths, list):
         return invocation.candidate_paths
     return tuple(path for path in paths if isinstance(path, str))

@@ -125,6 +125,8 @@ def _overwrite_stored_candidate_paths(
     ledger = json.loads(path.read_text(encoding="utf-8"))
     invocation = ledger["active_turns"][PEER_AGENT_KEY]["invocations"][invocation_id]
     invocation["candidate_paths"] = raw_paths
+    invocation.pop("candidate_logical_paths", None)
+    invocation.pop("candidate_resolved_paths", None)
     path.write_text(json.dumps(ledger), encoding="utf-8")
 
 

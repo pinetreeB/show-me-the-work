@@ -1198,6 +1198,53 @@ def _command_position_tokens(tokens: list[str]) -> list[str]:
     return normalized
 
 
+_EXECUTABLE_PREFIX_WRAPPERS: Final[frozenset[str]] = frozenset(
+    {"command", "env", "exec"}
+)
+
+
+def _r2_command_segments(command: str) -> tuple[list[str], bool]:
+    """Return the executable segments consumed by the R2 parser."""
+    normalized_command = _normalize_attached_here_strings(command)
+    executable_text, heredoc_malformed, heredoc_bodies = _without_heredoc_bodies(
+        normalized_command
+    )
+    segments, substitution_malformed = _command_segments(executable_text)
+    nested_malformed = False
+    for body in [*heredoc_bodies, *_structured_execution_bodies(executable_text)]:
+        nested_segments, body_malformed = _command_segments(body)
+        segments.extend(nested_segments)
+        nested_malformed = nested_malformed or body_malformed
+    return (
+        segments,
+        heredoc_malformed or substitution_malformed or nested_malformed,
+    )
+
+
+def executable_command_positions(command: str) -> tuple[tuple[str, ...], ...]:
+    """Expose R2's command-position normalization for advisory consumers.
+
+    The returned tokens identify the effective executable after lexical
+    assignments and the transparent ``env``/``command``/``exec`` prefixes R2
+    already understands.  This is parser reuse only; callers must not treat the
+    result as an authorization decision.
+    """
+    positions: list[tuple[str, ...]] = []
+    segments, _malformed = _r2_command_segments(command)
+    for segment in segments:
+        tokens = _command_position_tokens(_tokenize(segment))
+        while tokens and _command_name(tokens[0]) in _EXECUTABLE_PREFIX_WRAPPERS:
+            wrapper = _command_name(tokens[0])
+            payload = _wrapper_payload_tokens(tokens, wrapper)
+            if not payload or payload == tokens:
+                tokens = []
+                break
+            tokens = _command_position_tokens(payload)
+        if tokens:
+            positions.append(tuple(_unquote(token) for token in tokens))
+    return tuple(positions)
+
+
 def _parse_destructive_segment(command: str) -> ParsedDestructiveCommand | None:
     """연산자 경계가 제거된 단일 shell segment를 분류한다."""
     raw_tokens = _tokenize(command)
@@ -1224,18 +1271,9 @@ def parse_destructive_commands(command: str) -> tuple[ParsedDestructiveCommand, 
     non-destructive segment는 제외한다. resolved=False 결과가 하나라도 있으면 호출자는
     전체 command를 fail-closed로 처리해야 한다.
     """
-    normalized_command = _normalize_attached_here_strings(command)
-    executable_text, heredoc_malformed, heredoc_bodies = _without_heredoc_bodies(
-        normalized_command
-    )
-    segments, substitution_malformed = _command_segments(executable_text)
-    nested_malformed = False
-    for body in [*heredoc_bodies, *_structured_execution_bodies(executable_text)]:
-        nested_segments, body_malformed = _command_segments(body)
-        segments.extend(nested_segments)
-        nested_malformed = nested_malformed or body_malformed
+    segments, malformed = _r2_command_segments(command)
     parsed: list[ParsedDestructiveCommand] = []
-    if heredoc_malformed or substitution_malformed or nested_malformed:
+    if malformed:
         parsed.append(_blocked(CATEGORY_REMOVE, "parse_unable_shell_syntax"))
     for segment in segments:
         result = _parse_destructive_segment(segment)

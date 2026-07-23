@@ -23,6 +23,16 @@
   and failed preservation.
 - **CONFIG-02 fail-closed config precedence**: malformed `pyproject.toml` files now recognize equivalent quoted and dotted `tool.smtw` declarations without treating comments or basic/literal string contents as config. A possible canonical declaration is `DECLARED_INVALID` and cannot silently fall back to enabled legacy config.
 - **MIGRATION-02 rollback archive rotation**: invocation-status backfills now preserve each distinct source in a SHA-256-named immutable archive with a validated schema-v1 index, reuse identical sources, retain the current rollback source, and bound older archives by count and total bytes. A legacy fixed-name archive no longer prevents a later mixed-version backfill.
+- **ATTR-02**: invocation candidates now persist separate project-relative lexical keys for PostTool attribution and filesystem-resolved keys for R2 peer matching. Symlink replacement therefore remains attributed to the declared link while destructive access to its current in-project target still sees the open peer window; out-of-root targets retain the existing R2 policy.
+- **HINT-02**: inline-Python state-file hints reuse R2's command-position normalization through `env`, environment assignments, and `command`, and track `pathlib.Path` imports including `Path as P` and `pathlib as pl`.
+
+### Compatibility
+
+- The invocation ledger keeps the resolved `candidate_paths` compatibility projection. New readers prefer `candidate_logical_paths` / `candidate_resolved_paths`, while legacy live entries are migrated on read with the previous physical canonicalization rule.
+
+### Known Limitations
+
+- Inline-Python hints are advisory friction, not an authorization boundary. Static AST inspection intentionally does not decode dynamic `exec`/`eval` payloads such as Base64-wrapped source; R2's independent fail-closed command gate remains authoritative and is unchanged.
 
 ## [2.6.0] - 2026-07-22 — canonical Python package (`fable_lite` → `smtw`)
 
