@@ -8,7 +8,6 @@ from hashlib import sha256
 import json
 import math
 from pathlib import Path
-import re
 import runpy
 import tomllib
 from typing import Final, TypeAlias
@@ -17,9 +16,6 @@ from typing import Final, TypeAlias
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 DEDICATED_CONFIG_NAME: Final = ".smtw.toml"
 PYPROJECT_NAME: Final = "pyproject.toml"
-_CANONICAL_HEADER_RE: Final = re.compile(
-    r"\[\s*tool\s*\.\s*smtw\s*\]"
-)
 
 ConfigScalar: TypeAlias = str | int | float | bool
 ConfigValue: TypeAlias = ConfigScalar | list["ConfigValue"] | dict[str, "ConfigValue"]
@@ -124,7 +120,7 @@ def _load_pyproject(path: Path) -> ProjectConfigLoad:
     try:
         raw: object = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        if _has_canonical_smtw_header(text):
+        if _has_canonical_smtw_declaration(text):
             return _invalid(ConfigSource.PYPROJECT, _parse_detail(exc))
         return _absent(ConfigSource.PYPROJECT)
     if not isinstance(raw, Mapping):
@@ -214,11 +210,120 @@ def _normalize_value(value: object) -> ConfigValue:
     raise TypeError(f"unsupported configuration value: {type(value).__name__}")
 
 
-def _has_canonical_smtw_header(text: str) -> bool:
-    return any(
-        _CANONICAL_HEADER_RE.match(line.strip()) is not None
-        for line in _toml_code_lines(text)
-    )
+def _has_canonical_smtw_declaration(text: str) -> bool:
+    """Conservatively find a real ``tool.smtw`` key outside comments/values."""
+    raw_lines = text.splitlines()
+    for raw_line, structural_code in zip(
+        raw_lines,
+        _toml_code_lines(text),
+        strict=True,
+    ):
+        if not structural_code.strip():
+            continue
+        stripped = raw_line.lstrip()
+        if stripped.startswith("[["):
+            continue
+        if stripped.startswith("["):
+            segments, index = _parse_toml_key_path(stripped, 1)
+            if segments != ("tool", "smtw"):
+                continue
+            index = _skip_whitespace(stripped, index)
+            # A valid close or malformed tail after the exact canonical path
+            # both mean the broken file may declare SMTW. A parsed third
+            # segment would already be present in ``segments`` and is excluded.
+            return index >= len(stripped) or stripped[index] != "."
+
+        segments, _index = _parse_toml_key_path(stripped, 0)
+        if len(segments) < 2 or segments[:2] != ("tool", "smtw"):
+            continue
+        # Once a malformed statement begins with the canonical dotted path,
+        # absence is no longer provable even if ``=`` or a closing quote was
+        # lost at the parse error.
+        return True
+    return False
+
+
+def _parse_toml_key_path(
+    text: str,
+    start: int,
+) -> tuple[tuple[str, ...], int]:
+    segments: list[str] = []
+    index = _skip_whitespace(text, start)
+    while index < len(text):
+        parsed = _parse_toml_key_segment(text, index)
+        if parsed is None:
+            break
+        segment, index = parsed
+        segments.append(segment)
+        index = _skip_whitespace(text, index)
+        if index >= len(text) or text[index] != ".":
+            break
+        index = _skip_whitespace(text, index + 1)
+    return tuple(segments), index
+
+
+def _parse_toml_key_segment(
+    text: str,
+    start: int,
+) -> tuple[str, int] | None:
+    if start >= len(text):
+        return None
+    quote = text[start]
+    if quote in {'"', "'"}:
+        end = _quoted_key_end(text, start, quote)
+        if end is None:
+            return _unterminated_quoted_key_prefix(text, start)
+        token = text[start:end]
+        try:
+            parsed: object = tomllib.loads(f"{token} = 0")
+        except tomllib.TOMLDecodeError:
+            return None
+        if not isinstance(parsed, Mapping) or len(parsed) != 1:
+            return None
+        key = next(iter(parsed))
+        return (key, end) if isinstance(key, str) else None
+
+    index = start
+    while index < len(text) and (
+        text[index].isalnum() or text[index] in {"_", "-"}
+    ):
+        index += 1
+    if index == start:
+        return None
+    return text[start:index], index
+
+
+def _unterminated_quoted_key_prefix(
+    text: str,
+    start: int,
+) -> tuple[str, int] | None:
+    content_start = start + 1
+    for candidate in ("tool", "smtw"):
+        end = content_start + len(candidate)
+        if not text.startswith(candidate, content_start):
+            continue
+        if end >= len(text) or text[end] in {".", "]", "=", " ", "\t", "#"}:
+            return candidate, end
+    return None
+
+
+def _quoted_key_end(text: str, start: int, quote: str) -> int | None:
+    index = start + 1
+    while index < len(text):
+        if quote == '"' and text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == quote:
+            return index + 1
+        index += 1
+    return None
+
+
+def _skip_whitespace(text: str, start: int) -> int:
+    index = start
+    while index < len(text) and text[index] in {" ", "\t"}:
+        index += 1
+    return index
 
 
 def _toml_code_lines(text: str) -> tuple[str, ...]:
