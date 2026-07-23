@@ -1,35 +1,21 @@
 from __future__ import annotations
 
 import argparse
-from importlib.metadata import PackageNotFoundError, version as _installed_version
-from pathlib import Path
-import re
 
 from .brief import run_brief
 from .check import run_check
+from .doctor import add_diagnostics_parsers
 from .goals import add_goals_parser
+from .init import add_init_parser
 from .intent import add_intent_parser
 from .migrate import add_migrate_parser
 from .quarantine import add_quarantine_parser
 from .scorecard import add_scorecard_parser
+from .versioning import package_version
 
-_PYPROJECT_VERSION_RE = re.compile(r'^version\s*=\s*"(?P<version>[^"]+)"', re.MULTILINE)
-
-
-def package_version() -> str:
-    try:
-        return _installed_version("fable-lite")
-    except PackageNotFoundError:
-        pass
-    # Source checkout run without a pip install (e.g. PYTHONPATH=.) -- fall back to
-    # reading the SSOT directly, matching scripts/sync_version.py's own source of truth.
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    try:
-        text = pyproject.read_text(encoding="utf-8")
-    except OSError:
-        return "unknown"
-    match = _PYPROJECT_VERSION_RE.search(text)
-    return match.group("version") if match else "unknown"
+# Compatibility for callers that used to patch this private import. Source
+# checkout precedence is now enforced inside smtw.versioning.
+from .versioning import _installed_version as _installed_version
 
 
 def run_version(_args: argparse.Namespace) -> int:
@@ -65,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_scorecard_parser(subparsers)
     add_quarantine_parser(subparsers)
     add_migrate_parser(subparsers)
+    add_diagnostics_parsers(subparsers)
+    add_init_parser(subparsers)
     return parser
 
 
