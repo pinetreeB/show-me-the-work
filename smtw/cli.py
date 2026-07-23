@@ -7,6 +7,7 @@ import re
 
 from .brief import run_brief
 from .check import run_check
+from .goals import add_goals_parser
 from .intent import add_intent_parser
 from .migrate import add_migrate_parser
 from .quarantine import add_quarantine_parser
@@ -60,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     brief.set_defaults(func=run_brief)
 
     add_intent_parser(subparsers)
+    add_goals_parser(subparsers)
     add_scorecard_parser(subparsers)
     add_quarantine_parser(subparsers)
     add_migrate_parser(subparsers)
