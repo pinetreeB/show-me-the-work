@@ -1,6 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [2.6.1] - 2026-07-24 — Safety Boundary & Documentation Stabilization
+
+No new gate semantics. Closes the v2.6.1 stabilization handoff
+(`docs/reviews/2026-07-23-sol-v261-stabilization-handoff.md`): the remaining
+P0/P1 safety-boundary defects, operator CLI onboarding, bilingual README
+truthfulness, CI matrix coverage, and release hygiene. Each PR shipped
+regression-first with two independent reviews (orchestrator + adversarial agy)
+and a green two-OS (now five-leg) CI.
 
 ### Added
 
@@ -25,6 +32,13 @@
 
 ### Fixed
 
+- **State layout lock-wait budget (CI flake root cause)**: the ledger
+  transaction throttled its outer `.smtw-migration.lock` to a one-second cap
+  while the inner ledger lock honored the caller's full budget, so unfair-lock
+  contention on loaded runners starved concurrent writers and intermittently
+  timed out `main` CI on Windows. The layout barrier now honors the caller's
+  full wait budget and the bare default rose from 1s to 5s; latency-sensitive
+  R2 deny/quarantine paths keep their explicit zero-wait behavior.
 - **COMPAT-01/02 source and legacy execution semantics**: source checkouts now
   prefer their adjacent repository version over stale installed metadata,
   `doctor` exposes module/distribution mismatches, and physical legacy thin
