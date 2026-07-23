@@ -5,6 +5,8 @@ import re
 import shlex
 from collections.abc import Iterable
 
+from .destructive_guard import executable_command_positions
+
 
 _REDIRECT = re.compile(r"(?:^|\s)(?:\d?>{1,2})\s*(?:'([^']+)'|\"([^\"]+)\"|([^\s;|&]+))")
 # 인라인 스크립트(python -c / node -e)의 상태파일 쓰기 탐지. Path('x')는 read_text()·
@@ -13,9 +15,6 @@ _REDIRECT = re.compile(r"(?:^|\s)(?:\d?>{1,2})\s*(?:'([^']+)'|\"([^\"]+)\"|([^\s
 # friction의 기존 한계이며 §6-5 이중 근거 교차 확인이 실질 방어다.
 _INLINE = re.compile(
     r"fs\.(?:writeFileSync|appendFileSync|rmSync|unlinkSync)\(\s*(?:'([^']+)'|\"([^\"]+)\")"
-    r"|Path\(\s*(?:'([^']+)'|\"([^\"]+)\")\s*\)\s*\.\s*"
-    r"(?:write_text|write_bytes|unlink|touch|mkdir|rmdir|rename|replace|chmod"
-    r"|symlink_to|hardlink_to|open\(\s*['\"][wax])"
 )
 
 _PATH_WRITE_METHODS = frozenset(
@@ -50,24 +49,21 @@ def _redirect_paths(command: str) -> Iterable[str]:
 def _inline_paths(command: str) -> Iterable[str]:
     for match in _INLINE.finditer(command):
         yield next(value for value in match.groups() if value is not None)
-    for source in _python_inline_sources(_tokens(command)):
+    for source in _python_inline_sources(command):
         yield from _python_write_paths(source)
 
 
-def _python_inline_sources(tokens: tuple[str, ...]) -> Iterable[str]:
-    index = 0
-    while index < len(tokens):
-        end = _command_end(tokens, index + 1)
-        executable = tokens[index].replace("\\", "/").rsplit("/", 1)[-1].casefold()
+def _python_inline_sources(command: str) -> Iterable[str]:
+    for tokens in executable_command_positions(command):
+        executable = tokens[0].replace("\\", "/").rsplit("/", 1)[-1].casefold()
         if executable.endswith(".exe"):
             executable = executable[:-4]
         if executable == "py" or re.fullmatch(r"python(?:\d+(?:\.\d+)?)?", executable):
-            args = tokens[index + 1 : end]
+            args = tokens[1:]
             for argument_index, argument in enumerate(args[:-1]):
                 if argument == "-c":
                     yield args[argument_index + 1]
                     break
-        index = end + 1
 
 
 def _python_write_paths(source: str) -> Iterable[str]:
@@ -75,7 +71,8 @@ def _python_write_paths(source: str) -> Iterable[str]:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
         return ()
-    visitor = _PythonWritePathVisitor()
+    path_names, module_names = _pathlib_bindings(tree)
+    visitor = _PythonWritePathVisitor(path_names, module_names)
     visitor.visit(tree)
     return tuple(visitor.paths)
 
@@ -83,52 +80,133 @@ def _python_write_paths(source: str) -> Iterable[str]:
 class _PythonWritePathVisitor(ast.NodeVisitor):
     """Extract literal write hints; this remains advisory friction, not authorization."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        path_names: frozenset[str],
+        module_names: frozenset[str],
+    ) -> None:
         self.paths: list[str] = []
+        self.path_names = path_names
+        self.module_names = module_names
 
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802 - ast visitor API
         if isinstance(node.func, ast.Attribute):
-            receiver = _path_constructor_literal(node.func.value)
+            receiver = _path_constructor_literal(
+                node.func.value,
+                self.path_names,
+                self.module_names,
+            )
             method = node.func.attr
             if receiver is not None and method in _PATH_WRITE_METHODS:
                 self.paths.append(receiver)
             elif receiver is not None and method in _PATH_MOVE_METHODS:
                 self.paths.append(receiver)
-                destination = _call_argument_literal(node, 0, "target")
+                destination = _call_argument_literal(
+                    node,
+                    0,
+                    "target",
+                    self.path_names,
+                    self.module_names,
+                )
                 if destination is not None:
                     self.paths.append(destination)
             elif receiver is not None and method == "open":
-                mode = _call_argument_literal(node, 0, "mode")
+                mode = _call_argument_literal(
+                    node,
+                    0,
+                    "mode",
+                    self.path_names,
+                    self.module_names,
+                )
                 if _is_writable_mode(mode):
                     self.paths.append(receiver)
         elif isinstance(node.func, ast.Name) and node.func.id == "open":
-            path = _call_argument_literal(node, 0, "file")
-            mode = _call_argument_literal(node, 1, "mode")
+            path = _call_argument_literal(
+                node,
+                0,
+                "file",
+                self.path_names,
+                self.module_names,
+            )
+            mode = _call_argument_literal(
+                node,
+                1,
+                "mode",
+                self.path_names,
+                self.module_names,
+            )
             if path is not None and _is_writable_mode(mode):
                 self.paths.append(path)
         self.generic_visit(node)
 
 
-def _path_constructor_literal(node: ast.AST) -> str | None:
+def _pathlib_bindings(tree: ast.AST) -> tuple[frozenset[str], frozenset[str]]:
+    # Bare Path remains a compatibility spelling for the pre-HINT-02 friction
+    # detector.  Aliases and module-qualified calls require a pathlib binding.
+    path_names = {"Path"}
+    module_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "pathlib":
+            for alias in node.names:
+                if alias.name == "Path":
+                    path_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "pathlib":
+                    module_names.add(alias.asname or alias.name)
+    return frozenset(path_names), frozenset(module_names)
+
+
+def _path_constructor_literal(
+    node: ast.AST,
+    path_names: frozenset[str],
+    module_names: frozenset[str],
+) -> str | None:
     if not isinstance(node, ast.Call) or not node.args:
         return None
     constructor = node.func
-    is_path = isinstance(constructor, ast.Name) and constructor.id == "Path"
-    is_path = is_path or isinstance(constructor, ast.Attribute) and constructor.attr == "Path"
+    is_path = isinstance(constructor, ast.Name) and constructor.id in path_names
+    is_path = is_path or (
+        isinstance(constructor, ast.Attribute)
+        and constructor.attr == "Path"
+        and isinstance(constructor.value, ast.Name)
+        and constructor.value.id in module_names
+    )
     return _literal_string(node.args[0]) if is_path else None
 
 
-def _call_argument_literal(call: ast.Call, position: int, keyword: str) -> str | None:
+def _call_argument_literal(
+    call: ast.Call,
+    position: int,
+    keyword: str,
+    path_names: frozenset[str],
+    module_names: frozenset[str],
+) -> str | None:
     for argument in call.keywords:
         if argument.arg == keyword:
-            return _path_or_string_literal(argument.value)
+            return _path_or_string_literal(
+                argument.value,
+                path_names,
+                module_names,
+            )
     if position < len(call.args):
-        return _path_or_string_literal(call.args[position])
+        return _path_or_string_literal(
+            call.args[position],
+            path_names,
+            module_names,
+        )
     return None
 
 
-def _path_or_string_literal(node: ast.AST) -> str | None:
-    return _path_constructor_literal(node) or _literal_string(node)
+def _path_or_string_literal(
+    node: ast.AST,
+    path_names: frozenset[str],
+    module_names: frozenset[str],
+) -> str | None:
+    return (
+        _path_constructor_literal(node, path_names, module_names)
+        or _literal_string(node)
+    )
 
 
 def _literal_string(node: ast.AST) -> str | None:
