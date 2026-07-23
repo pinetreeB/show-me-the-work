@@ -5,7 +5,22 @@ import json
 from pathlib import Path
 import sys
 
-from core.quarantine import QuarantineRecord, clear_entries, list_entries, show_entry
+from core.quarantine import (
+    QuarantineRecord,
+    clear_entries,
+    list_entries,
+    load_entry,
+)
+
+
+_TRUNCATION_WARNING = (
+    "WARNING: Blocked content was only partially preserved; "
+    "do not apply as a complete command."
+)
+_UNKNOWN_COMPLETENESS_WARNING = (
+    "WARNING: Quarantine completeness metadata is unavailable; "
+    "do not apply as a complete command."
+)
 
 
 def add_quarantine_parser(
@@ -25,7 +40,7 @@ def add_quarantine_parser(
     list_parser.set_defaults(func=run_quarantine)
 
     show_parser = quarantine_subparsers.add_parser(
-        "show", help="항목 내용을 원문 그대로 출력합니다."
+        "show", help="보관된 항목과 불완전성 경고를 출력합니다."
     )
     show_parser.add_argument("id")
     show_parser.add_argument("--root", default=".")
@@ -49,6 +64,13 @@ def _record_to_json(record: QuarantineRecord) -> dict[str, object]:
         "reason_code": record.reason_code,
         "target": record.target,
         "size_bytes": record.size_bytes,
+        "original_bytes": record.original_bytes,
+        "stored_bytes": record.stored_bytes,
+        "original_sha256": record.original_sha256,
+        "stored_sha256": record.stored_sha256,
+        "truncated": record.truncated,
+        "encoding": record.encoding,
+        "record_status": record.record_status,
     }
 
 
@@ -60,13 +82,18 @@ def run_quarantine(args: argparse.Namespace) -> int:
         print(json.dumps([_record_to_json(r) for r in records], ensure_ascii=False))
         return 0
     if command == "show":
-        content = show_entry(root, str(args.id))
-        if content is None:
+        loaded = load_entry(root, str(args.id))
+        if loaded is None:
             print(
                 json.dumps({"error": "not_found", "id": str(args.id)}, ensure_ascii=False),
                 file=sys.stderr,
             )
             return 1
+        record, content = loaded
+        if record.truncated is True or record.record_status == "incomplete":
+            print(_TRUNCATION_WARNING)
+        elif record.truncated is None or record.record_status == "unknown":
+            print(_UNKNOWN_COMPLETENESS_WARNING)
         print(content, end="")
         return 0
     if command == "clear":

@@ -1444,14 +1444,14 @@ def _apply_quarantine_backup(
             target=_display_targets(command),
         )
         if saved is None:
-            return decision
+            return _append_quarantine_reason(decision, _quarantine_failure_note())
         existing_reason = decision.get("reason")
         reason_text = existing_reason if isinstance(existing_reason, str) else ""
         merged = dict(decision)
         merged["reason"] = reason_text + _quarantine_note(saved)
         return merged
     except Exception:  # noqa: BLE001 - quarantine backup must never affect the deny decision.
-        return decision
+        return _append_quarantine_reason(decision, _quarantine_failure_note())
 
 
 def _display_targets(command: str) -> str:
@@ -1464,12 +1464,47 @@ def _display_targets(command: str) -> str:
 
 
 def _quarantine_note(path: Path) -> str:
+    from .quarantine import read_record
+
+    record = read_record(path)
+    if record is None:
+        return _quarantine_failure_note()
+    if record.truncated is True or record.record_status == "incomplete":
+        return (
+            " 작성하려던 내용은 일부만 보관됐습니다. 완전한 명령으로 적용하지 마세요. "
+            f"quarantine 경로: `{path}`. 오케스트레이터에게 "
+            "회수(smtw quarantine show/list)를 요청하세요. / "
+            "Blocked content was only partially preserved; do not apply as a "
+            f"complete command. Quarantine path: {path}."
+        )
+    if record.truncated is False and record.record_status == "complete":
+        return (
+            " 작성하려던 내용은 완전히 보관됐습니다. "
+            f"quarantine 경로: `{path}`. 오케스트레이터에게 "
+            "회수(smtw quarantine show/list)를 요청하세요. / "
+            f"Blocked content preserved completely. Quarantine path: {path}."
+        )
     return (
-        f" 작성하려던 내용은 유실되지 않았으며 `{path}`에 quarantine 보관됐습니다. "
-        "오케스트레이터에게 회수(smtw quarantine show/list)를 요청하세요. / "
-        f"Blocked content preserved in quarantine at {path}; "
-        "ask the orchestrator to review and apply it."
+        " quarantine 파일의 완전성 메타데이터를 확인할 수 없습니다. 완전한 "
+        "명령으로 적용하지 마세요. / Quarantine completeness metadata is "
+        "unavailable; do not apply as a complete command."
     )
+
+
+def _quarantine_failure_note() -> str:
+    return (
+        " 작성하려던 내용을 quarantine에 보관하지 못했습니다. R2 차단은 그대로 "
+        "유지됩니다. / Blocked content could not be preserved in quarantine; "
+        "the R2 block remains in effect."
+    )
+
+
+def _append_quarantine_reason(decision: Decision, note: str) -> Decision:
+    existing_reason = decision.get("reason")
+    reason_text = existing_reason if isinstance(existing_reason, str) else ""
+    merged = dict(decision)
+    merged["reason"] = reason_text + note
+    return merged
 
 
 def _decide_r2(
