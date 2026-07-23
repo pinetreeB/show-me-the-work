@@ -22,6 +22,12 @@ def main() -> int:
     wheel = _single(sorted(args.wheel_dir.glob("*.whl")), "wheel")
     root = args.root.resolve()
     expected_smtw = {f"smtw/{path.name}" for path in (root / "smtw").glob("*.py")}
+    # COMPAT-02 (v2.6.1): the legacy package ships physical thin shims so
+    # `python -m fable_lite.<submodule>` works; mirror the smtw rule and demand
+    # exact source-tree parity instead of the former __init__-only contract.
+    expected_shim = {
+        f"fable_lite/{path.name}" for path in (root / "fable_lite").glob("*.py")
+    }
 
     with ZipFile(wheel) as archive:
         names = archive.namelist()
@@ -45,8 +51,12 @@ def main() -> int:
         missing = sorted(expected_smtw - wheel_smtw)
         unexpected = sorted(wheel_smtw - expected_smtw)
         raise SystemExit(f"canonical package mismatch: missing={missing}, unexpected={unexpected}")
-    if wheel_shim != {"fable_lite/__init__.py"}:
-        raise SystemExit(f"legacy shim contains unexpected files: {sorted(wheel_shim)}")
+    if wheel_shim != expected_shim:
+        missing = sorted(expected_shim - wheel_shim)
+        unexpected = sorted(wheel_shim - expected_shim)
+        raise SystemExit(
+            f"legacy shim mismatch: missing={missing}, unexpected={unexpected}"
+        )
 
     entry_points = configparser.ConfigParser()
     entry_points.read_string(entry_points_text)
