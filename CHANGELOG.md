@@ -21,6 +21,8 @@
   command bytes, UTF-8 code points are never split, `quarantine show` warns
   before partial content, and block messages distinguish complete, partial,
   and failed preservation.
+- **CONFIG-02 fail-closed config precedence**: malformed `pyproject.toml` files now recognize equivalent quoted and dotted `tool.smtw` declarations without treating comments or basic/literal string contents as config. A possible canonical declaration is `DECLARED_INVALID` and cannot silently fall back to enabled legacy config.
+- **MIGRATION-02 rollback archive rotation**: invocation-status backfills now preserve each distinct source in a SHA-256-named immutable archive with a validated schema-v1 index, reuse identical sources, retain the current rollback source, and bound older archives by count and total bytes. A legacy fixed-name archive no longer prevents a later mixed-version backfill.
 
 ## [2.6.0] - 2026-07-22 — canonical Python package (`fable_lite` → `smtw`)
 
