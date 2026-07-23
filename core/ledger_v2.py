@@ -13,6 +13,7 @@ from .ledger_v1 import V1_PROJECTION_FIELDS, apply_v1_event, default_ledger, seq
 from .provenance_policy import (
     PROJECT_PATH_IN_ROOT,
     canonical_manifest_key,
+    canonicalize_project_logical_path,
     canonicalize_project_path,
 )
 from .provenance_types import (
@@ -114,7 +115,13 @@ def open_peer_invocation_candidates(
             started_at = _parse_timestamp(raw_entry.get("started_at"))
             if started_at is None or observed_at - started_at > INVOCATION_LEASE:
                 continue
-            paths = raw_entry.get("candidate_paths")
+            resolved_paths = raw_entry.get("candidate_resolved_paths")
+            legacy_paths = raw_entry.get("candidate_paths")
+            paths = (
+                resolved_paths
+                if isinstance(resolved_paths, list)
+                else legacy_paths
+            )
             if not isinstance(paths, list):
                 continue
             evidence: JsonObject = {
@@ -127,17 +134,16 @@ def open_peer_invocation_candidates(
             for path in paths:
                 if not isinstance(path, str) or not path:
                     continue
-                # Read-side candidates must go through the same project-relative
-                # canonicalization as writes (_canonical_candidate_paths). A live
-                # ledger can still hold an open invocation recorded before that
-                # write-side fix existed -- with a raw, possibly-absolute path -- and
-                # a bare casefold of that string would never match a caller's
-                # relative R2 target. out_of_root/unresolvable candidates are not
-                # usable as mitigation evidence (unresolvable has no canonical key to
-                # index by; out_of_root is not this project's concern, matching R2's
-                # own target handling), so they are dropped rather than kept as a
-                # stale/misleading key.
-                disposition, canonical = canonicalize_project_path(root, path)
+                # ATTR-02 fields already capture the physical key at invocation
+                # time.  Validate them lexically so a later symlink replacement
+                # cannot silently retarget the peer window.  Legacy candidate_paths
+                # still need physical resolution as their read-side migration.
+                canonicalize = (
+                    canonicalize_project_logical_path
+                    if isinstance(resolved_paths, list)
+                    else canonicalize_project_path
+                )
+                disposition, canonical = canonicalize(root, path)
                 if disposition != PROJECT_PATH_IN_ROOT or canonical is None:
                     continue
                 candidates[canonical] = evidence
@@ -739,6 +745,10 @@ def _remember_invocation(turn: JsonObject, payload: Mapping[str, JsonValue]) -> 
         "started_seq": sequence_value(payload.get("seq")),
         "started_at": _event_time(payload).isoformat(),
     }
+    for field in ("candidate_logical_paths", "candidate_resolved_paths"):
+        value = payload.get(field)
+        if isinstance(value, list):
+            entry[field] = value
     covers = payload.get("covers")
     if isinstance(covers, dict):
         entry["covers"] = covers

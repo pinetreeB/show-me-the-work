@@ -22,6 +22,59 @@ def test_inline_path_move_hints_include_receiver_and_destination(method: str) ->
 
 
 @pytest.mark.parametrize(
+    "prefix",
+    [
+        "env",
+        "MODE=test",
+        "command",
+        "env MODE=test command",
+    ],
+)
+def test_inline_python_uses_r2_command_position_prefixes(prefix: str) -> None:
+    command = (
+        f"{prefix} python -c "
+        "\"open('.fable-lite/ledger.json', mode='w')\""
+    )
+
+    assert shell_candidate_paths(command) == (".fable-lite/ledger.json",)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "from pathlib import Path as P; "
+            "P('tmp/ledger.json').replace(P('.fable-lite/ledger.json'))",
+            ("tmp/ledger.json", ".fable-lite/ledger.json"),
+        ),
+        (
+            "import pathlib as pl; "
+            "pl.Path('tmp/ledger.json').replace(pl.Path('.fable-lite/ledger.json'))",
+            ("tmp/ledger.json", ".fable-lite/ledger.json"),
+        ),
+        (
+            "import pathlib; pathlib.Path('.fable-lite/ledger.json').write_text('x')",
+            (".fable-lite/ledger.json",),
+        ),
+    ],
+)
+def test_inline_python_tracks_pathlib_import_bindings(
+    source: str,
+    expected: tuple[str, ...],
+) -> None:
+    assert shell_candidate_paths(f'python -c "{source}"') == expected
+
+
+def test_unbound_attribute_named_path_is_not_a_pathlib_binding() -> None:
+    command = (
+        "python -c \"import other; "
+        "other.Path('.fable-lite/ledger.json').write_text('x')\""
+    )
+
+    assert shell_candidate_paths(command) == ()
+
+
+@pytest.mark.parametrize(
     "arguments",
     [
         "mode='w'",

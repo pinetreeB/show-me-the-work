@@ -538,6 +538,15 @@ def _validate_invocations(value: JsonValue, field: str) -> None:
             _required(entry, "candidate_paths", entry_field),
             f"{entry_field}.candidate_paths",
         )
+        for candidate_field in (
+            "candidate_logical_paths",
+            "candidate_resolved_paths",
+        ):
+            if candidate_field in entry:
+                _string_list(
+                    entry[candidate_field],
+                    f"{entry_field}.{candidate_field}",
+                )
         status = _string(
             _required(entry, "status", entry_field),
             f"{entry_field}.status",
