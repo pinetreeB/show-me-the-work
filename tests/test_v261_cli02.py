@@ -10,12 +10,11 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME_ENV_KEYS = (
-    "SMTW_AUTO_MIGRATION",
-    "FABLE_LITE_AUTO_MIGRATION",
-    "SMTW_CODEX_REAPER_LOG",
-    "FABLE_LITE_CODEX_REAPER_LOG",
-)
+# Hermetic subprocess env: strip every SMTW_/FABLE_LITE_ variable, not an
+# allowlist — a developer machine's legitimate opt-ins (e.g.
+# FABLE_LITE_CODEX_REAPER=1) must not leak in and flip runtime_env_source
+# to "mixed".
+RUNTIME_ENV_PREFIXES = ("SMTW_", "FABLE_LITE_")
 DOCTOR_FIELDS = {
     "tool_version",
     "distribution_version",
@@ -49,9 +48,11 @@ def _run(
     *args: str,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    environment = os.environ.copy()
-    for key in RUNTIME_ENV_KEYS:
-        environment.pop(key, None)
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(RUNTIME_ENV_PREFIXES)
+    }
     if env is not None:
         environment.update(env)
     return subprocess.run(
