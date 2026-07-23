@@ -9,6 +9,18 @@
 ### Fixed
 
 - **N2 recovery guidance**: checkpoint denials now include a complete copyable identity-specific plan command. Following that command writes the checkpoint N2 actually checks, immediately clears the gate for that identity, and cannot borrow a foreign identity's checkpoint; legacy single-agent fallback remains available.
+- **Quarantine durability (QUAR-01)**: blocked-command records now reserve
+  UUID-suffixed destinations with an exclusive create instead of overwriting a
+  name selected by an `exists()` check. UUID collisions retry, POSIX files
+  request mode `0600`, and a success is returned only after post-GC
+  existence, size, and SHA-256 verification. Backup and verification failures
+  remain side effects of the unchanged fail-closed R2 block decision.
+- **Truthful truncation records (QUAR-02)**: quarantine headers now record
+  original/stored byte counts and SHA-256 digests, UTF-8 encoding, truncation
+  state, and complete/incomplete status. The 1 MiB limit applies to stored
+  command bytes, UTF-8 code points are never split, `quarantine show` warns
+  before partial content, and block messages distinguish complete, partial,
+  and failed preservation.
 
 ## [2.6.0] - 2026-07-22 — canonical Python package (`fable_lite` → `smtw`)
 
