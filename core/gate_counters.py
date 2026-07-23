@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
+import shlex
 from typing import Final, TypeAlias
 
 from .agent_log import ledger_transaction
@@ -69,7 +71,6 @@ def recover_checkpoint_gates(payload: Mapping[str, JsonValue]) -> None:
 
 def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
     root = _project_root(payload)
-    state_name = state_dir(root).name
     # A checkpoint created after this hint can consume one capped block, preserving short RMW locking.
     with ledger_transaction(root):
         ledger = load_ledger(payload)
@@ -105,13 +106,35 @@ def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
             GateAction.BLOCK,
         )
         save_ledger(payload, ledger)
+        identity = _active_turn_identity(ledger, payload)
+    identity_argument = (
+        identity
+        if isinstance(identity, str) and _looks_exact_identity(identity)
+        else "<exact-identity>"
+    )
+    command = " ".join(
+        (
+            "smtw goals plan",
+            "--root",
+            shlex.quote(str(Path(root).resolve())),
+            "--identity",
+            shlex.quote(identity_argument),
+            "--goal",
+            shlex.quote("<goal>"),
+            "--story",
+            shlex.quote("<story>"),
+            "--verify-cmd",
+            shlex.quote("<verification-command>"),
+        )
+    )
     return {
         "decision": "block",
         "reason": (
-            f"[smtw] N2: 2+ 스토리 작업은 identity별 `{state_name}/goals/<identity>.json` "
-            f"체크포인트가 먼저 필요합니다(단일 identity는 기존 `{state_name}/goals.json` 폴백). "
-            "goals plan을 작성하거나 명시 확인 후 다시 시도하세요. "
-            "/ Multi-story work requires a goals checkpoint first."
+            "[smtw] N2 checkpoint required.\n\n"
+            f"Run:\n{command}\n\n"
+            "Replace <goal>, <story>, and <verification-command> with real "
+            "values; placeholders are not completion evidence. "
+            "/ Multi-story work requires an identity-aware goals checkpoint."
         ),
     }
 
@@ -239,6 +262,17 @@ def _active_turn_identity(
             if isinstance(key, str) and candidate is turn
         ),
         None,
+    )
+
+
+def _looks_exact_identity(identity: str) -> bool:
+    parts = identity.split(":", 2)
+    return (
+        len(parts) == 3
+        and bool(parts[0])
+        and bool(parts[1])
+        and parts[1] != "default"
+        and bool(parts[2])
     )
 
 
