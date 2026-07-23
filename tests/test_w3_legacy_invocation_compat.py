@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 import json
 import logging
 import os
@@ -21,7 +22,18 @@ from core.ledger_v2 import (
 
 
 OS_REPLACE = os.replace
-STATUS_ARCHIVE = "ledger.v2-invocation-status.json.bak"
+STATUS_ARCHIVE_INDEX = "ledger.v2-invocation-status.index.json"
+STATUS_ARCHIVE_PREFIX = "ledger.v2-invocation-status."
+
+
+def _status_archive(destination: Path, source: bytes) -> Path:
+    return destination.with_name(
+        f"{STATUS_ARCHIVE_PREFIX}{sha256(source).hexdigest()}.bak"
+    )
+
+
+def _status_archive_index(destination: Path) -> Path:
+    return destination.with_name(STATUS_ARCHIVE_INDEX)
 
 
 def _legacy_status_ledger() -> tuple[JsonObject, JsonObject]:
@@ -228,7 +240,8 @@ def test_unprovable_recent_statusless_invocation_stays_degraded_without_rewrite(
     # Then: source stays untouched and the compatibility read remains fail-closed degraded.
     loaded = load_ledger({"project_root": str(tmp_path)})
     assert destination.read_bytes() == original
-    assert not destination.with_name(STATUS_ARCHIVE).exists()
+    assert not _status_archive(destination, original).exists()
+    assert not _status_archive_index(destination).exists()
     assert loaded["attribution_degraded"] is True
     assert _turn_invocations(loaded)["tool:missing-status"]["status"] == "open"
 
@@ -237,9 +250,12 @@ def test_auto_migration_failure_logs_stage_and_detail_without_raising(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    # Given: migration is opted in but an immutable archive conflict makes it fail.
+    # Given: migration is opted in but a corrupt archive index makes it fail.
     destination, original = _write_legacy_status_ledger(tmp_path)
-    destination.with_name(STATUS_ARCHIVE).write_bytes(b"conflicting archive")
+    _status_archive_index(destination).write_text(
+        '{"schema_version":999,"archives":[]}',
+        encoding="utf-8",
+    )
     payload = {
         "project_root": str(tmp_path),
         "event": "scope_warning",
@@ -258,7 +274,7 @@ def test_auto_migration_failure_logs_stage_and_detail_without_raising(
     assert destination.read_bytes() == original
     assert "automatic ledger migration failed" in caplog.text
     assert "stage=archive" in caplog.text
-    assert "existing archive differs from ledger.json" in caplog.text
+    assert "archive index schema_version must equal 1" in caplog.text
 
 
 def test_auto_migration_off_has_no_failure_warning(
@@ -292,7 +308,10 @@ def test_migration_failure_logger_cannot_break_hook_fail_open(
 ) -> None:
     # Given: both migration and its best-effort diagnostic sink fail.
     destination, original = _write_legacy_status_ledger(tmp_path)
-    destination.with_name(STATUS_ARCHIVE).write_bytes(b"conflicting archive")
+    _status_archive_index(destination).write_text(
+        '{"schema_version":999,"archives":[]}',
+        encoding="utf-8",
+    )
 
     # When: the normal event path catches the real migration error.
     with (
@@ -333,7 +352,8 @@ def test_auto_migration_off_preserves_legacy_bytes_and_degrades_fail_closed(
     assert result["attribution_degraded"] is True
     assert _turn_invocations(loaded)["tool:missing-status"]["status"] == "closed"
     assert destination.read_bytes() == original
-    assert not destination.with_name(STATUS_ARCHIVE).exists()
+    assert not _status_archive(destination, original).exists()
+    assert not _status_archive_index(destination).exists()
 
 
 def test_degraded_legacy_view_cannot_overwrite_a_concurrent_migration(
@@ -396,7 +416,7 @@ def test_auto_migration_on_backfills_before_the_ordinary_event_write(
         )
 
     # Then: immutable source bytes are archived and the committed ledger is strict-valid.
-    archive = destination.with_name(STATUS_ARCHIVE)
+    archive = _status_archive(destination, original)
     persisted = json.loads(destination.read_text(encoding="utf-8"))
     persisted_rows = _turn_invocations(persisted)
     assert archive.read_bytes() == original
@@ -418,7 +438,7 @@ def test_status_migration_is_idempotent_and_keeps_a_rollback_archive(
     second = migration_module.migrate_v2_invocation_statuses(str(tmp_path))
 
     # Then: reruns are no-ops and the archive is sufficient for byte-exact rollback.
-    archive = destination.with_name(STATUS_ARCHIVE)
+    archive = _status_archive(destination, original)
     assert second == first
     assert destination.read_bytes() == first_bytes
     assert archive.read_bytes() == original
@@ -448,7 +468,7 @@ def test_status_migration_restores_original_after_atomic_replace_failure(
     # Then: the immutable archive restores the original live bytes.
     assert failed is True
     assert destination.read_bytes() == original
-    assert destination.with_name(STATUS_ARCHIVE).read_bytes() == original
+    assert _status_archive(destination, original).read_bytes() == original
 
 
 def test_status_migration_rejects_other_malformed_state_without_any_rewrite(
@@ -468,4 +488,5 @@ def test_status_migration_rejects_other_malformed_state_without_any_rewrite(
 
     # Then: neither live bytes nor a misleading rollback archive are created.
     assert destination.read_bytes() == original
-    assert not destination.with_name(STATUS_ARCHIVE).exists()
+    assert not _status_archive(destination, original).exists()
+    assert not _status_archive_index(destination).exists()
