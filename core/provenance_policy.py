@@ -119,6 +119,32 @@ def canonicalize_project_path(
     return (PROJECT_PATH_IN_ROOT, canonical_manifest_key(relative, casefolded))
 
 
+def canonicalize_project_logical_path(
+    root: str | Path,
+    target: str,
+    *,
+    windows: bool | None = None,
+) -> tuple[str, str | None]:
+    """Normalize a declared path without following its filesystem target.
+
+    PostTool attribution needs the lexical project path named by the tool.  It
+    deliberately differs from :func:`canonicalize_project_path`, whose resolved
+    key is used by R2 to match the current physical target of a symlink.
+    """
+    normalized = target.strip().strip("'\"").replace("\\", "/")
+    if not normalized:
+        return (PROJECT_PATH_UNRESOLVABLE, None)
+    candidate = Path(normalized)
+    try:
+        base = Path(os.path.abspath(root))
+        absolute = candidate if candidate.is_absolute() else base / normalized
+        relative = normalize_relative_path(base, absolute)
+    except (OSError, ValueError):
+        return (PROJECT_PATH_OUT_OF_ROOT, None)
+    casefolded = os.name == "nt" if windows is None else windows
+    return (PROJECT_PATH_IN_ROOT, canonical_manifest_key(relative, casefolded))
+
+
 def load_provenance_config(root: Path) -> ProvenanceConfig:
     relative_path = provenance_config_relative_path(root)
     config_path = root.resolve() / relative_path
