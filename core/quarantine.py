@@ -5,9 +5,9 @@ import hashlib
 import os
 from pathlib import Path
 import re
-import tempfile
 import time
 from typing import Final
+import uuid
 
 from .ledger_storage import state_dir
 from .state_layout import state_write_scope
@@ -19,8 +19,11 @@ MAX_ENTRIES: Final[int] = 64
 MAX_ENTRY_BYTES: Final[int] = 1 * 1024 * 1024
 MAX_TOTAL_BYTES: Final[int] = 16 * 1024 * 1024
 TTL_SECONDS: Final[int] = 7 * 24 * 60 * 60
+UUID_RETRY_LIMIT: Final[int] = 16
 
 _SAFE_KEY_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_RECORD_SEPARATOR = b"# ---\n"
+_ENCODING = "utf-8"
 _NOTICE = (
     "로컬 전용, 절대 커밋/전송 금지 / local-only, never commit or transmit"
 )
@@ -41,16 +44,6 @@ def _timestamp_compact(now: float | None = None) -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", moment)
 
 
-def _unique_filename(directory: Path, stamp: str, short_agent: str) -> str:
-    base = f"{ENTRY_PREFIX}{stamp}-{short_agent}"
-    candidate = f"{base}.txt"
-    counter = 1
-    while (directory / candidate).exists():
-        candidate = f"{base}-{counter}.txt"
-        counter += 1
-    return candidate
-
-
 @dataclass(frozen=True, slots=True)
 class QuarantineRecord:
     path: Path
@@ -60,6 +53,25 @@ class QuarantineRecord:
     reason_code: str
     target: str
     size_bytes: int
+    original_bytes: int | None = None
+    stored_bytes: int | None = None
+    original_sha256: str = ""
+    stored_sha256: str = ""
+    truncated: bool | None = None
+    encoding: str = ""
+    record_status: str = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class _EncodedRecord:
+    payload: bytes
+    original_bytes: int
+    stored_bytes: int
+    original_sha256: str
+    stored_sha256: str
+    truncated: bool
+    encoding: str
+    record_status: str
 
 
 def backup_blocked_command(
@@ -116,41 +128,38 @@ def _backup_blocked_command_unlocked(
         directory.mkdir(parents=True, exist_ok=True)
         stamp = _timestamp_compact(now)
         short_agent = _safe_agent_key(agent_key)
-        filename = _unique_filename(directory, stamp, short_agent)
-        destination = directory / filename
-        header = (
-            f"# blocked_at: {stamp}\n"
-            f"# agent: {agent_key}\n"
-            f"# reason_code: {reason_code}\n"
-            f"# target: {target}\n"
-            f"# notice: {_NOTICE}\n"
-            "# ---\n"
+        encoded = _encode_record(
+            command=command,
+            stamp=stamp,
+            agent_key=agent_key,
+            reason_code=reason_code,
+            target=target,
+            max_entry_bytes=max_entry_bytes,
         )
-        encoded_header = header.encode("utf-8")
-        encoded_body = command.encode("utf-8")
-        budget = max(0, max_entry_bytes - len(encoded_header))
-        if len(encoded_body) > budget:
-            encoded_body = encoded_body[:budget]
-        encoded = encoded_header + encoded_body
-
-        handle = tempfile.NamedTemporaryFile(
-            "wb",
-            delete=False,
-            dir=directory,
-            prefix="tmp-",
-            suffix=".txt",
-        )
-        temp_name = handle.name
-        try:
-            with handle:
-                _ = handle.write(encoded)
-            os.replace(temp_name, destination)
-        except OSError:
-            try:
-                Path(temp_name).unlink(missing_ok=True)
-            except OSError:
-                pass
+        reserved = _reserve_destination(directory, stamp, short_agent)
+        if reserved is None:
             return None
+        destination, descriptor = reserved
+        write_succeeded = True
+        try:
+            _write_all(descriptor, encoded.payload)
+        except OSError:
+            write_succeeded = False
+        finally:
+            try:
+                os.close(descriptor)
+            except OSError:
+                write_succeeded = False
+        if not write_succeeded:
+            _safe_unlink(destination)
+            return None
+
+        try:
+            os.chmod(destination, 0o600)
+        except OSError:
+            # Windows and unusual filesystems may not expose POSIX modes.  The
+            # exclusive open above still requested owner-only permissions.
+            pass
 
         _gc(
             directory,
@@ -159,13 +168,112 @@ def _backup_blocked_command_unlocked(
             ttl_seconds=ttl_seconds,
             now=now,
         )
-        if not destination.exists():
-            # GC could in principle race-evict the entry we just wrote (e.g. an
-            # absurdly small max_entries=0 in tests) -- report that faithfully.
+        expected_digest = hashlib.sha256(encoded.payload).hexdigest()
+        if not _verify_destination(
+            destination,
+            expected_size=len(encoded.payload),
+            expected_digest=expected_digest,
+        ):
+            # GC or another filesystem actor removed/replaced/corrupted the
+            # just-created entry.  Never report a preservation success.
             return None
         return destination
     except Exception:  # noqa: BLE001 - backup must never break the caller.
         return None
+
+
+def _encode_record(
+    *,
+    command: str,
+    stamp: str,
+    agent_key: str,
+    reason_code: str,
+    target: str,
+    max_entry_bytes: int,
+) -> _EncodedRecord:
+    original = command.encode(_ENCODING)
+    body_limit = max(0, max_entry_bytes)
+    stored = original[:body_limit]
+    if len(stored) < len(original):
+        stored = stored.decode(_ENCODING, errors="ignore").encode(_ENCODING)
+    truncated = stored != original
+    original_sha256 = hashlib.sha256(original).hexdigest()
+    stored_sha256 = hashlib.sha256(stored).hexdigest()
+    record_status = "incomplete" if truncated else "complete"
+    header = (
+        f"# blocked_at: {stamp}\n"
+        f"# agent: {_header_value(agent_key)}\n"
+        f"# reason_code: {_header_value(reason_code)}\n"
+        f"# target: {_header_value(target)}\n"
+        f"# notice: {_NOTICE}\n"
+        f"# original_bytes: {len(original)}\n"
+        f"# stored_bytes: {len(stored)}\n"
+        f"# original_sha256: {original_sha256}\n"
+        f"# stored_sha256: {stored_sha256}\n"
+        f"# truncated: {str(truncated).lower()}\n"
+        f"# encoding: {_ENCODING}\n"
+        f"# record_status: {record_status}\n"
+        "# ---\n"
+    )
+    return _EncodedRecord(
+        payload=header.encode(_ENCODING) + stored,
+        original_bytes=len(original),
+        stored_bytes=len(stored),
+        original_sha256=original_sha256,
+        stored_sha256=stored_sha256,
+        truncated=truncated,
+        encoding=_ENCODING,
+        record_status=record_status,
+    )
+
+
+def _header_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+
+
+def _reserve_destination(
+    directory: Path, stamp: str, short_agent: str
+) -> tuple[Path, int] | None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    for _attempt in range(UUID_RETRY_LIMIT):
+        token = uuid.uuid4().hex
+        destination = (
+            directory / f"{ENTRY_PREFIX}{stamp}-{short_agent}-{token}.txt"
+        )
+        try:
+            descriptor = os.open(destination, flags, 0o600)
+        except FileExistsError:
+            continue
+        except OSError:
+            return None
+        return destination, descriptor
+    return None
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    view = memoryview(payload)
+    written_total = 0
+    while written_total < len(view):
+        written = os.write(descriptor, view[written_total:])
+        if written <= 0:
+            raise OSError("quarantine write made no progress")
+        written_total += written
+    os.fsync(descriptor)
+
+
+def _verify_destination(
+    path: Path, *, expected_size: int, expected_digest: str
+) -> bool:
+    try:
+        if not path.is_file() or path.stat().st_size != expected_size:
+            return False
+        payload = path.read_bytes()
+    except OSError:
+        return False
+    return (
+        len(payload) == expected_size
+        and hashlib.sha256(payload).hexdigest() == expected_digest
+    )
 
 
 def _entry_files(directory: Path) -> list[Path]:
@@ -230,6 +338,8 @@ def _gc(
 def _parse_header(text: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for line in text.splitlines():
+        if line == "# ---":
+            break
         if not line.startswith("#"):
             break
         if ":" not in line:
@@ -239,27 +349,70 @@ def _parse_header(text: str) -> dict[str, str]:
     return fields
 
 
+def _parse_nonnegative_int(value: str) -> int | None:
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _parse_bool(value: str) -> bool | None:
+    normalized = value.casefold()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
+def _record_from_bytes(path: Path, payload: bytes) -> QuarantineRecord:
+    header, _separator, _body = payload.partition(_RECORD_SEPARATOR)
+    fields = _parse_header(header.decode(_ENCODING, errors="replace"))
+    truncated = _parse_bool(fields.get("truncated", ""))
+    record_status = fields.get("record_status", "")
+    if record_status not in {"complete", "incomplete"}:
+        record_status = (
+            "incomplete"
+            if truncated is True
+            else "complete"
+            if truncated is False
+            else "unknown"
+        )
+    return QuarantineRecord(
+        path=path,
+        id=path.name,
+        created_at=fields.get("blocked_at", ""),
+        agent_key=fields.get("agent", ""),
+        reason_code=fields.get("reason_code", ""),
+        target=fields.get("target", ""),
+        size_bytes=len(payload),
+        original_bytes=_parse_nonnegative_int(fields.get("original_bytes", "")),
+        stored_bytes=_parse_nonnegative_int(fields.get("stored_bytes", "")),
+        original_sha256=fields.get("original_sha256", ""),
+        stored_sha256=fields.get("stored_sha256", ""),
+        truncated=truncated,
+        encoding=fields.get("encoding", ""),
+        record_status=record_status,
+    )
+
+
+def read_record(path: Path) -> QuarantineRecord | None:
+    try:
+        payload = path.read_bytes()
+    except OSError:
+        return None
+    return _record_from_bytes(path, payload)
+
+
 def list_entries(project_root: str) -> list[QuarantineRecord]:
     directory = quarantine_dir(project_root)
     records: list[QuarantineRecord] = []
     for path in sorted(_entry_files(directory), key=lambda p: p.name):
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-            size = path.stat().st_size
-        except OSError:
+        record = read_record(path)
+        if record is None:
             continue
-        fields = _parse_header(text)
-        records.append(
-            QuarantineRecord(
-                path=path,
-                id=path.name,
-                created_at=fields.get("blocked_at", ""),
-                agent_key=fields.get("agent", ""),
-                reason_code=fields.get("reason_code", ""),
-                target=fields.get("target", ""),
-                size_bytes=size,
-            )
-        )
+        records.append(record)
     return records
 
 
@@ -283,13 +436,24 @@ def _resolve_entry_path(project_root: str, entry_id: str) -> Path | None:
 
 
 def show_entry(project_root: str, entry_id: str) -> str | None:
+    loaded = load_entry(project_root, entry_id)
+    return loaded[1] if loaded is not None else None
+
+
+def load_entry(
+    project_root: str, entry_id: str
+) -> tuple[QuarantineRecord, str] | None:
     path = _resolve_entry_path(project_root, entry_id)
     if path is None:
         return None
     try:
-        return path.read_text(encoding="utf-8", errors="replace")
+        payload = path.read_bytes()
     except OSError:
         return None
+    return (
+        _record_from_bytes(path, payload),
+        payload.decode(_ENCODING, errors="replace"),
+    )
 
 
 def clear_entries(

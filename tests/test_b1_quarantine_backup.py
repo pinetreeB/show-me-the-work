@@ -123,8 +123,9 @@ def test_deny_decision_and_reason_code_identical_when_backup_fails(
         == baseline["coordination_reason_code"]
         == "state_dir_protected"
     )
-    # 실패 시엔 quarantine 파일도, 이를 가리키는 안내문도 없어야 한다.
+    # 실패 시엔 quarantine 파일이 없어야 하며 실패 안내가 사실대로 남아야 한다.
     assert _quarantine_files(root2) == []
+    assert "could not be preserved in quarantine" in str(failing["reason"])
 
 
 def test_backup_module_never_raises_on_unwritable_directory(tmp_path: Path) -> None:
@@ -157,9 +158,10 @@ def test_deny_reason_includes_recovery_note_on_successful_backup(
     reason = str(result["reason"])
     assert "quarantine" in reason
     assert "state_dir_protected" in reason
+    assert "Blocked content preserved completely" in reason
 
 
-def test_deny_reason_has_no_recovery_note_when_backup_fails(
+def test_deny_reason_reports_preservation_failure_without_weakening_block(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import core.quarantine as quarantine_module
@@ -173,7 +175,9 @@ def test_deny_reason_has_no_recovery_note_when_backup_fails(
     root.mkdir()
     result = _evaluate(root, "rm .fable-lite/ledger.json")
 
-    assert "quarantine" not in str(result["reason"])
+    assert result["decision"] == "block"
+    assert result["coordination_reason_code"] == "state_dir_protected"
+    assert "could not be preserved in quarantine" in str(result["reason"])
 
 
 # ---------------------------------------------------------------------------
@@ -222,13 +226,13 @@ def test_gc_evicts_oldest_first_when_total_bytes_exceed_cap(tmp_path: Path) -> N
             target="big.txt",
             now=1_700_000_000.0 + index,
             max_entries=64,
-            max_total_bytes=500,
+            max_total_bytes=1600,
         )
         assert saved is not None
 
     entries = list_entries(str(root))
     total = sum(entry.size_bytes for entry in entries)
-    assert total <= 500
+    assert total <= 1600
     assert len(entries) < 4
 
 
@@ -269,8 +273,8 @@ def test_gc_evicts_entries_older_than_ttl(tmp_path: Path) -> None:
     assert fresh.name in names
 
 
-def test_single_backup_never_exceeds_per_entry_byte_cap(tmp_path: Path) -> None:
-    from core.quarantine import backup_blocked_command
+def test_single_backup_never_exceeds_stored_command_byte_cap(tmp_path: Path) -> None:
+    from core.quarantine import backup_blocked_command, list_entries
 
     root = tmp_path / "project"
     root.mkdir()
@@ -286,4 +290,8 @@ def test_single_backup_never_exceeds_per_entry_byte_cap(tmp_path: Path) -> None:
     )
 
     assert saved is not None
-    assert saved.stat().st_size <= 1024
+    record = list_entries(str(root))[0]
+    assert record.original_bytes == len(huge_command.encode("utf-8"))
+    assert record.stored_bytes == 1024
+    assert record.truncated is True
+    assert record.record_status == "incomplete"
