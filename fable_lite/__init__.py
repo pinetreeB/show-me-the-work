@@ -14,6 +14,7 @@ _SUBMODULES = (
     "check_support",
     "cli",
     "design_check",
+    "goals",
     "intent",
     "migrate",
     "quarantine",

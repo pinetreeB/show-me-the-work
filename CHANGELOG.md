@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **GOALS-02 identity-aware goals UX**: added canonical `smtw goals plan`, `verify`, and `status` commands with automatic selection of a sole exact active identity, unique host/session environment matching, explicit `--identity` or matching `--host`/`--session-id`/`--agent` selection, and explicit errors for ambiguity, wrong identities, and synthetic-only turns.
+
+### Fixed
+
+- **N2 recovery guidance**: checkpoint denials now include a complete copyable identity-specific plan command. Following that command writes the checkpoint N2 actually checks, immediately clears the gate for that identity, and cannot borrow a foreign identity's checkpoint; legacy single-agent fallback remains available.
+
 ## [2.6.0] - 2026-07-22 — canonical Python package (`fable_lite` → `smtw`)
 
 ### Changed
