@@ -86,14 +86,33 @@ source로 남을 수 있습니다.
 표준 라이브러리만 사용합니다. 감독하지 않는 프로젝트가 매 훅마다 Python
 기동 비용을 내지 않도록 project scope 설치를 권장합니다.
 
+Claude 플러그인 등록은 host hook을 연결하지만 `smtw` console script를
+설치하지 **않으므로** Python 패키지를 먼저 설치하십시오(canonical 경로):
+
 ```bash
 git clone https://github.com/pinetreeB/show-me-the-work
 cd show-me-the-work
+python -m pip install .
+smtw version
 claude plugin marketplace add .
 claude plugin install show-me-the-work@show-me-the-work --scope project
 smtw init --root .
 smtw doctor --root .
 ```
+
+격리된 tool 환경을 선호하면 `pipx install .`(또는 `uv tool install .`)도
+동일한 대안입니다.
+
+무설치 fallback: checkout launcher가 패키지 설치 없이 저장소에서 직접 동일
+CLI를 제공합니다:
+
+```bash
+python fable-lite-cli.py init --root .
+python fable-lite-cli.py doctor --root .
+```
+
+패키지 설치가 canonical이고, launcher는 설치를 원하지 않는 환경의
+fallback입니다.
 
 `smtw init`은 정확한 사용자 홈을 거절하고, 기존 canonical/legacy config를
 덮어쓰지 않으며, runtime state를 만들거나 legacy state를 이관하지 않습니다.
@@ -346,7 +365,8 @@ supervision 비활성화만으로 파일이 삭제되지는 않습니다.
 
 ## 13. 개발과 검증
 
-blocking CI matrix는 Ubuntu·Windows, Python 3.12에서 다음을 실행합니다.
+blocking CI matrix는 Ubuntu(Python 3.12, 3.13, 3.14)·Windows(Python
+3.12, 3.14)에서 전체 suite를 실행합니다.
 
 ```bash
 python scripts/sync_version.py --check
@@ -360,8 +380,9 @@ python -m build --wheel --outdir dist
 python scripts/check_wheel_contents.py --wheel-dir dist
 ```
 
-이후 clean Python 3.12 virtual environment에 wheel을 설치해 canonical/legacy
-module·console entry point를 smoke합니다. release-quality는 randomized
+이후 각 matrix leg의 Python 버전으로 clean virtual environment에 wheel을
+설치해 canonical/legacy module·console entry point(`smtw version`,
+`fable-lite version`)를 smoke합니다. release-quality는 randomized
 provenance, 1k/10k performance receipt(shared runner 변동 때문에 non-blocking),
 8-process Stop counter race도 실행합니다.
 
