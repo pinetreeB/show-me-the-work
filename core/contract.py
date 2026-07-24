@@ -17,6 +17,7 @@ from .gate_counters import (
     recover_checkpoint_gates,
 )
 from .agent_log import ledger_transaction
+from .destructive_guard import executable_command_positions
 from .ledger import (
     JsonObject,
     JsonValue,
@@ -234,6 +235,43 @@ def evaluate_state_file_friction(payload: Mapping[str, JsonValue]) -> Decision:
     }
 
 
+_GOALS_PLAN_EXECUTABLES: Final = frozenset(
+    {"smtw", "smtw.exe", "fable-lite", "fable-lite.exe"}
+)
+_GOALS_PLAN_INTERPRETERS: Final = frozenset(
+    {"python", "python.exe", "python3", "python3.exe", "py", "py.exe"}
+)
+
+
+def _command_basename(token: str) -> str:
+    return token.replace("\\", "/").rsplit("/", 1)[-1].lower()
+
+
+def _is_goals_plan_position(tokens: tuple[str, ...]) -> bool:
+    """실제 command position의 goals authoring invocation만 인정한다.
+
+    GOALS-03B (INV-05) — 인정 형태:
+      smtw goals plan / fable-lite goals plan / python -m smtw goals plan /
+      python fable-lite-cli.py goals plan / python goals/goals.py plan
+    echo·printf·python -c·comment·env value·argument 안의 문구는 command
+    position에 없으므로 인정되지 않는다.
+    """
+    if len(tokens) < 3:
+        return False
+    head = _command_basename(tokens[0])
+    if head in _GOALS_PLAN_EXECUTABLES:
+        return tokens[1].lower() == "goals" and tokens[2].lower() == "plan"
+    if head in _GOALS_PLAN_INTERPRETERS:
+        if len(tokens) >= 5 and tokens[1] == "-m" and tokens[2].lower() == "smtw":
+            return tokens[3].lower() == "goals" and tokens[4].lower() == "plan"
+        script = _command_basename(tokens[1])
+        if script == "fable-lite-cli.py" and len(tokens) >= 4:
+            return tokens[2].lower() == "goals" and tokens[3].lower() == "plan"
+        if script == "goals.py":
+            return tokens[2].lower() == "plan"
+    return False
+
+
 def _is_goals_authoring(root: str, paths: list[str], command: str) -> bool:
     normalized_paths = [path.replace("\\", "/") for path in paths]
     try:
@@ -244,15 +282,13 @@ def _is_goals_authoring(root: str, paths: list[str], command: str) -> bool:
             return True
     except StateLayoutError:
         pass
-    lowered = command.lower()
-    if "goals.py" in lowered and " plan" in lowered:
-        return True
-    return bool(
-        re.search(
-            r"(?:^|\s)(?:smtw|smtw\.exe|fable-lite|fable-lite\.exe)"
-            r"\s+goals\s+plan(?:\s|$)",
-            lowered,
-        )
+    if not command.strip():
+        return False
+    # R2 command-position parser의 public primitive 재사용 — 문자열 검색이 아닌
+    # 실제 executable invocation만 authoring으로 인정한다(GOALS-03B, INV-05).
+    return any(
+        _is_goals_plan_position(position)
+        for position in executable_command_positions(command)
     )
 
 
