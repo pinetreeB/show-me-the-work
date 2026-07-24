@@ -211,7 +211,16 @@ def _normalize_value(value: object) -> ConfigValue:
 
 
 def _has_canonical_smtw_declaration(text: str) -> bool:
-    """Conservatively find a real ``tool.smtw`` key outside comments/values."""
+    """Conservatively find a real ``tool.smtw`` key outside comments/values.
+
+    CONFIG-03 (INV-07): the scanner tracks the current table path so
+    table-relative dotted keys are recognized — ``[tool]`` followed by
+    ``smtw.supervision = false`` (or ``"smtw".supervision = false``) is a valid
+    spelling of ``tool.smtw.supervision``. Without table context the canonical
+    declaration is misjudged ABSENT and a legacy config would shadow it.
+    """
+    current_table: tuple[str, ...] = ()
+    table_known = True
     raw_lines = text.splitlines()
     for raw_line, structural_code in zip(
         raw_lines,
@@ -222,24 +231,41 @@ def _has_canonical_smtw_declaration(text: str) -> bool:
             continue
         stripped = raw_line.lstrip()
         if stripped.startswith("[["):
+            # Array-tables never declare the config table (tool.smtw would be an
+            # array, not a table) and their element context is non-declaring.
+            current_table, table_known = (), False
             continue
         if stripped.startswith("["):
             segments, index = _parse_toml_key_path(stripped, 1)
-            if segments != ("tool", "smtw"):
-                continue
-            index = _skip_whitespace(stripped, index)
-            # A valid close or malformed tail after the exact canonical path
-            # both mean the broken file may declare SMTW. A parsed third
-            # segment would already be present in ``segments`` and is excluded.
-            return index >= len(stripped) or stripped[index] != "."
+            if segments == ("tool", "smtw"):
+                # A valid close or malformed tail after the exact canonical path
+                # both mean the broken file may declare SMTW. Deeper sub-tables
+                # ([tool.smtw.x]) do not prove a config declaration on their own.
+                index = _skip_whitespace(stripped, index)
+                return index >= len(stripped) or stripped[index] != "."
+            if segments:
+                current_table, table_known = segments, True
+            else:
+                # Unparseable header: table context is unknown; only absolute
+                # canonical prefixes on key lines can still prove declaration.
+                current_table, table_known = (), False
+            continue
 
         segments, _index = _parse_toml_key_path(stripped, 0)
-        if len(segments) < 2 or segments[:2] != ("tool", "smtw"):
+        if not segments:
             continue
-        # Once a malformed statement begins with the canonical dotted path,
-        # absence is no longer provable even if ``=`` or a closing quote was
-        # lost at the parse error.
-        return True
+        if len(segments) >= 2 and segments[:2] == ("tool", "smtw"):
+            # Once a malformed statement begins with the canonical dotted path,
+            # absence is no longer provable even if ``=`` or a closing quote was
+            # lost at the parse error.
+            return True
+        if table_known and current_table == ("tool",) and segments[0] == "smtw":
+            # CONFIG-03: [tool] + `smtw.supervision = false` (or `"smtw".x`) is
+            # the table-relative spelling of tool.smtw.*.
+            return True
+        if table_known and current_table == ("tool", "smtw"):
+            # Keys directly under [tool.smtw] declare canonical config.
+            return True
     return False
 
 

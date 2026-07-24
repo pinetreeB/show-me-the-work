@@ -941,14 +941,26 @@ def _stored_candidates(root: Path, invocation: CanonicalInvocation) -> tuple[str
     stored = invocations.get(invocation.invocation_id)
     if not isinstance(stored, dict):
         return invocation.candidate_paths
-    paths = stored.get("candidate_logical_paths")
-    if not isinstance(paths, list):
+    # ATTR-03: PostTool candidate match는 logical key OR invocation-time resolved
+    # key — symlink replacement는 logical로, write-through는 resolved로 매칭된다.
+    # 어느 쪽만 보면 write-through delta가 external로 오귀속된다(INV: attribution
+    # evidence는 실제 물리 write를 따라야 한다).
+    paths: list[str] = []
+    logical = stored.get("candidate_logical_paths")
+    if isinstance(logical, list):
+        paths.extend(path for path in logical if isinstance(path, str))
+    resolved = stored.get("candidate_resolved_paths")
+    if isinstance(resolved, list):
+        paths.extend(path for path in resolved if isinstance(path, str))
+    if not paths:
         # Live ledgers written before ATTR-02 have only candidate_paths.  Their
         # historical resolved projection is the best available PostTool filter.
-        paths = stored.get("candidate_paths")
-    if not isinstance(paths, list):
+        legacy = stored.get("candidate_paths")
+        if isinstance(legacy, list):
+            paths.extend(path for path in legacy if isinstance(path, str))
+    if not paths:
         return invocation.candidate_paths
-    return tuple(path for path in paths if isinstance(path, str))
+    return tuple(dict.fromkeys(paths))
 
 
 def _stored_covers(root: Path, invocation: CanonicalInvocation) -> JsonObject | None:
