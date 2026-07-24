@@ -105,7 +105,15 @@ def block_goals_once(payload: Mapping[str, JsonValue]) -> Decision:
             ReasonCode.PRETOOL_GOALS_MISSING,
             GateAction.BLOCK,
         )
-        save_ledger(payload, ledger)
+        if not save_ledger(payload, ledger):
+            # Durable write failed: the incremented counter never reached disk. Emitting a
+            # block now would let the next serial worker re-read the stale counter and block
+            # again (lost update -> the intermittent 3==2). Fail open instead — consistent
+            # with the cap-reached branch — leaving the counter unpersisted so no slot is spent.
+            return {
+                "decision": "allow",
+                "message": "goals gate durable write failed; fail-open allow",
+            }
         identity = _active_turn_identity(ledger, payload)
     identity_argument = (
         identity
@@ -176,7 +184,11 @@ def block_intent_once(payload: Mapping[str, JsonValue], intent_command: str) -> 
             ReasonCode.PRETOOL_INTENT_MISSING,
             GateAction.BLOCK,
         )
-        save_ledger(payload, ledger)
+        if not save_ledger(payload, ledger):
+            return {
+                "decision": "allow",
+                "message": "intent gate durable write failed; fail-open allow",
+            }
     return {
         "decision": "block",
         "reason": (
