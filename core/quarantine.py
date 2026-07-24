@@ -176,6 +176,12 @@ def _backup_blocked_command_unlocked(
         ):
             # GC or another filesystem actor removed/replaced/corrupted the
             # just-created entry.  Never report a preservation success.
+            # QUAR-03A ①: delete the failed destination so a corrupt entry is
+            # never read back as complete; ②: if deletion also fails, rewrite
+            # the header status so list/show reports the true state (read-time
+            # verification in _record_from_bytes is the final safety net).
+            if not _unlink_failed_destination(destination):
+                _mark_destination_corrupt(destination)
             return None
         return destination
     except Exception:  # noqa: BLE001 - backup must never break the caller.
@@ -294,6 +300,45 @@ def _safe_unlink(path: Path) -> None:
         pass
 
 
+def _unlink_failed_destination(path: Path) -> bool:
+    """QUAR-03A: delete a verification-failed destination; False on failure."""
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    return True
+
+
+def _mark_destination_corrupt(path: Path) -> None:
+    """QUAR-03A ②: best-effort rewrite of an undeletable failed entry's header.
+
+    The record_status header becomes ``corrupt`` so operators see the true
+    state in list/show and can remediate (quarantine clear).  Any rewrite
+    failure is swallowed — read-time verification still flags the entry.
+    """
+    try:
+        payload = path.read_bytes()
+    except OSError:
+        return
+    header, separator, body = payload.partition(_RECORD_SEPARATOR)
+    if not separator:
+        return
+    lines = header.decode(_ENCODING, errors="replace").splitlines()
+    had_status = any(line.startswith("# record_status:") for line in lines)
+    marked = [
+        "# record_status: corrupt" if line.startswith("# record_status:") else line
+        for line in lines
+    ]
+    if not had_status:
+        marked.append("# record_status: corrupt")
+    try:
+        path.write_bytes(
+            ("\n".join(marked) + "\n").encode(_ENCODING) + separator + body
+        )
+    except OSError:
+        return
+
+
 def _gc(
     directory: Path,
     *,
@@ -303,8 +348,16 @@ def _gc(
     now: float | None = None,
 ) -> None:
     reference = now if now is not None else time.time()
-    # 파일명이 ISO8601-compact 타임스탬프로 시작하므로 이름순 정렬이 곧 시간순이다.
-    entries = sorted(_entry_files(directory), key=lambda p: p.name)
+    # QUAR-03B: 파일명이 UUID suffix로 끝나므로 동일 timestamp burst 안에서
+    # 이름순은 생성순서가 아니다. (st_mtime_ns, name)으로 정렬해 burst에서도
+    # oldest-first eviction을 보장한다.
+    age_keys: dict[Path, tuple[int, str]] = {}
+    for path in _entry_files(directory):
+        try:
+            age_keys[path] = (path.stat().st_mtime_ns, path.name)
+        except OSError:
+            continue
+    entries = sorted(age_keys, key=lambda p: age_keys[p])
 
     kept: list[Path] = []
     for path in entries:
@@ -367,11 +420,11 @@ def _parse_bool(value: str) -> bool | None:
 
 
 def _record_from_bytes(path: Path, payload: bytes) -> QuarantineRecord:
-    header, _separator, _body = payload.partition(_RECORD_SEPARATOR)
+    header, _separator, body = payload.partition(_RECORD_SEPARATOR)
     fields = _parse_header(header.decode(_ENCODING, errors="replace"))
     truncated = _parse_bool(fields.get("truncated", ""))
     record_status = fields.get("record_status", "")
-    if record_status not in {"complete", "incomplete"}:
+    if record_status not in {"complete", "incomplete", "corrupt"}:
         record_status = (
             "incomplete"
             if truncated is True
@@ -379,6 +432,16 @@ def _record_from_bytes(path: Path, payload: bytes) -> QuarantineRecord:
             if truncated is False
             else "unknown"
         )
+    # QUAR-03A ③: verify stored content against the header claims so list/show
+    # never reports a corrupted entry as complete, even if the write-time
+    # corrupt mark could not be placed.
+    claimed_digest = fields.get("stored_sha256", "")
+    claimed_bytes = _parse_nonnegative_int(fields.get("stored_bytes", ""))
+    if claimed_digest:
+        if hashlib.sha256(body).hexdigest() != claimed_digest:
+            record_status = "corrupt"
+    elif claimed_bytes is not None and len(body) != claimed_bytes:
+        record_status = "corrupt"
     return QuarantineRecord(
         path=path,
         id=path.name,
