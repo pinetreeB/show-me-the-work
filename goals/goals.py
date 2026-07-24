@@ -185,30 +185,6 @@ def _environment_matches(
     return tuple(sorted(matches))
 
 
-def _hook_receipt_matches(
-    root: str,
-    candidates: tuple[str, ...],
-) -> tuple[str, ...]:
-    ledger = load_ledger({"project_root": root})
-    turns = ledger.get("active_turns")
-    if not isinstance(turns, dict):
-        return ()
-    matches: list[str] = []
-    for candidate in candidates:
-        turn = turns.get(candidate)
-        if not isinstance(turn, dict):
-            continue
-        invocations = turn.get("invocations")
-        if not isinstance(invocations, dict):
-            continue
-        if any(
-            isinstance(receipt, dict) and receipt.get("status") == "open"
-            for receipt in invocations.values()
-        ):
-            matches.append(candidate)
-    return tuple(sorted(matches))
-
-
 def resolve_identity(
     root: str,
     args: argparse.Namespace,
@@ -236,16 +212,16 @@ def resolve_identity(
     if len(exact) == 1:
         return _identity_mapping(exact[0])
     if len(exact) > 1:
+        # GOALS-03A (INV-04): peer open receipt는 current CLI caller identity의
+        # 근거로 사용하지 않는다. 현재 CLI command는 PreToolUse가 invocation을
+        # 등록하기 전에 N2 판정을 받을 수 있어 open receipt는 peer의 이전·동시
+        # tool일 수 있다. 우선순위: ①explicit --identity ②complete triplet
+        # (이상 _explicit_identity) ③exact active 1개 ④process environment
+        # unique match ⑤ambiguity error.
         source = os.environ if environ is None else environ
         environment_matches = _environment_matches(exact, source)
-        receipt_matches = _hook_receipt_matches(root, exact)
-        unique_hints = {
-            matches[0]
-            for matches in (environment_matches, receipt_matches)
-            if len(matches) == 1
-        }
-        if len(unique_hints) == 1:
-            return _identity_mapping(next(iter(unique_hints)))
+        if len(environment_matches) == 1:
+            return _identity_mapping(environment_matches[0])
         raise GoalsCliError(
             "ambiguous_identity",
             "multiple active exact identities; rerun with --identity or the "

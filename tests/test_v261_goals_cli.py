@@ -165,9 +165,12 @@ def test_host_session_environment_selects_one_of_two_exact_identities(
     assert needs_goals_block(selected) is False
 
 
-def test_open_hook_receipt_selects_one_of_two_exact_identities(
+def test_open_hook_receipt_does_not_select_one_of_two_exact_identities(
     tmp_path: Path,
 ) -> None:
+    # GOALS-03A (INV-04): peer open receipt는 current CLI caller identity의
+    # 근거로 쓰지 않는다. 현재 CLI는 PreToolUse invocation 등록 전에 N2 판정을
+    # 받을 수 있어 open receipt는 peer의 것일 수 있다.
     _ = _seed_turn(tmp_path, session_id="session-a", agent="codex-a")
     selected = _seed_turn(
         tmp_path, session_id="session-b", agent="codex-b"
@@ -195,10 +198,12 @@ def test_open_hook_receipt_selects_one_of_two_exact_identities(
 
     result = _run_smtw(*_plan_args(tmp_path), env=env)
 
-    assert result.returncode == 0
-    assert _goals_path(tmp_path, "session-b", "codex-b").is_file()
+    assert result.returncode == 2
+    payload = _json_output(result)
+    assert payload["error"] == "ambiguous_identity"
+    assert not _goals_path(tmp_path, "session-b", "codex-b").exists()
     assert not _goals_path(tmp_path, "session-a", "codex-a").exists()
-    assert needs_goals_block(selected) is False
+    assert needs_goals_block(selected) is True
 
 
 def test_n2_denial_contains_complete_copyable_identity_command(
