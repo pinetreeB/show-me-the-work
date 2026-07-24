@@ -221,6 +221,35 @@ def _validate_design_state(value: JsonObject, field: str) -> None:
         _string_list(hashes, f"{field}.design_dirty_baseline.{path}")
 
 
+def supported_legacy_schema_version(value: JsonValue) -> bool:
+    """schema_version 누락 또는 1(비-bool 정수) = legacy. runtime loader와 공유."""
+    return value is None or (
+        isinstance(value, int) and not isinstance(value, bool) and value == 1
+    )
+
+
+def require_supported_ledger_schema(raw: JsonObject) -> None:
+    """지원 schema 집합 {legacy(1/누락), v2(2)} 단일 게이트 (DOCTOR-03A, INV-06).
+
+    runtime ledger loader와 doctor가 이 함수를 공유해 별도 복제 판단으로
+    unsupported schema가 healthy로 보고되는 모순을 막는다.
+    """
+    schema_version = raw.get("schema_version")
+    if schema_version == 2 or supported_legacy_schema_version(schema_version):
+        return
+    _reject("ledger.schema_version", "must be 1 or 2")
+
+
+def validate_ledger_object(raw: JsonValue) -> JsonObject:
+    """전체 ledger schema 검증 — 진단 도구(doctor)가 runtime과 같은 기준으로 쓴다."""
+    if not isinstance(raw, dict):
+        _reject("ledger", "must be a JSON object")
+    require_supported_ledger_schema(raw)
+    if raw.get("schema_version") == 2:
+        return validate_v2_ledger(raw)
+    return raw
+
+
 def validate_v2_ledger(value: JsonValue) -> JsonObject:
     ledger = _object(value, "ledger")
     _v2_schema(ledger, "ledger")
