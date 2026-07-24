@@ -1,5 +1,8 @@
 [build-system]
-requires = ["setuptools>=69"]
+# BUILD-03: upper-bounded range pin so isolated builds (python -m build) do not
+# float to an unverified setuptools release.  See CONTRIBUTING.md "Build Backend
+# Pinning" for the security-update procedure.
+requires = ["setuptools>=69,<84"]
 build-backend = "setuptools.build_meta"
 
 [project]

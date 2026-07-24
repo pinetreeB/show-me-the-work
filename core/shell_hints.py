@@ -55,15 +55,80 @@ def _inline_paths(command: str) -> Iterable[str]:
 
 def _python_inline_sources(command: str) -> Iterable[str]:
     for tokens in executable_command_positions(command):
-        executable = tokens[0].replace("\\", "/").rsplit("/", 1)[-1].casefold()
-        if executable.endswith(".exe"):
-            executable = executable[:-4]
-        if executable == "py" or re.fullmatch(r"python(?:\d+(?:\.\d+)?)?", executable):
-            args = tokens[1:]
-            for argument_index, argument in enumerate(args[:-1]):
-                if argument == "-c":
-                    yield args[argument_index + 1]
-                    break
+        if _is_python_executable(tokens[0]):
+            yield from _python_c_source(tokens[1:])
+    # HINT-03: `env -S/--split-string "..."` payloads.  R2's non-posix
+    # tokenizer fragments quoted payloads (embedded \" closes the quoted
+    # region), so executable_command_positions cannot see the inner command.
+    # Re-extract the payload from a posix token stream instead.  Advisory
+    # friction only — R2's own verdict is computed separately and unchanged.
+    yield from _env_split_string_sources(command, set())
+
+
+def _env_split_string_sources(
+    command: str, seen: set[str]
+) -> Iterable[str]:
+    if command in seen:
+        return
+    seen.add(command)
+    tokens = _tokens(command)
+    for index, token in enumerate(tokens):
+        if not _is_env_executable(token):
+            continue
+        payload = _split_string_payload(tokens, index)
+        if payload is None:
+            continue
+        argv = _tokens(payload)
+        argv_index = 0
+        while (
+            argv_index < len(argv)
+            and not argv[argv_index].startswith("-")
+            and "=" in argv[argv_index]
+        ):
+            argv_index += 1  # skip leading VAR=value assignments
+        if argv_index < len(argv) and _is_python_executable(argv[argv_index]):
+            yield from _python_c_source(argv[argv_index + 1 :])
+        # Nested wrappers inside the payload (e.g. env -S "env -S '...'").
+        yield from _env_split_string_sources(payload, seen)
+
+
+def _split_string_payload(
+    tokens: tuple[str, ...], env_index: int
+) -> str | None:
+    cursor = env_index + 1
+    while cursor < len(tokens):
+        argument = tokens[cursor]
+        if argument in {"-S", "--split-string"}:
+            return tokens[cursor + 1] if cursor + 1 < len(tokens) else None
+        if argument.startswith("-S") and len(argument) > 2:
+            return argument[2:]
+        if argument == "--":
+            return None
+        if not argument.startswith("-") and "=" not in argument:
+            return None  # the command word began without -S
+        cursor += 1
+    return None
+
+
+def _executable_name(token: str) -> str:
+    name = token.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    return name.removesuffix(".exe")
+
+
+def _is_python_executable(token: str) -> bool:
+    name = _executable_name(token)
+    return name == "py" or re.fullmatch(r"python(?:\d+(?:\.\d+)?)?", name) is not None
+
+
+def _is_env_executable(token: str) -> bool:
+    return _executable_name(token) == "env"
+
+
+def _python_c_source(args: tuple[str, ...]) -> Iterable[str]:
+    for argument_index, argument in enumerate(args[:-1]):
+        if argument == "-c":
+            yield args[argument_index + 1]
+            break
 
 
 def _python_write_paths(source: str) -> Iterable[str]:
