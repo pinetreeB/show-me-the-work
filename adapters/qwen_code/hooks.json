@@ -1,0 +1,78 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{SMTW_HOOK_COMMAND} UserPromptSubmit",
+            "timeout": 30000,
+            "statusMessage": "smtw prompt routing"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "run_shell_command|edit|write_file|notebook_edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{SMTW_HOOK_COMMAND} PreToolUse",
+            "timeout": 30000,
+            "statusMessage": "smtw pre-tool gate"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "run_shell_command|edit|write_file|notebook_edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{SMTW_HOOK_COMMAND} PostToolUse",
+            "timeout": 30000,
+            "statusMessage": "smtw post-tool ledger"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{SMTW_HOOK_COMMAND} Stop",
+            "timeout": 30000,
+            "statusMessage": "smtw stop gate"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{SMTW_HOOK_COMMAND} SessionStart",
+            "timeout": 30000,
+            "statusMessage": "smtw session start"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{SMTW_HOOK_COMMAND} SessionEnd",
+            "timeout": 30000,
+            "statusMessage": "smtw session end"
+          }
+        ]
+      }
+    ]
+  }
+}
