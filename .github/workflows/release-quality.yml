@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install quality and build tools
-        run: python -m pip install pytest ruff build
+        run: python -m pip install -c ci/constraints.txt pytest ruff build
       - name: Version synchronization
         run: python scripts/sync_version.py --check
       - name: Tag matches plugin version
