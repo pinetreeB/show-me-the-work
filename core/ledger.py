@@ -29,6 +29,7 @@ from .ledger_schema import (
     JsonScalar as JsonScalar,
     JsonValue as JsonValue,
     LedgerSchemaError,
+    require_supported_ledger_schema,
     sanitize_coordination_delivered,
     sanitize_coordination_outbox,
     serialize_v2_ledger,
@@ -97,12 +98,7 @@ def load_ledger(payload: Mapping[str, JsonValue]) -> JsonObject:
                 _validate_v2_with_derived_cache_fail_open(loaded),
                 path,
             )
-        if schema_version is not None and (
-            not isinstance(schema_version, int)
-            or isinstance(schema_version, bool)
-            or schema_version != 1
-        ):
-            raise LedgerSchemaError("ledger.schema_version", "must be 1 or 2")
+        require_supported_ledger_schema(loaded)
         merged = default_ledger()
         merged.update(loaded)
         return _expose_attribution_health(merged, path)

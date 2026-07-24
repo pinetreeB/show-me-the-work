@@ -13,7 +13,8 @@ from adapters.claude_code.project_config import (
     ConfigLoadState,
     load_project_config,
 )
-from core.ledger_schema import LedgerSchemaError, validate_v2_ledger
+from core.ledger_schema import LedgerSchemaError, validate_ledger_object
+from core.provenance_types import provenance_status_unsafe
 from core.quarantine import list_entries
 from core.runtime_env import (
     RUNTIME_ENV_SUFFIXES,
@@ -238,11 +239,12 @@ def _ledger_snapshot(authority: Path) -> dict[str, Any]:
         return {**empty, "ledger_health": "error"}
     if not isinstance(raw, dict):
         return {**empty, "ledger_health": "error"}
-    if raw.get("schema_version") == 2:
-        try:
-            validate_v2_ledger(raw)
-        except (LedgerSchemaError, TypeError, ValueError):
-            return {**empty, "ledger_health": "error"}
+    # DOCTOR-03A (INV-06): runtime ledger loader와 공유하는 schema 게이트.
+    # unsupported schema(0·3·99·비정수)가 healthy로 fall-through하지 않는다.
+    try:
+        _ = validate_ledger_object(raw)
+    except (LedgerSchemaError, TypeError, ValueError):
+        return {**empty, "ledger_health": "error"}
 
     turns = raw.get("active_turns")
     active = turns if isinstance(turns, dict) else {}
@@ -271,8 +273,11 @@ def _ledger_snapshot(authority: Path) -> dict[str, Any]:
             if isinstance(legacy, int) and not isinstance(legacy, bool) and legacy > 0:
                 counters[name] += legacy
         incomplete = incomplete or turn.get("provenance_incomplete") is True
-        status = turn.get("provenance_status")
-        incomplete = incomplete or status in {"Incomplete", "OverBudget", "Error"}
+        # DOCTOR-03B (INV-06): ProvenanceStatus enum 기준 단일 판정 — 문자열
+        # 하드코딩 금지. runtime Stop safety와 같은 enum 값을 본다.
+        incomplete = incomplete or provenance_status_unsafe(
+            turn.get("provenance_status")
+        )
         try:
             freshness.append(covers_verified(turn))
         except (TypeError, ValueError):
