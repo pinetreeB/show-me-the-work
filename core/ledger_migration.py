@@ -489,7 +489,15 @@ def _enforce_invocation_status_archive_retention(
     destination: Path,
     *,
     protected_digest: str,
-) -> None:
+) -> JsonObject:
+    """MIGRATION-03: eviction is retry-safe and reports its outcomes.
+
+    The published index stays authoritative and never references a missing
+    archive (index-first rewrite, strict load contract preserved).  An archive
+    whose unlink fails is left on disk as an orphan; ③ the orphan scan on this
+    and later maintenance runs retries the deletion, and ④ the returned report
+    surfaces every failure so it is visible instead of silently accumulating.
+    """
     index_path = destination.with_name(INVOCATION_STATUS_ARCHIVE_INDEX_NAME)
     index = _load_invocation_status_archive_index(index_path)
     entries = _archive_entries(index)
@@ -503,6 +511,32 @@ def _enforce_invocation_status_archive_retention(
             sizes[digest] = destination.with_name(relative_path).stat().st_size
         except OSError as exc:
             raise LedgerMigrationError("archive", str(exc)) from exc
+
+    # ③ Orphan discovery: digest-named archive files whose index entry is gone
+    # (a past failed unlink, or a crash between index rewrite and unlink).
+    # Removing them here is the retry path for failed evictions.  Legacy
+    # fixed-name archives (non-digest names) are deliberately left untouched.
+    indexed_names = {str(entry.get("path")) for entry in entries}
+    orphans_removed: list[str] = []
+    orphans_failed: list[JsonObject] = []
+    try:
+        siblings = list(destination.parent.iterdir())
+    except OSError:
+        siblings = []
+    for sibling in siblings:
+        name = sibling.name
+        if not (
+            sibling.is_file()
+            and _is_digest_archive_name(name)
+            and name not in indexed_names
+        ):
+            continue
+        try:
+            sibling.unlink()
+        except OSError as exc:
+            orphans_failed.append({"path": name, "error": type(exc).__name__})
+        else:
+            orphans_removed.append(name)
 
     retained = list(entries)
     evicted: list[JsonObject] = []
@@ -530,20 +564,52 @@ def _enforce_invocation_status_archive_retention(
         )
         retained.remove(victim)
         evicted.append(victim)
-    if not evicted:
-        return
 
-    _write_invocation_status_archive_index(index_path, retained)
-    for entry in evicted:
-        relative_path = entry.get("path")
-        if not isinstance(relative_path, str):
-            continue
-        try:
-            destination.with_name(relative_path).unlink(missing_ok=True)
-        except OSError:
-            # The published index is authoritative; a leftover unindexed
-            # archive is harmless and can be removed on a later maintenance run.
-            continue
+    evicted_paths: list[str] = []
+    unlink_failed: list[JsonObject] = []
+    if evicted:
+        _write_invocation_status_archive_index(index_path, retained)
+        for entry in evicted:
+            digest = str(entry.get("digest"))
+            relative_path = entry.get("path")
+            if not isinstance(relative_path, str):
+                unlink_failed.append({"digest": digest, "error": "invalid_path"})
+                continue
+            try:
+                destination.with_name(relative_path).unlink(missing_ok=True)
+            except OSError as exc:
+                # The file stays on disk as an orphan (the index no longer
+                # references it); the orphan scan above retries deletion on the
+                # next maintenance run instead of losing the retry path.
+                unlink_failed.append(
+                    {
+                        "digest": digest,
+                        "path": relative_path,
+                        "error": type(exc).__name__,
+                    }
+                )
+            else:
+                evicted_paths.append(relative_path)
+
+    # ④ Retention report: every failure is visible to callers/maintenance.
+    return {
+        "evicted": evicted_paths,
+        "failed": unlink_failed,
+        "orphans_removed": orphans_removed,
+        "orphans_failed": orphans_failed,
+    }
+
+
+def _is_digest_archive_name(name: str) -> bool:
+    """True only for ``{INVOCATION_STATUS_ARCHIVE_PREFIX}<sha256>.bak`` names."""
+    if not (
+        name.startswith(INVOCATION_STATUS_ARCHIVE_PREFIX) and name.endswith(".bak")
+    ):
+        return False
+    digest = name[len(INVOCATION_STATUS_ARCHIVE_PREFIX) : -len(".bak")]
+    return len(digest) == 64 and all(
+        character in "0123456789abcdef" for character in digest
+    )
 
 
 def _archive_created_at(entry: JsonObject) -> datetime:
