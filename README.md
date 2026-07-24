@@ -89,14 +89,33 @@ Requirements: Python 3.12+ must be on `PATH`. The runtime is standard-library
 only. Project scope is recommended so unrelated projects do not pay Python
 startup cost on every host hook event.
 
+Claude plugin registration hooks the host but does **not** install the `smtw`
+console script, so install the Python package first (canonical path):
+
 ```bash
 git clone https://github.com/pinetreeB/show-me-the-work
 cd show-me-the-work
+python -m pip install .
+smtw version
 claude plugin marketplace add .
 claude plugin install show-me-the-work@show-me-the-work --scope project
 smtw init --root .
 smtw doctor --root .
 ```
+
+`pipx install .` (or `uv tool install .`) is an equivalent alternative if you
+prefer an isolated tool environment.
+
+No-install fallback: the checkout launcher provides the same CLI directly from
+the repository without installing the package:
+
+```bash
+python fable-lite-cli.py init --root .
+python fable-lite-cli.py doctor --root .
+```
+
+The package install is canonical; the launcher is the fallback for environments
+where installing the package is not desired.
 
 `smtw init` refuses the exact user home, never overwrites an existing canonical
 or legacy config, does not create runtime state, and does not migrate legacy
@@ -355,7 +374,8 @@ anything.
 
 ## 13. Development and verification
 
-The blocking CI matrix runs on Ubuntu and Windows with Python 3.12:
+The blocking CI matrix runs the full suite on Ubuntu (Python 3.12, 3.13,
+3.14) and Windows (Python 3.12, 3.14):
 
 ```bash
 python scripts/sync_version.py --check
@@ -369,10 +389,12 @@ python -m build --wheel --outdir dist
 python scripts/check_wheel_contents.py --wheel-dir dist
 ```
 
-CI then installs the wheel into a clean Python 3.12 virtual environment and
-smokes canonical and legacy module/console entry points. Release-quality also
-runs randomized provenance, the 1k/10k performance receipt (non-blocking
-because shared runners are noisy), and an eight-process Stop-counter race.
+On every matrix leg CI then installs the wheel into a clean virtual
+environment of that leg's Python version and smokes canonical and legacy
+module/console entry points (`smtw version`, `fable-lite version`).
+Release-quality also runs randomized provenance, the 1k/10k performance
+receipt (non-blocking because shared runners are noisy), and an eight-process
+Stop-counter race.
 
 The deterministic probe runner reports automatic pass/fail cases and leaves
 model-judged probes as `manual`. Use `--strict` for a non-zero exit on failure
