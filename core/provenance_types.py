@@ -47,6 +47,27 @@ class ProvenanceStatus(StrEnum):
     UNSUPPORTED = "unsupported"
 
 
+SAFE_PROVENANCE_STATUSES: Final[frozenset[ProvenanceStatus]] = frozenset(
+    {ProvenanceStatus.COMPLETE, ProvenanceStatus.COMPLETE_WITH_EXCLUSIONS}
+)
+
+
+def provenance_status_unsafe(value: object) -> bool:
+    """Persisted provenance_status 단일 판정 (DOCTOR-03B, INV-06).
+
+    doctor와 runtime이 문자열 하드코딩 대신 이 함수(실제 enum 기준)를 공유한다.
+    missing/빈 값은 provenance 주장 없음(legacy 턴)이라 unsafe가 아니고,
+    알 수 없는 문자열은 fail-closed로 unsafe 처리한다.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        status = ProvenanceStatus(value)
+    except ValueError:
+        return True
+    return status not in SAFE_PROVENANCE_STATUSES
+
+
 class ProvenanceReason(StrEnum):
     NONE = ""
     HOME_ROOT = "home_root"
