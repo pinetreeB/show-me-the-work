@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [2.6.2] - 2026-07-25 — Real-use Reliability Hotfix
+
+No new gate semantics. Closes the v2.6.2 real-use reliability handoff: R2
+heredoc/opaque-execution safety, goals identity and authoring correctness,
+operator health truthfulness, canonical config completion, symlink
+attribution, onboarding docs, quarantine/migration durability, and
+compatibility/build reproducibility — plus a new qwen-code supervision
+adapter. Each PR shipped regression-first with three independent reviews
+(orchestrator + adversarial agy + implementer) and a green five-leg CI.
+
+### Added
+
+- **qwen-code supervision adapter** (`adapters/qwen_code/`): a single-dispatcher
+  hook adapter that brings show-me-the-work supervision to qwen-code (0.20.1).
+  It reuses the Claude Code-compatible payload extraction, maps qwen tool names
+  (`run_shell_command`/`edit`/`write_file`/`notebook_edit`) to core canonical
+  names, and empirically pins the hook `timeout` to 30000 ms because qwen's
+  timeout unit is milliseconds despite documenting "seconds" — a value that
+  would otherwise silently kill the hook. Block is exit 2 + stderr; install is
+  user-global (`~/.qwen/settings.json`) or workspace with trust registration.
+
 ### Fixed
 
 - **R2-07A/B/C shell command-position hardening**: R2 now inspects command
@@ -10,6 +31,55 @@
   input, and follows `builtin command` / `builtin exec` prefixes. Malformed
   executable substitutions remain fail-closed; this is targeted destructive
   command supervision, not an arbitrary-code sandbox.
+- **STATE-03 contract authoring migration barrier**: direct contract Edit/Write
+  now defers under a held migration lock or active staging, recomputes the
+  authority inside the lock, and blocks writes to a path outside the current
+  state authority, so a successful write always lands in the final authority
+  (INV-03). R2 fail-closed behavior is unchanged.
+- **GOALS-03A peer receipt identity inference removed**: goals identity resolves
+  via explicit `--identity`, a complete host/session/agent triple, a sole exact
+  active identity, or a unique environment match — never a peer's open receipt,
+  closing shared-worktree checkpoint overwrites (INV-04).
+- **GOALS-03B command-position authoring**: the goals authoring exception now
+  reuses the R2 command-position parser and only accepts real executable
+  invocations, rejecting `echo`/`printf`/`python -c`/comment/argument
+  look-alikes (INV-05).
+- **DOCTOR-03A shared ledger schema gate**: `doctor` shares the runtime loader's
+  supported-schema set, so an unsupported ledger schema reports `error` instead
+  of a healthy exit 0 (INV-06).
+- **DOCTOR-03B enum provenance health**: `doctor` derives unsafe provenance
+  status from the `ProvenanceStatus` enum rather than hardcoded strings,
+  matching runtime Stop safety on the same ledger.
+- **CONFIG-03 table-relative dotted keys**: the parse-error-tolerant config
+  scanner tracks the current TOML table, recognizing `[tool]` + `smtw.supervision`
+  as `tool.smtw.supervision` and staying fail-closed (`DECLARED_INVALID`, no
+  legacy fallback) on a malformed canonical config (INV-07).
+- **ATTR-03 symlink write-through attribution**: PostTool candidate matching now
+  uses both logical and invocation-time resolved keys, so a symlink
+  write-through is attributed to its editor instead of external.
+- **QUAR-03A/B quarantine durability**: a failed post-write verification cleans
+  up (or flags corrupt/unverified) its destination instead of appearing
+  complete, and GC orders by creation time / mtime rather than UUID
+  lexicographic order.
+- **MIGRATION-03 retry-safe archive eviction**: archive eviction removes the
+  index entry only after a successful unlink, retains failed victims for retry,
+  reports retention outcomes, and preserves the legacy fixed-name archive.
+- **HINT-03 `env -S` friction**: shell hints re-tokenize `env -S/--split-string`
+  payloads so documented wrappers are not missed (advisory friction only; the
+  R2 gate is unchanged).
+- **COMPAT-03 interpreter-prefix `-m` detection**: the `fable_lite` shim scans
+  only the interpreter option region of `orig_argv`, preserving import identity
+  when an application argument mentions `-m fable_lite.cli`.
+
+### Changed
+
+- **DOC-03/04 onboarding and CI matrix docs**: README/README.ko document the
+  canonical `pip install .` path (plugin registration alone does not install the
+  `smtw` console script) with a checkout-launcher fallback, and the actual
+  Ubuntu 3.12/3.13/3.14 + Windows 3.12/3.14 clean-wheel matrix.
+- **BUILD-03 setuptools backend pin**: `pyproject.toml` pins
+  `setuptools>=69,<84` for reproducible isolated builds, with a documented
+  security-update procedure in `CONTRIBUTING.md`.
 
 ## [2.6.1] - 2026-07-24 — Safety Boundary & Documentation Stabilization
 
