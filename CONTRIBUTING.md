@@ -25,6 +25,20 @@ and `python scripts/sync_version.py --check` both fail if one is committed again
 project adopts `uv` as the real install/CI workflow, remove it from `.gitignore`, add a
 version-sync check for it, and update both of those.
 
+## Build Backend Pinning
+
+`pyproject.toml` pins the build backend to a bounded range
+(`setuptools>=69,<84`). An isolated build (`python -m build`) resolves
+`build-system.requires` on its own, so an open-ended `>=` would float to
+whatever setuptools release exists at build time and silently change the
+wheel. The upper bound keeps builds reproducible between verified bumps.
+
+Security-update procedure: when a setuptools security fix lands above the
+upper bound, widen the range (for example `>=69,<85`) in one commit, run the
+full CI matrix (the five legs build the wheel in clean virtual environments
+and `scripts/check_wheel_contents.py` verifies the artifact), and merge only
+after all legs pass. Do not lift the upper bound entirely.
+
 ## Adding Packs
 
 1. Add the Korean and English pack files together under `packs/`.
