@@ -2,7 +2,7 @@
 
 **show-me-the-work**(`smtw`, 쇼미더워크)는 AI가 “완료했다”고 말하기 전에 실제 실행 증거가 있는지 검사하는 로컬 훅 기반 작업 감독 도구입니다.
 
-[![version](https://img.shields.io/badge/version-2.6.1-brightgreen.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.6.2-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > English documentation: [README.md](README.md)

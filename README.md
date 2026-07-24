@@ -2,7 +2,7 @@
 
 **show-me-the-work** (`smtw`) is a local, hook-based work supervisor that checks for actually executed evidence before an AI calls a task done.
 
-[![version](https://img.shields.io/badge/version-2.6.1-brightgreen.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-2.6.2-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > 🇰🇷 Korean is the primary project language: [README.ko.md](README.ko.md)
