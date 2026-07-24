@@ -36,7 +36,10 @@ from .state_layout import (
     LEGACY_STATE_DIR_NAME,
     RUNTIME_STATE_DIR_NAMES,
     STATE_DIR_NAME,
+    StateLayout,
     StateLayoutError,
+    inspect_state_layout_details,
+    state_write_scope,
 )
 
 Decision: TypeAlias = dict[str, JsonValue]
@@ -205,6 +208,64 @@ def _shell_state_dir_hints(command: str) -> list[str]:
     return list(shell_candidate_paths(command))
 
 
+def _contract_authoring_barrier(
+    root: str,
+    authoring_targets: list[str],
+    payload: Mapping[str, JsonValue],
+) -> Decision | None:
+    """STATE-03 (INV-03): contract authoring도 migration barrier 아래서만 안전하다.
+
+    host tool이 고른 경로로 write가 떨어지는 시점은 이 판정 이후이므로,
+    ① migration lock이 잡혀 있거나 staging이 존재하면 block/defer하고
+    ② 선택된 state path를 lock 안에서 재계산하며
+    ③ host가 이미 고른 경로가 현재 authority 밖이면 재작성 경로를 안내한다.
+    """
+    inspection = inspect_state_layout_details(root)
+    if inspection.staging or inspection.layout is StateLayout.MIGRATING:
+        return {
+            "decision": "block",
+            "reason": (
+                "[smtw] STATE-03: state migration staging in progress; contract "
+                "authoring is deferred. Retry after `smtw migrate` settles "
+                "(성공 반환된 write가 최종 authority에 존재해야 한다)."
+            ),
+        }
+    try:
+        with state_write_scope(root, wait_seconds=0) as _authority:
+            misplaced = [
+                target
+                for target in authoring_targets
+                if not _is_contract_authoring(target, payload)
+            ]
+    except TimeoutError:
+        return {
+            "decision": "block",
+            "reason": (
+                "[smtw] STATE-03: state migration lock is held; contract "
+                "authoring is deferred. Retry shortly."
+            ),
+        }
+    except StateLayoutError as exc:
+        return {
+            "decision": "block",
+            "reason": (
+                "[smtw] STATE-03: state layout has no single authority; "
+                f"contract authoring is denied fail-closed: {exc}"
+            ),
+        }
+    if misplaced:
+        return {
+            "decision": "block",
+            "reason": (
+                "[smtw] STATE-03: contract path is outside the current state "
+                f"authority; rewrite under `{_state_display_path(root, 'contract.json')}` "
+                "(or the identity-namespaced contracts path) and retry. "
+                f"target={misplaced[0]}"
+            ),
+        }
+    return None
+
+
 def evaluate_state_file_friction(payload: Mapping[str, JsonValue]) -> Decision:
     # 설계 §6-5: `.fable-lite/**` 직접 변경 명령의 마찰 장치. 실질 방어는 이중 근거
     # 교차 확인(§6-5 본문)이며, 이 검사는 우발적/합리화성 직접 편집을 막는 보조 장치다.
@@ -215,23 +276,31 @@ def evaluate_state_file_friction(payload: Mapping[str, JsonValue]) -> Decision:
     targets = list(_string_list(payload.get("file_paths")))
     if tool in SHELL_TOOLS:
         targets.extend(_shell_state_dir_hints(_command(payload)))
+    authoring_targets = [
+        target
+        for target in targets
+        if tool in EDIT_TOOLS and _is_contract_authoring(target, payload)
+    ]
     offending = [
         target
         for target in targets
-        if _targets_state_dir(root, target)
-        and not (tool in EDIT_TOOLS and _is_contract_authoring(target, payload))
+        if _targets_state_dir(root, target) and target not in authoring_targets
     ]
-    if not offending:
-        return {"decision": "allow", "message": "no state-file friction"}
-    return {
-        "decision": "block",
-        "reason": (
-            f"[smtw] R2-friction: `{_state_display_path(root, '**')}` 상태 파일 직접 변경은 차단됩니다 "
-            "(마찰 장치 — 실질 방어는 §6-5 이중 근거 교차 확인). "
-            "정식 절차(계약 authoring·검증·오케스트레이터 경유)를 사용하세요. "
-            f"target={offending[0]}"
-        ),
-    }
+    if offending:
+        return {
+            "decision": "block",
+            "reason": (
+                f"[smtw] R2-friction: `{_state_display_path(root, '**')}` 상태 파일 직접 변경은 차단됩니다 "
+                "(마찰 장치 — 실질 방어는 §6-5 이중 근거 교차 확인). "
+                "정식 절차(계약 authoring·검증·오케스트레이터 경유)를 사용하세요. "
+                f"target={offending[0]}"
+            ),
+        }
+    if authoring_targets:
+        barrier = _contract_authoring_barrier(root, authoring_targets, payload)
+        if barrier is not None:
+            return barrier
+    return {"decision": "allow", "message": "no state-file friction"}
 
 
 def _is_goals_authoring(root: str, paths: list[str], command: str) -> bool:
