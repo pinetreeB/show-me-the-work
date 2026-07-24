@@ -43,6 +43,7 @@ ENV_GUARDED_HOOKS = (
     "adapters/codex_cli/post_tool_use.py",
     "adapters/codex_cli/stop.py",
     "adapters/antigravity/oma_hook.py",
+    "adapters/qwen_code/qwen_hook.py",
 )
 
 
