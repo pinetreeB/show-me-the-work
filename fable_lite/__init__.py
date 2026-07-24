@@ -33,11 +33,33 @@ if not getattr(_smtw, "_fable_lite_deprecation_warned", False):
     )
     _smtw._fable_lite_deprecation_warned = True
 
-_requested_module = ""
-if "-m" in sys.orig_argv:
-    _index = sys.orig_argv.index("-m")
-    if _index + 1 < len(sys.orig_argv):
-        _requested_module = sys.orig_argv[_index + 1]
+# COMPAT-03: only the interpreter invocation prefix may carry `-m`.  Scanning
+# all of sys.orig_argv misreads ordinary application arguments (`python app.py
+# --example -m fable_lite.cli`) as an interpreter module request and breaks the
+# plain-import identity below.
+_INTERPRETER_OPTIONS_WITH_VALUE = frozenset({"-W", "-X", "-c", "-m"})
+
+
+def _requested_module_from_orig_argv(argv: list[str]) -> str:
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if token == "-m":
+            return argv[index + 1] if index + 1 < len(argv) else ""
+        if token.startswith("-") and token != "-":
+            index += (
+                2
+                if token in _INTERPRETER_OPTIONS_WITH_VALUE and "=" not in token
+                else 1
+            )
+            continue
+        # First non-option argument is the script name; everything after it is
+        # application argv, not interpreter options.
+        return ""
+    return ""
+
+
+_requested_module = _requested_module_from_orig_argv(sys.orig_argv)
 _executed_submodule = (
     _requested_module.removeprefix("fable_lite.")
     if _requested_module.startswith("fable_lite.")
