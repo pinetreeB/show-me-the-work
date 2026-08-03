@@ -43,8 +43,8 @@
 
 영수증:
 
-- `tmp/friction-fix/w4c-adapter-cache-before.json`
-- `tmp/friction-fix/w4c-adapter-cache-after.json`
+- `docs/reviews/2026-08-04-w4c-adapter-cache-before.json`
+- `docs/reviews/2026-08-04-w4c-adapter-cache-after.json`
 - fixture SHA-256: `ff79cb625347ae59ab37ff50dec7c1bb4e5672db1020559d4c4068dc10679d0a`
 
 before는 별도 임시 worktree의 정확한 기준 SHA `5ac9cd5`에서 실행했고, after는 구현 트리에서 같은 벤치 조건으로 실행했다.
