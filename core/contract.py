@@ -33,6 +33,7 @@ from .scorecard_store import (
     record_gate_transition_locked,
     unresolved_block_ids,
 )
+from .shell_command import is_proven_read_only_command
 from .state_layout import (
     LEGACY_STATE_DIR_NAME,
     RUNTIME_STATE_DIR_NAMES,
@@ -737,6 +738,45 @@ def _intent_set_command(payload: Mapping[str, JsonValue]) -> str:
     return 'python -m smtw intent set --root . --goal "..." --scope "..." [--non-goal "..."]'
 
 
+def _gate_preflight_requirements(
+    payload: Mapping[str, JsonValue],
+    *,
+    proven_read_only_shell: bool,
+) -> tuple[str, ...]:
+    requirements: list[str] = []
+    if needs_goals_block(payload):
+        requirements.append("goals")
+    if _high_risk(payload):
+        try:
+            contract_present = _valid_contract_for_payload(payload)
+        except StateLayoutError:
+            contract_present = False
+        if not contract_present:
+            requirements.append("contract")
+    tool = _tool_name(payload)
+    if tool in EDIT_TOOLS or (tool in SHELL_TOOLS and not proven_read_only_shell):
+        requirements.extend(("verification", "stop"))
+    return tuple(requirements)
+
+
+def _with_gate_preflight_hint(
+    decision: Decision,
+    requirements: tuple[str, ...],
+) -> Decision:
+    if decision.get("decision") != "block" or not requirements:
+        return decision
+    reason_value = decision.get("reason")
+    reason = reason_value if isinstance(reason_value, str) else ""
+    display = " -> ".join(
+        "Stop" if requirement == "stop" else requirement
+        for requirement in requirements
+    )
+    return decision | {
+        "reason": f"{reason}\n\n[smtw] turn preflight: {display}.",
+        "preflight_requirements": list(requirements),
+    }
+
+
 def evaluate_pretool_contract(payload: Mapping[str, JsonValue]) -> Decision:
     tool = _tool_name(payload)
     if tool not in GUARDED_TOOLS:
@@ -758,23 +798,42 @@ def evaluate_pretool_contract(payload: Mapping[str, JsonValue]) -> Decision:
             ),
         }
 
+    paths = _string_list(payload.get("file_paths"))
+    command = _command(payload)
+    proven_read_only_shell = (
+        tool in SHELL_TOOLS and is_proven_read_only_command(command)
+    )
+    preflight_requirements = _gate_preflight_requirements(
+        payload,
+        proven_read_only_shell=proven_read_only_shell,
+    )
+
     try:
         recover_checkpoint_gates(payload)
     except (OSError, StateLayoutError, TimeoutError):
         pass
 
-    paths = _string_list(payload.get("file_paths"))
-    command = _command(payload)
     if tool in EDIT_TOOLS and needs_intent_block(payload):
         intent_result = block_intent_once(payload, _intent_set_command(payload))
         if intent_result["decision"] == "block":
-            return intent_result
+            return _with_gate_preflight_hint(
+                intent_result,
+                preflight_requirements,
+            )
 
-    if needs_goals_block(payload) and not _is_goals_authoring(
-        root, paths, command
+    if (
+        needs_goals_block(payload)
+        and not _is_goals_authoring(root, paths, command)
+        and not proven_read_only_shell
     ):
-        return block_goals_once(payload)
+        return _with_gate_preflight_hint(
+            block_goals_once(payload),
+            preflight_requirements,
+        )
 
     if tool in EDIT_TOOLS and paths and all(_is_contract_authoring(path, payload) for path in paths):
         return {"decision": "allow", "message": "contract authoring allowed"}
-    return evaluate_r1_contract_with_scorecard(payload)
+    return _with_gate_preflight_hint(
+        evaluate_r1_contract_with_scorecard(payload),
+        preflight_requirements,
+    )

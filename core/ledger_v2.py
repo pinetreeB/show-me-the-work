@@ -844,6 +844,23 @@ def _remember_closed_turn(
     ledger["closed_turns"] = entries[-MAX_CLOSED_TURNS:]
 
 
+def closed_turn_capacity_available(
+    ledger: Mapping[str, JsonValue],
+    additional: int = 1,
+) -> bool:
+    """W4a: ``_remember_closed_turn`` 사전검사 — replay guard 256 cap을 밀지 않는다.
+
+    maintenance apply가 closed_turns를 추가하기 전에, 기존 replay guard가
+    cap(MAX_CLOSED_TURNS)을 밀려 퇴출되는지 사전에 판단한다. 추가 후에도
+    cap 이내면 True.
+    """
+    if additional < 0:
+        return False
+    closed = ledger.get("closed_turns")
+    entries = [item for item in closed if isinstance(item, dict)] if isinstance(closed, list) else []
+    return len(entries) + additional <= MAX_CLOSED_TURNS
+
+
 def _forget_closed_turn(
     ledger: JsonObject,
     agent: str,
