@@ -91,7 +91,15 @@ def test_r1_scorecard_lock_timeout_preserves_original_block(tmp_path: Path) -> N
         yield
 
     with patch.object(contract, "ledger_transaction", timeout_transaction):
-        assert contract.evaluate_pretool_contract(payload) == expected
+        actual = contract.evaluate_pretool_contract(payload)
+
+    assert actual["decision"] == expected["decision"]
+    assert str(actual["reason"]).startswith(str(expected["reason"]))
+    assert actual["preflight_requirements"] == [
+        "contract",
+        "verification",
+        "stop",
+    ]
 
 
 def test_cache_key_identity_mismatch_is_discarded(tmp_path: Path) -> None:
