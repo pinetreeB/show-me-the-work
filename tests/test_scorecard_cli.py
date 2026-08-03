@@ -230,9 +230,10 @@ def test_scorecard_cli_sc_score01_coordination_bounds_use_occurred_at_min_max_no
 ) -> None:
     # Given: three coordination events for the same (agent,category,outcome,reason) group,
     # appended to the journal out of chronological order (latest event appended first).
-    earliest = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
-    middle = datetime(2026, 7, 20, 9, 0, tzinfo=UTC)
-    latest = datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    now = datetime.now(UTC)
+    earliest = now - timedelta(hours=3)
+    middle = now - timedelta(hours=2)
+    latest = now - timedelta(hours=1)
     _write_coordination_journal(
         tmp_path,
         [
@@ -257,7 +258,7 @@ def test_scorecard_cli_sc_score01_coordination_bounds_collapse_for_identical_tim
     tmp_path: Path,
 ) -> None:
     # Given: repeated events sharing the exact same occurred_at instant.
-    same = datetime(2026, 7, 20, 12, 30, tzinfo=UTC)
+    same = datetime.now(UTC) - timedelta(hours=1)
     _write_coordination_journal(
         tmp_path,
         [
