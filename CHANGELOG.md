@@ -2,6 +2,102 @@
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-08-04 — Supervision Friction & Opaque-Wrapper Safety
+
+Closes the supervision friction an operator reported across 19 supervised
+projects, and shuts an opaque-wrapper fail-open gap found while investigating
+it. Every change shipped regression-first with three independent reviews
+(orchestrator gate + adversarial review + independent re-measurement) and a
+green five-leg CI.
+
+### Added
+
+- **`smtw maintenance plan|apply`**: explicit lifecycle maintenance for stale
+  turns and invocations. `plan` reports safe-auto and manual-only candidates
+  with source digest, identity, reason, and estimated bytes; `apply`
+  re-verifies the digest (CAS), writes a backup, and excludes the current
+  identity, leased open invocations, unsettled attribution, and pending
+  transactions. Timestamp-less legacy turns are manual-only and are never
+  collected automatically. `doctor` stays diagnosis-only — repair lives in
+  `maintenance`.
+- **`smtw migrate --invocation-statuses [--check]`**: explicit backfill for
+  legacy invocations missing `status`. `--check` is write-free; `apply` refuses
+  (exit 1, original and archive untouched) when any row lacks lease evidence.
+- **Gate preflight preview**: the first block of a turn now lists every
+  remaining requirement (goals → contract → verification → Stop) in one
+  message. The preview records no counter and no recover transition. Measured
+  on a high-risk mutation turn: consecutive blocks 3 → 1.
+
+### Changed
+
+- **`doctor` ledger health is now honest**: `unreadable` (IO/JSON) and
+  `invalid` (schema violation) are separate, with the offending field path, a
+  `needs_migration` flag, and the next safe command in both text and JSON. The
+  exit code stays 1.
+- **Proven-read-only shells skip the goals gate**: R2 always runs first; only a
+  fully proven read-only command skips the goals block, and the goals counter
+  is untouched. `is_proven_read_only_command` is now the single public SSOT.
+- **Manifest journal is compacted**: minimum-field projection plus count (256)
+  and byte (1 MB) caps. Full events remain in the agent log, so recovery and
+  audit evidence are preserved. Measured on an 8 MB production-shaped ledger:
+  journal 3,337,090 → 33,505 bytes.
+
+### Fixed
+
+- **R2 opaque wrappers no longer fail open** (security): a wrapper whose
+  payload the shared parser cannot fully prove read-only is blocked as
+  `parse_unable_wrapped` instead of passing when no destructive token was
+  recognized. Empirically, `[IO.File]::WriteAllText`, `Invoke-Expression`,
+  `Add-Content`, `Clear-Content`, `Copy-Item`, `Move-Item`, `New-Item -Force`,
+  and `Out-File` all passed through `powershell -Command` before this change;
+  all 19 measured cases are blocked now. 30 adversarial injections across 10
+  attack families through the real adapter: 30 blocked, 0 false negatives. The
+  coordination label `command_parse_unavailable` is unchanged.
+- **Time-dependent scorecard fixtures**: two coordination-bounds tests pinned
+  2026-07-20 events and fell outside the seven-day window, turning `main` red
+  on any later date. Fixtures are now relative to `now(UTC)`.
+- **`fable_lite` shim inventory** includes the new `maintenance` module.
+
+### Performance
+
+- **Hook invocations no longer reload the ledger eleven times.** Profiling the
+  real adapter entry point (`adapters/codex_cli/pre_tool_use.py`, which does
+  not go through `smtw.cli`) showed a single PreToolUse loading the same 8 MB
+  ledger up to eleven times, with `backfill_invocation_statuses` deep-copying
+  the whole document on each load because 209 invocations lacked `status` —
+  2,588,168 `deepcopy` calls, 3.0 s cumulative. `core/ledger.py` now offers an
+  opt-in process-scoped read cache (`ledger_read_cache()`) that re-checks an
+  `(mtime_ns, size)` fingerprint on every load, re-validates after reading, and
+  is invalidated before any write; the backfill returns the original object
+  when no row needs a status and otherwise copies only the changed branches.
+  Measured on the real adapter path with a production-shaped ledger (8 MB, 209
+  status-less invocations): cold p50 1898 → 428 ms (77%), warm 2244 → 356 ms
+  (84%), four-way concurrent p50 4009 → 500 ms (88%). Combined with the
+  proven-read-only goals exception above, an end-to-end shell hook measured
+  1591–2115 ms before this release and 97–111 ms after. `smtw.cli` subcommand
+  imports were also made lazy; that is an independent improvement and is **not**
+  the cause of the hook speedup.
+
+### Known Limitations
+
+- A harmless redirect that creates a new file (`cmd /c "echo x > newfile"`) is
+  still blocked. A pre-execution existence check cannot atomically defend
+  against TOCTOU or symlink/junction replacement between the gate and the
+  shell, so no exception was added. Use the editor write path instead.
+- **Journal compaction is hygiene, not a latency fix.** An 8 MB ledger
+  contributes only 30–100 ms to a hook; the latency win came from the read
+  cache, not from a smaller file.
+- **Half of the remaining hook cost is data, not code.** A ledger carrying
+  status-less invocations costs roughly twice one that does not (measured
+  1861–4340 ms vs 856–1814 ms before the cache landed). Operators must run
+  `smtw maintenance` explicitly to realize that half; this release ships the
+  tool, not the cleanup.
+- `test_concurrent_same_session_latch_stays_write_once_with_env_roots` failed
+  once in a full-suite run and could not be reproduced afterwards (two
+  full-suite reruns, five isolated runs, and 25 runs per branch under CPU load
+  all passed). Neither a regression nor a pre-existing defect could be
+  established; it is tracked rather than dismissed.
+
 ## [2.6.2] - 2026-07-25 — Real-use Reliability Hotfix
 
 No new gate semantics. Closes the v2.6.2 real-use reliability handoff: R2
