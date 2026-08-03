@@ -6,7 +6,10 @@ import sys
 
 
 def _fail_open(message: str) -> int:
-    data = json.dumps({"systemMessage": f"[smtw] fail-open(게이트 오류, 통과 처리): {message}"}, ensure_ascii=False)
+    data = json.dumps(
+        {"systemMessage": f"[smtw] fail-open(게이트 오류, 통과 처리): {message}"},
+        ensure_ascii=False,
+    )
     _ = sys.stdout.buffer.write(data.encode("utf-8"))
     _ = sys.stdout.buffer.write(b"\n")
     return 0
@@ -29,86 +32,100 @@ def main() -> int:
             tool_input,
         )
         from adapters.intent_command import intent_set_command
+
         payload = read_payload()
         from core.contract import EDIT_TOOLS, SHELL_TOOLS, evaluate_pretool_contract
         from core.destructive_guard import evaluate_r2_destructive_gate
+        from core.ledger import ledger_read_cache
 
-        tool_name = payload.get("tool_name")
-        family = "edit" if tool_name in EDIT_TOOLS else "shell" if tool_name in SHELL_TOOLS else "other"
-        root = project_root(payload)
-        invocation = canonical_invocation(
-            payload,
-            "pre_tool",
-            family,
-            tool_file_paths(payload),
-            tool_command(payload),
-            False,
-            "",
-        )
-        # R2 first: run before any other ledger read such as resolve_active_invocation.
-        # Any exception raised here is absorbed inside destructive_guard as "degraded"
-        # so a later broad except fail-open cannot undo this decision.
-        r2_result = evaluate_r2_destructive_gate(
-            {
-                "project_root": root,
-                "tool_name": "Bash" if family == "shell" else str(payload.get("tool_name", "")),
-                "command": tool_command(payload),
-                "host": invocation.host,
-                "agent": invocation.agent,
-                "session_id": invocation.session_id,
-            }
-        )
-        if r2_result["decision"] == "block":
-            from core.adapter_observation import record_r2_deny_after_resolution
-
-            _ = record_r2_deny_after_resolution(
-                Path(root),
-                invocation,
-                str(r2_result.get("coordination_reason_code", "")),
+        with ledger_read_cache():
+            tool_name = payload.get("tool_name")
+            family = (
+                "edit"
+                if tool_name in EDIT_TOOLS
+                else "shell"
+                if tool_name in SHELL_TOOLS
+                else "other"
             )
-            return emit({"decision": "block", "reason": str(r2_result["reason"])})
-
-        from core.adapter_observation import begin_invocation, resolve_active_invocation
-
-        invocation = resolve_active_invocation(Path(root), invocation)
-        # CODEX-01: a recovered invocation (session_id was omitted, resolved to the
-        # sole active turn for this host+agent) must not stay attribution=legacy_default
-        # once it has a real, resolved session_id -- matching
-        # adapters/claude_code/pre_tool_use.py. Otherwise a recovered identity's own
-        # valid namespaced contract is wrongly treated as an unattributed edit.
-        attribution = invocation.scorecard_attribution
-        if attribution == "legacy_default" and invocation.session_id != "default":
-            attribution = "exact"
-        input_text = json.dumps(tool_input(payload), ensure_ascii=False)
-        result = evaluate_pretool_contract(
-            {
-                "project_root": project_root(payload),
-                "tool_name": str(payload.get("tool_name", "")),
-                "file_paths": tool_file_paths(payload),
-                "command": tool_command(payload),
-                "prompt": input_text,
-                "intent_set_command": intent_set_command(__file__),
-                "host": invocation.host,
-                "agent": invocation.agent,
-                "session_id": invocation.session_id,
-                "turn_id": invocation.turn_id,
-                "attribution": attribution,
-            }
-        )
-        if result["decision"] == "block":
-            return emit({"decision": "block", "reason": str(result["reason"])})
-        observation = begin_invocation(Path(project_root(payload)), invocation)
-        if observation.error_kind == "StaleTurn" and invocation.mutation_capable:
-            detail = " identity conflict" if invocation.identity_conflict else ""
-            return emit(
+            root = project_root(payload)
+            invocation = canonical_invocation(
+                payload,
+                "pre_tool",
+                family,
+                tool_file_paths(payload),
+                tool_command(payload),
+                False,
+                "",
+            )
+            # R2 first: run before any other ledger read such as resolve_active_invocation.
+            # Any exception raised here is absorbed inside destructive_guard as "degraded"
+            # so a later broad except fail-open cannot undo this decision.
+            r2_result = evaluate_r2_destructive_gate(
                 {
-                    "decision": "block",
-                    "reason": (
-                        f"[smtw] stale turn{detail}; submit a current prompt before mutation."
-                    ),
+                    "project_root": root,
+                    "tool_name": "Bash"
+                    if family == "shell"
+                    else str(payload.get("tool_name", "")),
+                    "command": tool_command(payload),
+                    "host": invocation.host,
+                    "agent": invocation.agent,
+                    "session_id": invocation.session_id,
                 }
             )
-        return emit({})
+            if r2_result["decision"] == "block":
+                from core.adapter_observation import record_r2_deny_after_resolution
+
+                _ = record_r2_deny_after_resolution(
+                    Path(root),
+                    invocation,
+                    str(r2_result.get("coordination_reason_code", "")),
+                )
+                return emit({"decision": "block", "reason": str(r2_result["reason"])})
+
+            from core.adapter_observation import (
+                begin_invocation,
+                resolve_active_invocation,
+            )
+
+            invocation = resolve_active_invocation(Path(root), invocation)
+            # CODEX-01: a recovered invocation (session_id was omitted, resolved to the
+            # sole active turn for this host+agent) must not stay attribution=legacy_default
+            # once it has a real, resolved session_id -- matching
+            # adapters/claude_code/pre_tool_use.py. Otherwise a recovered identity's own
+            # valid namespaced contract is wrongly treated as an unattributed edit.
+            attribution = invocation.scorecard_attribution
+            if attribution == "legacy_default" and invocation.session_id != "default":
+                attribution = "exact"
+            input_text = json.dumps(tool_input(payload), ensure_ascii=False)
+            result = evaluate_pretool_contract(
+                {
+                    "project_root": project_root(payload),
+                    "tool_name": str(payload.get("tool_name", "")),
+                    "file_paths": tool_file_paths(payload),
+                    "command": tool_command(payload),
+                    "prompt": input_text,
+                    "intent_set_command": intent_set_command(__file__),
+                    "host": invocation.host,
+                    "agent": invocation.agent,
+                    "session_id": invocation.session_id,
+                    "turn_id": invocation.turn_id,
+                    "attribution": attribution,
+                }
+            )
+            if result["decision"] == "block":
+                return emit({"decision": "block", "reason": str(result["reason"])})
+            observation = begin_invocation(Path(project_root(payload)), invocation)
+            if observation.error_kind == "StaleTurn" and invocation.mutation_capable:
+                detail = " identity conflict" if invocation.identity_conflict else ""
+                return emit(
+                    {
+                        "decision": "block",
+                        "reason": (
+                            f"[smtw] stale turn{detail}; submit a current prompt before mutation."
+                        ),
+                    }
+                )
+            return emit({})
     except Exception as exc:
         if runtime_env_fail_closed is not None:
             denied = runtime_env_fail_closed(exc)
