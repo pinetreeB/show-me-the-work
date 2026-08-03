@@ -1,0 +1,57 @@
+{
+  "adapters": {
+    "antigravity": {
+      "max_ms": 793.174,
+      "min_ms": 644.674,
+      "p50_ms": 730.23,
+      "p95_ms": 793.174,
+      "samples_ms": [
+        732.247,
+        793.174,
+        730.23,
+        644.674,
+        648.585
+      ]
+    },
+    "claude_code": {
+      "max_ms": 759.883,
+      "min_ms": 626.357,
+      "p50_ms": 674.704,
+      "p95_ms": 759.883,
+      "samples_ms": [
+        751.929,
+        674.704,
+        626.357,
+        644.515,
+        759.883
+      ]
+    },
+    "qwen_code": {
+      "max_ms": 628.112,
+      "min_ms": 584.629,
+      "p50_ms": 607.226,
+      "p95_ms": 628.112,
+      "samples_ms": [
+        607.226,
+        628.112,
+        614.875,
+        584.629,
+        599.533
+      ]
+    }
+  },
+  "fixture": {
+    "bytes": 7967923,
+    "path": "C:\\Users\\rotat\\fable-lite\\tmp\\friction-fix\\fixture-ledger-8mb.json",
+    "sha256": "ff79cb625347ae59ab37ff50dec7c1bb4e5672db1020559d4c4068dc10679d0a",
+    "statusless_invocations": 209
+  },
+  "label": "before",
+  "method": "fresh process and fresh statusless fixture with a matching active turn per timed PreToolUse",
+  "schema_version": 1,
+  "settings": {
+    "adapter_root": "C:\\Users\\rotat\\AppData\\Local\\Temp\\w4c-before-rBHOBB\\repo",
+    "concurrency": 1,
+    "samples": 5
+  }
+}
