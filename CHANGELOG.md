@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-08-04 — Adapter Cache Coverage
+
+v2.7.0의 ledger read cache가 `codex_cli` 어댑터에만 적용돼 있었습니다. 감독
+대상 프로젝트 대부분은 Claude Code 플러그인, 즉 `claude_code` 어댑터를 타므로
+**지연 개선이 실제 사용처에 닿지 않고 있었습니다.** 이 패치가 나머지 세 어댑터를
+같은 캐시 범위로 옮깁니다.
+
+### Performance
+
+- **Claude Code · Antigravity · Qwen Code 훅도 ledger 읽기를 캐시합니다.** 대표
+  PreToolUse 1회의 uncached ledger load가 Claude Code 24 → 1, Antigravity
+  23 → 1, Qwen Code 24 → 1로 줄었습니다(v2.7.0에서 수리한 codex 어댑터의 11회보다
+  많았습니다). 동일 8 MB 픽스처(status-less invocation 209건) 기준 p50: Claude
+  Code 674.7 → 307.6 ms (54.4%), Antigravity 730.2 → 351.8 ms (51.8%), Qwen
+  Code 607.2 → 370.4 ms (39.0%). 세션 등록 후 실제 어댑터 subprocess 재현에서는
+  1242~2327 ms → 351~568 ms였습니다.
+- Claude Code의 `session_end`는 실제 ledger load가 0회라 캐시 비대상으로 두고,
+  누락으로 오인되지 않도록 **0회를 테스트로 고정**했습니다.
+- v2.7.0의 정합성 계약(락 내부 fingerprint 재확인, 쓰기 전 무효화)과 비활성
+  프로젝트의 shared-core 무import·quiet 반환 계약은 변경하지 않았습니다.
+
 ## [2.7.0] - 2026-08-04 — Supervision Friction & Opaque-Wrapper Safety
 
 Closes the supervision friction an operator reported across 19 supervised
