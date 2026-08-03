@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
+import json
 from pathlib import Path
 from typing import Final
 
@@ -41,6 +42,9 @@ from .verification_covers import active_turn, agent_key
 
 UNAVAILABLE_SNAPSHOT: Final = "snapshot:unavailable"
 JOURNAL_LIMIT: Final = 256
+# W4a: manifest_event_journal의 직렬화 byte cap. full event는 agent log에 보존되므로
+# journal에는 최소 필드만 보관하고 count·byte cap 둘 다로 경계를 둔다.
+JOURNAL_BYTE_LIMIT: Final = 1 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -987,8 +991,36 @@ def _append_journal(
         if isinstance(current, list)
         else []
     )
-    journal.extend(events)
-    ledger["manifest_event_journal"] = journal[-JOURNAL_LIMIT:]
+    # W4a: full event는 agent log에 보존되므로 journal에는 최소 필드만
+    # projection한다. 스키마가 요구하는 event_id/seq/manifest_generation/
+    # commit_state만 유지해 직렬화 크기를 줄인다.
+    journal.extend(_project_journal_event(event) for event in events)
+    journal = journal[-JOURNAL_LIMIT:]
+    # byte cap: 직렬화 크기가 상한을 넘으면 가장 오래된 항목부터 버린다.
+    # 가장 최신 항목 하나는 절대 버리지 않는다(최신 증거 보존).
+    while len(journal) > 1 and _journal_serialized_size(journal) > JOURNAL_BYTE_LIMIT:
+        journal.pop(0)
+    ledger["manifest_event_journal"] = journal
+
+
+def _project_journal_event(event: JsonObject) -> JsonObject:
+    """Schema 최소 필드만 남긴다(full event는 agent log/pending에 보존)."""
+    return {
+        "event_id": _string_value(event.get("event_id")),
+        "seq": sequence_value(event.get("seq")),
+        "manifest_generation": sequence_value(event.get("manifest_generation")),
+        "commit_state": _string_value(event.get("commit_state")),
+    }
+
+
+def _string_value(value: JsonValue | None) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _journal_serialized_size(journal: list[JsonObject]) -> int:
+    return len(
+        json.dumps(journal, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
 
 
 def _events(value: JsonValue | None) -> tuple[JsonObject, ...]:
