@@ -1,0 +1,57 @@
+{
+  "adapters": {
+    "antigravity": {
+      "max_ms": 398.303,
+      "min_ms": 324.265,
+      "p50_ms": 351.778,
+      "p95_ms": 398.303,
+      "samples_ms": [
+        353.786,
+        324.265,
+        351.778,
+        329.788,
+        398.303
+      ]
+    },
+    "claude_code": {
+      "max_ms": 337.695,
+      "min_ms": 277.127,
+      "p50_ms": 307.581,
+      "p95_ms": 337.695,
+      "samples_ms": [
+        302.942,
+        277.127,
+        307.581,
+        337.695,
+        337.278
+      ]
+    },
+    "qwen_code": {
+      "max_ms": 445.139,
+      "min_ms": 346.186,
+      "p50_ms": 370.414,
+      "p95_ms": 445.139,
+      "samples_ms": [
+        376.255,
+        445.139,
+        365.96,
+        370.414,
+        346.186
+      ]
+    }
+  },
+  "fixture": {
+    "bytes": 7967923,
+    "path": "C:\\Users\\rotat\\fable-lite\\tmp\\friction-fix\\fixture-ledger-8mb.json",
+    "sha256": "ff79cb625347ae59ab37ff50dec7c1bb4e5672db1020559d4c4068dc10679d0a",
+    "statusless_invocations": 209
+  },
+  "label": "after",
+  "method": "fresh process and fresh statusless fixture with a matching active turn per timed PreToolUse",
+  "schema_version": 1,
+  "settings": {
+    "adapter_root": "C:\\Users\\rotat\\fable-lite",
+    "concurrency": 1,
+    "samples": 5
+  }
+}
