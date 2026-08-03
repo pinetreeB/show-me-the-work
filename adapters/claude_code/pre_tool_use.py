@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 from importlib import import_module
 import json
 from pathlib import Path
@@ -115,6 +116,7 @@ def _promote_project_turn(
 
 def main() -> int:
     context: HookContext | None = None
+    cache_stack = ExitStack()
     try:
         context = bootstrap("PreToolUse")
         if not context.active or context.root is None:
@@ -122,6 +124,9 @@ def main() -> int:
         repo_root = Path(__file__).resolve().parents[2]
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
+        from core.ledger import ledger_read_cache
+
+        cache_stack.enter_context(ledger_read_cache())
         from adapters.claude_code.common import (
             canonical_invocation,
             tool_command,
@@ -236,6 +241,8 @@ def main() -> int:
         if denied is not None:
             return denied
         return fail_open(str(exc), context)
+    finally:
+        cache_stack.close()
 
 
 if __name__ == "__main__":
