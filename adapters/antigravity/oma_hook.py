@@ -278,7 +278,12 @@ def main() -> int:
             "AfterAgent": handle_stop,
         }
         handler = handlers.get(event_name)
-        return handler(payload) if handler is not None else emit({})
+        if handler is None:
+            return emit({})
+        from core.ledger import ledger_read_cache
+
+        with ledger_read_cache():
+            return handler(payload)
             
     except Exception as e:
         denied = fail_closed_runtime_env(event_name, e)
