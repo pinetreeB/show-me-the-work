@@ -18,6 +18,7 @@ _SUBMODULES = (
     "goals",
     "init",
     "intent",
+    "maintenance",
     "migrate",
     "quarantine",
     "scorecard",
