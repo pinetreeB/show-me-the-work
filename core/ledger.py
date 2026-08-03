@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
@@ -60,6 +62,32 @@ class _StatusMigrationRequiredLedger(dict[str, JsonValue]):
     """A fail-closed compatibility view that must never reach persistence."""
 
 
+@dataclass(frozen=True, slots=True)
+class _LedgerCacheEntry:
+    fingerprint: tuple[int, int]
+    ledger: JsonObject
+
+
+_LEDGER_READ_CACHE: ContextVar[dict[Path, _LedgerCacheEntry] | None] = ContextVar(
+    "ledger_read_cache",
+    default=None,
+)
+
+
+@contextmanager
+def ledger_read_cache() -> Iterator[None]:
+    """Reuse read-only ledger views within one adapter process."""
+    current = _LEDGER_READ_CACHE.get()
+    if current is not None:
+        yield
+        return
+    token = _LEDGER_READ_CACHE.set({})
+    try:
+        yield
+    finally:
+        _LEDGER_READ_CACHE.reset(token)
+
+
 def _project_root(payload: Mapping[str, JsonValue]) -> str:
     root = payload.get("project_root") or payload.get("cwd")
     return root if isinstance(root, str) and root else "."
@@ -71,11 +99,28 @@ def _agent(payload: Mapping[str, JsonValue]) -> str:
 
 
 def load_ledger(payload: Mapping[str, JsonValue]) -> JsonObject:
-    path = ledger_path(_project_root(payload))
+    project_root = _project_root(payload)
+    path = ledger_path(project_root)
+    cache = _LEDGER_READ_CACHE.get()
+    if cache is not None and (fingerprint := _ledger_fingerprint(path)) is not None:
+        entry = cache.get(path)
+        if entry is not None and entry.fingerprint == fingerprint:
+            return entry.ledger
+        loaded = _load_ledger_uncached(project_root, path)
+        stable_fingerprint = _ledger_fingerprint(path)
+        if stable_fingerprint == fingerprint:
+            cache[path] = _LedgerCacheEntry(fingerprint, loaded)
+        else:
+            _ = cache.pop(path, None)
+        return loaded
+    return _load_ledger_uncached(project_root, path)
+
+
+def _load_ledger_uncached(project_root: str, path: Path) -> JsonObject:
     try:
         loaded: JsonValue = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        _preserve_corrupt_ledger(_project_root(payload), path)
+        _preserve_corrupt_ledger(project_root, path)
         return _expose_attribution_health(default_ledger(), path, degraded=True)
     except FileNotFoundError:
         return _expose_attribution_health(default_ledger(), path)
@@ -102,8 +147,28 @@ def load_ledger(payload: Mapping[str, JsonValue]) -> JsonObject:
         merged = default_ledger()
         merged.update(loaded)
         return _expose_attribution_health(merged, path)
-    _preserve_corrupt_ledger(_project_root(payload), path)
+    _preserve_corrupt_ledger(project_root, path)
     return _expose_attribution_health(default_ledger(), path, degraded=True)
+
+
+def _ledger_fingerprint(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return (-1, 0)
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
+def _invalidate_ledger_cache(path: Path) -> None:
+    cache = _LEDGER_READ_CACHE.get()
+    if cache is not None:
+        _ = cache.pop(path, None)
+
+
+def ledger_is_persistable(ledger: Mapping[str, JsonValue]) -> bool:
+    return not isinstance(ledger, _StatusMigrationRequiredLedger)
 
 
 def _expose_attribution_health(
@@ -231,14 +296,15 @@ def _preserve_corrupt_ledger(project_root: str, path: Path) -> None:
 
 
 def save_ledger(payload: Mapping[str, JsonValue], ledger: JsonObject) -> bool:
-    if isinstance(ledger, _StatusMigrationRequiredLedger):
+    root = _project_root(payload)
+    _invalidate_ledger_cache(ledger_path(root))
+    if not ledger_is_persistable(ledger):
         return False
     schema_version = ledger.get("schema_version")
     serialized = serialize_v2_ledger(ledger) if schema_version == 2 else json.dumps(
         ledger, ensure_ascii=False, indent=2, sort_keys=True
     )
     try:
-        root = _project_root(payload)
         with state_write_scope(root) as authority:
             destination = authority / "ledger.json"
             if _invocation_status_migration_required(destination):
@@ -274,6 +340,8 @@ def record_event_if_current_turn(
     recorded: _RecordedEvent | None = None
     with ledger_transaction(root) as transaction:
         ledger = load_ledger(payload)
+        if not ledger_is_persistable(ledger):
+            return False
         turn = active_turn(ledger, payload)
         requested_turn_id = payload.get("turn_id")
         active = ledger.get("active_turns")
@@ -310,6 +378,8 @@ def _record_event_locked(
     if not existed_before_load:
         ledger = default_v2_ledger()
     event_payload = dict(payload)
+    if not ledger_is_persistable(ledger):
+        return _RecordedEvent(ledger, event_payload, False)
     _ = event_payload.pop("event_seq", None)
     _decorate_design_prompt(root, event_payload)
     event_payload["seq"] = sequence_value(ledger.get("event_seq")) + 1

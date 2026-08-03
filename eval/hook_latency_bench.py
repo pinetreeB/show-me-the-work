@@ -12,16 +12,25 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 from time import perf_counter_ns
 from typing import Final, TypeAlias
 
 
-_PROCESS_STARTED_NS = perf_counter_ns()
-
 ROOT: Final = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from eval.hook_latency_processes import run_actual_group, run_phase_group  # noqa: E402
+from eval.hook_latency_receipt import (  # noqa: E402
+    actual_scenario,
+    phase_scenario,
+    statusless_invocations,
+)
+
+
+_PROCESS_STARTED_NS = perf_counter_ns()
 DEFAULT_FIXTURE: Final = ROOT / "tmp" / "friction-fix" / "fixture-ledger-8mb.json"
 LAUNCHED_NS_ENV: Final = "SMTW_HOOK_BENCH_LAUNCHED_NS"
 PHASES: Final = (
@@ -118,73 +127,6 @@ def _prepare_project(root: Path, fixture: Path) -> None:
     _ = (root / "write-target").mkdir()
 
 
-def _start_worker(root: Path) -> subprocess.Popen[str]:
-    launched_ns = perf_counter_ns()
-    environment = {
-        **os.environ,
-        LAUNCHED_NS_ENV: str(launched_ns),
-        "PYTHONIOENCODING": "utf-8",
-        "PYTHONPATH": str(ROOT),
-    }
-    return subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "--worker-root", str(root)],
-        cwd=ROOT,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-    )
-
-
-def _finish_worker(process: subprocess.Popen[str]) -> PhaseSample:
-    stdout, stderr = process.communicate()
-    if process.returncode != 0:
-        raise ChildProcessError(stderr.strip())
-    raw: JsonObject = json.loads(stdout)
-    sample: PhaseSample = {}
-    for phase in PHASES:
-        value = raw.get(phase)
-        if isinstance(value, bool) or not isinstance(value, int | float):
-            raise ChildProcessError(f"worker phase is not numeric: {phase}")
-        sample[phase] = float(value)
-    return sample
-
-
-def _run_group(root: Path, concurrency: int) -> tuple[list[PhaseSample], float]:
-    started_ns = perf_counter_ns()
-    processes = [_start_worker(root) for _ in range(concurrency)]
-    samples = [_finish_worker(process) for process in processes]
-    return samples, _elapsed_ms(started_ns, perf_counter_ns())
-
-
-def _percentile(values: list[float], fraction: float) -> float:
-    ordered = sorted(values)
-    position = (len(ordered) - 1) * fraction
-    lower = int(position)
-    upper = min(lower + 1, len(ordered) - 1)
-    weight = position - lower
-    return ordered[lower] * (1 - weight) + ordered[upper] * weight
-
-
-def _stats(values: list[float]) -> JsonObject:
-    return {
-        "samples_ms": [round(value, 3) for value in values],
-        "p50_ms": round(_percentile(values, 0.50), 3),
-        "p95_ms": round(_percentile(values, 0.95), 3),
-    }
-
-
-def _scenario(samples: list[PhaseSample], walls: list[float]) -> JsonObject:
-    return {
-        "sample_count": len(samples),
-        "phases": {
-            phase: _stats([sample[phase] for sample in samples]) for phase in PHASES
-        },
-        "group_wall": _stats(walls),
-    }
-
-
 def _run_benchmark(config: BenchConfig) -> JsonObject:
     with tempfile.TemporaryDirectory(
         prefix=".w4b-hook-latency-",
@@ -196,37 +138,68 @@ def _run_benchmark(config: BenchConfig) -> JsonObject:
         for index in range(config.samples):
             root = base / f"cold-{index}"
             _prepare_project(root, config.fixture)
-            samples, wall = _run_group(root, 1)
+            samples, wall = run_phase_group(root, 1, PHASES)
             cold_samples.extend(samples)
             cold_walls.append(wall)
 
         warm_root = base / "warm"
         _prepare_project(warm_root, config.fixture)
-        _ = _run_group(warm_root, 1)
+        _ = run_phase_group(warm_root, 1, PHASES)
         warm_samples: list[PhaseSample] = []
         warm_walls: list[float] = []
         for _index in range(config.samples):
-            samples, wall = _run_group(warm_root, 1)
+            samples, wall = run_phase_group(warm_root, 1, PHASES)
             warm_samples.extend(samples)
             warm_walls.append(wall)
 
         load_root = base / "load"
         _prepare_project(load_root, config.fixture)
-        _ = _run_group(load_root, 1)
+        _ = run_phase_group(load_root, 1, PHASES)
         load_samples: list[PhaseSample] = []
         load_walls: list[float] = []
         for _index in range(config.samples):
-            samples, wall = _run_group(load_root, config.concurrency)
+            samples, wall = run_phase_group(load_root, config.concurrency, PHASES)
             load_samples.extend(samples)
             load_walls.append(wall)
 
+        actual_cold: list[float] = []
+        actual_cold_walls: list[float] = []
+        for index in range(config.samples):
+            root = base / f"actual-cold-{index}"
+            _prepare_project(root, config.fixture)
+            samples, wall = run_actual_group(root, 1)
+            actual_cold.extend(samples)
+            actual_cold_walls.append(wall)
+
+        actual_warm_root = base / "actual-warm"
+        _prepare_project(actual_warm_root, config.fixture)
+        _ = run_actual_group(actual_warm_root, 1)
+        actual_warm: list[float] = []
+        actual_warm_walls: list[float] = []
+        for _index in range(config.samples):
+            samples, wall = run_actual_group(actual_warm_root, 1)
+            actual_warm.extend(samples)
+            actual_warm_walls.append(wall)
+
+        actual_load_root = base / "actual-load"
+        _prepare_project(actual_load_root, config.fixture)
+        _ = run_actual_group(actual_load_root, 1)
+        actual_load: list[float] = []
+        actual_load_walls: list[float] = []
+        for _index in range(config.samples):
+            samples, wall = run_actual_group(actual_load_root, config.concurrency)
+            actual_load.extend(samples)
+            actual_load_walls.append(wall)
+
     fixture_bytes = config.fixture.read_bytes()
+    fixture_json: JsonValue = json.loads(fixture_bytes)
     return {
         "schema_version": 1,
         "fixture": {
             "path": str(config.fixture.resolve()),
             "bytes": len(fixture_bytes),
             "sha256": sha256(fixture_bytes).hexdigest(),
+            "statusless_invocations": statusless_invocations(fixture_json),
         },
         "settings": {
             "samples": config.samples,
@@ -240,9 +213,14 @@ def _run_benchmark(config: BenchConfig) -> JsonObject:
             "state_write": "record_event against a separate valid temporary state tree",
         },
         "scenarios": {
-            "cold": _scenario(cold_samples, cold_walls),
-            "warm": _scenario(warm_samples, warm_walls),
-            "load": _scenario(load_samples, load_walls),
+            "cold": phase_scenario(cold_samples, cold_walls, PHASES),
+            "warm": phase_scenario(warm_samples, warm_walls, PHASES),
+            "load": phase_scenario(load_samples, load_walls, PHASES),
+        },
+        "actual_adapter": {
+            "cold": actual_scenario(actual_cold, actual_cold_walls),
+            "warm": actual_scenario(actual_warm, actual_warm_walls),
+            "load": actual_scenario(actual_load, actual_load_walls),
         },
     }
 

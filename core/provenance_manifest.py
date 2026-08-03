@@ -14,6 +14,7 @@ from .ledger import (
     _record_coordination_after_event,
     _record_event_locked,
     load_ledger,
+    ledger_is_persistable,
     save_ledger,
 )
 from .ledger_storage import ledger_path
@@ -723,6 +724,8 @@ def _load_locked(root: Path) -> tuple[JsonObject, JsonObject]:
     ledger = load_ledger(payload)
     if not existed:
         ledger = default_v2_ledger()
+    if not ledger_is_persistable(ledger):
+        raise ManifestStoreError("ledger invocation status migration required")
     return ledger, payload
 
 

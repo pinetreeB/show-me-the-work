@@ -54,11 +54,19 @@ def test_hook_latency_bench_emits_cold_warm_and_concurrent_phase_receipt(
     assert json.loads(output.read_text(encoding="utf-8")) == receipt
     assert receipt["schema_version"] == 1
     assert receipt["fixture"]["bytes"] == fixture.stat().st_size
+    assert receipt["fixture"]["statusless_invocations"] == 0
     assert receipt["settings"] == {"samples": 1, "concurrency": 2}
     assert set(receipt["scenarios"]) == {"cold", "warm", "load"}
     assert receipt["scenarios"]["cold"]["sample_count"] == 1
     assert receipt["scenarios"]["warm"]["sample_count"] == 1
     assert receipt["scenarios"]["load"]["sample_count"] == 2
+    assert set(receipt["actual_adapter"]) == {"cold", "warm", "load"}
+    assert receipt["actual_adapter"]["cold"]["sample_count"] == 1
+    assert receipt["actual_adapter"]["warm"]["sample_count"] == 1
+    assert receipt["actual_adapter"]["load"]["sample_count"] == 2
+    for scenario in receipt["actual_adapter"].values():
+        assert scenario["total"]["p50_ms"] >= 0
+        assert scenario["total"]["p95_ms"] >= scenario["total"]["p50_ms"]
     for scenario in receipt["scenarios"].values():
         assert set(scenario["phases"]) == PHASES
         for stats in scenario["phases"].values():

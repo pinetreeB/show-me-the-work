@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import UTC, datetime
 from hashlib import sha256
 import json
@@ -96,27 +95,42 @@ def backfill_invocation_statuses(
     *,
     observed_at: datetime | None = None,
 ) -> tuple[JsonObject, int]:
-    """Return a detached copy with provably expired rows closed and live rows open."""
-    migrated = deepcopy(ledger)
+    """Copy only branches containing rows that require a status backfill."""
     observed = _as_utc(observed_at or datetime.now(UTC))
-    active_turns = migrated.get("active_turns")
+    active_turns = ledger.get("active_turns")
     if not isinstance(active_turns, dict):
-        return migrated, 0
+        return ledger, 0
+    migrated_turns: JsonObject | None = None
     changed = 0
-    for raw_turn in active_turns.values():
+    for turn_key, raw_turn in active_turns.items():
         if not isinstance(raw_turn, dict):
             continue
         invocations = raw_turn.get("invocations")
         if not isinstance(invocations, dict):
             continue
-        for raw_entry in invocations.values():
+        migrated_invocations: JsonObject | None = None
+        for invocation_id, raw_entry in invocations.items():
             if isinstance(raw_entry, dict) and "status" not in raw_entry:
                 status, _safe_to_persist = _missing_status_disposition(
                     raw_entry,
                     observed,
                 )
-                raw_entry["status"] = status
+                if migrated_invocations is None:
+                    migrated_invocations = dict(invocations)
+                migrated_entry = dict(raw_entry)
+                migrated_entry["status"] = status
+                migrated_invocations[invocation_id] = migrated_entry
                 changed += 1
+        if migrated_invocations is not None:
+            if migrated_turns is None:
+                migrated_turns = dict(active_turns)
+            migrated_turn = dict(raw_turn)
+            migrated_turn["invocations"] = migrated_invocations
+            migrated_turns[turn_key] = migrated_turn
+    if migrated_turns is None:
+        return ledger, 0
+    migrated = dict(ledger)
+    migrated["active_turns"] = migrated_turns
     return migrated, changed
 
 
