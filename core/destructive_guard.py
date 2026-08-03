@@ -16,6 +16,7 @@ from .provenance_policy import (
     canonicalize_project_path,
 )
 from .scorecard_coordination import CoordinationReason
+from .shell_command import is_proven_read_only_command
 from .state_layout import is_protected_state_name
 
 Decision: TypeAlias = dict[str, JsonValue]
@@ -547,7 +548,10 @@ def _detect_wrapper_indirect(tokens: list[str]) -> ParsedDestructiveCommand | No
         return nested
     if wrapper not in OPAQUE_WRAPPER_COMMAND_NAMES:
         return None
-    return None
+    wrapped_command = " ".join(_unquote(token) for token in tokens)
+    if is_proven_read_only_command(wrapped_command):
+        return None
+    return _blocked(CATEGORY_REMOVE, "parse_unable_wrapped")
 
 
 def _shell_here_string_payload(tokens: list[str]) -> str | None:
