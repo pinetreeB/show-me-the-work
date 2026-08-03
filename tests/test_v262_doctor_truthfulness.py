@@ -94,10 +94,12 @@ def test_doctor_03a_unsupported_schema_is_error(
     snapshot = _snapshot(tmp_path)
 
     # 수정 전: schema 0/3/99가 healthy로 fall-through(INV-06 위반, RED).
-    assert snapshot["ledger_health"] == "error"
+    # W1: unsupported schema는 스키마 필드 위반 → invalid(unreadable와 분리).
+    assert snapshot["ledger_health"] == "invalid"
     assert snapshot["exit_code"] == 1
     assert snapshot["status"] == "unsafe"
-    assert "ledger is unreadable or invalid" in snapshot["errors"]
+    assert "ledger is invalid" in snapshot["errors"]
+    assert snapshot["ledger_error_field"] is not None
 
 
 def test_doctor_03a_non_object_ledger_is_error(tmp_path: Path) -> None:
@@ -105,7 +107,7 @@ def test_doctor_03a_non_object_ledger_is_error(tmp_path: Path) -> None:
 
     snapshot = _snapshot(tmp_path)
 
-    assert snapshot["ledger_health"] == "error"
+    assert snapshot["ledger_health"] == "unreadable"
     assert snapshot["exit_code"] == 1
 
 
@@ -114,7 +116,7 @@ def test_doctor_03a_malformed_json_ledger_is_error(tmp_path: Path) -> None:
 
     snapshot = _snapshot(tmp_path)
 
-    assert snapshot["ledger_health"] == "error"
+    assert snapshot["ledger_health"] == "unreadable"
     assert snapshot["exit_code"] == 1
 
 
@@ -163,7 +165,7 @@ def test_doctor_03a_agrees_with_runtime_loader_rejection(
 
     snapshot = _snapshot(tmp_path)
 
-    assert snapshot["ledger_health"] == "error"
+    assert snapshot["ledger_health"] == "invalid"
 
 
 # ---------------------------------------------------------------------------
