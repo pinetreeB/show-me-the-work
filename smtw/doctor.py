@@ -13,6 +13,7 @@ from adapters.claude_code.project_config import (
     ConfigLoadState,
     load_project_config,
 )
+from core.ledger_migration import invocation_status_backfill_required
 from core.ledger_schema import LedgerSchemaError, validate_ledger_object
 from core.provenance_types import provenance_status_unsafe
 from core.quarantine import list_entries
@@ -138,8 +139,10 @@ def diagnostic_snapshot(project_root: str | Path, *, host: str = "auto") -> dict
 
     readiness = check_migration_state(root, activation=active)
     ledger = _ledger_snapshot(authority)
-    if ledger["ledger_health"] == "error":
-        errors.append("ledger is unreadable or invalid")
+    if ledger["ledger_health"] == "unreadable":
+        errors.append("ledger is unreadable")
+    elif ledger["ledger_health"] == "invalid":
+        errors.append("ledger is invalid")
     if ledger["provenance_health"] == "unsafe":
         errors.append("active provenance is incomplete")
     if ledger["coordination_degraded"]:
@@ -203,6 +206,9 @@ def diagnostic_snapshot(project_root: str | Path, *, host: str = "auto") -> dict
         "active_turns": ledger["active_turns"],
         "open_invocations": ledger["open_invocations"],
         "ledger_health": ledger["ledger_health"],
+        "ledger_error_field": ledger["ledger_error_field"],
+        "needs_migration": ledger["needs_migration"],
+        "next_safe_command": ledger["next_safe_command"],
         "provenance_health": ledger["provenance_health"],
         "quarantine_count": len(quarantine),
         "quarantine_bytes": sum(record.size_bytes for record in quarantine),
@@ -224,6 +230,9 @@ def _ledger_snapshot(authority: Path) -> dict[str, Any]:
         "active_turns": 0,
         "open_invocations": 0,
         "ledger_health": "absent",
+        "ledger_error_field": None,
+        "needs_migration": False,
+        "next_safe_command": [],
         "provenance_health": "not_applicable",
         "current_turn": "none",
         "block_counters": {"stop": 0, "goals": 0, "intent": 0, "design": 0},
@@ -236,15 +245,38 @@ def _ledger_snapshot(authority: Path) -> dict[str, Any]:
     except FileNotFoundError:
         return empty
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return {**empty, "ledger_health": "error"}
+        # IO/Unicode/JSON decode 계층의 실패는 스키마 문제와 분리된 unreadable.
+        return {**empty, "ledger_health": "unreadable"}
     if not isinstance(raw, dict):
-        return {**empty, "ledger_health": "error"}
+        return {**empty, "ledger_health": "unreadable"}
+    # W1: schema 구조와 무관하게 status-less invocation이 있으면 명시적
+    # invocation-status backfill이 필요하다(unsafe row는 자동 close하지 않음).
+    needs_migration = invocation_status_backfill_required(raw)
+    safe_command = (
+        ["smtw migrate --invocation-statuses --check"]
+        if needs_migration
+        else []
+    )
     # DOCTOR-03A (INV-06): runtime ledger loader와 공유하는 schema 게이트.
-    # unsupported schema(0·3·99·비정수)가 healthy로 fall-through하지 않는다.
+    # unsupported schema(0·3·99·비정수)·누락 필드가 healthy로 fall-through하지
+    # 않는다. 스키마 필드 위반만 invalid로, 위반 필드 경로를 보고한다.
     try:
         _ = validate_ledger_object(raw)
-    except (LedgerSchemaError, TypeError, ValueError):
-        return {**empty, "ledger_health": "error"}
+    except LedgerSchemaError as exc:
+        return {
+            **empty,
+            "ledger_health": "invalid",
+            "ledger_error_field": exc.field,
+            "needs_migration": needs_migration,
+            "next_safe_command": safe_command,
+        }
+    except (TypeError, ValueError):
+        return {
+            **empty,
+            "ledger_health": "invalid",
+            "needs_migration": needs_migration,
+            "next_safe_command": safe_command,
+        }
 
     turns = raw.get("active_turns")
     active = turns if isinstance(turns, dict) else {}
@@ -299,6 +331,9 @@ def _ledger_snapshot(authority: Path) -> dict[str, Any]:
         "active_turns": len(active),
         "open_invocations": open_count,
         "ledger_health": "healthy",
+        "ledger_error_field": None,
+        "needs_migration": needs_migration,
+        "next_safe_command": safe_command,
         "provenance_health": "unsafe" if incomplete else "healthy",
         "current_turn": current,
         "block_counters": counters,
@@ -374,6 +409,12 @@ def _print_doctor(payload: Mapping[str, Any]) -> None:
         ("Active turns", payload["active_turns"]),
         ("Open invocations", payload["open_invocations"]),
         ("Ledger health", payload["ledger_health"]),
+        ("Ledger error field", payload["ledger_error_field"] or "none"),
+        ("Needs migration", str(payload["needs_migration"]).lower()),
+        (
+            "Next safe command",
+            ", ".join(payload["next_safe_command"]) or "none",
+        ),
         ("Provenance health", payload["provenance_health"]),
         (
             "Quarantine",
