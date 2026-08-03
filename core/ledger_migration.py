@@ -186,6 +186,59 @@ def migrate_v2_invocation_statuses(project_root: str) -> JsonObject:
         return _migrate_v2_invocation_statuses(project_root)
 
 
+def inspect_v2_invocation_statuses(project_root: str) -> dict[str, object]:
+    """Write-free inspection of the required/safe/unsafe status backfill.
+
+    W1: ``smtw migrate --invocation-statuses --check``의 순수 읽기 진단. lease-aware
+    backfill 분류를 재사용해 원본 파일을 바꾸지 않고 required/safe/unsafe와
+    source digest를 반환한다. unsafe row(증거 없는 status-less)는 결코 자동
+    close하지 않는다 — apply는 이 진단에서 unsafe가 0일 때만 실행돼야 한다.
+    """
+    destination = ledger_path(project_root)
+    try:
+        original = destination.read_bytes()
+    except FileNotFoundError:
+        return {
+            "ledger": "absent",
+            "required": 0,
+            "safe": 0,
+            "unsafe": 0,
+            "source_digest": "",
+            "source_bytes": 0,
+        }
+    except OSError as exc:
+        raise LedgerMigrationError("read", str(exc)) from exc
+    try:
+        raw: JsonValue = json.loads(original.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LedgerMigrationError("parse", str(exc)) from exc
+    if not isinstance(raw, dict):
+        raise LedgerMigrationError("parse", "ledger root must be an object")
+    if raw.get("schema_version") != 2:
+        return {
+            "ledger": "not_v2",
+            "required": 0,
+            "safe": 0,
+            "unsafe": 0,
+            "source_digest": sha256(original).hexdigest(),
+            "source_bytes": len(original),
+        }
+    observed_at = datetime.now(UTC)
+    unsafe = _unsafe_invocation_status_backfills(raw, observed_at)
+    _migrated, changed = backfill_invocation_statuses(
+        raw,
+        observed_at=observed_at,
+    )
+    return {
+        "ledger": "v2",
+        "required": changed,
+        "safe": changed - unsafe,
+        "unsafe": unsafe,
+        "source_digest": sha256(original).hexdigest(),
+        "source_bytes": len(original),
+    }
+
+
 def _migrate_v2_invocation_statuses(project_root: str) -> JsonObject:
     destination = ledger_path(project_root)
     try:
