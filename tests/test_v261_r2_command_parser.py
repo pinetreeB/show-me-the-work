@@ -363,13 +363,17 @@ def test_reverify_benign_family_controls_remain_allowed(
     assert _decision(tmp_path, command)["decision"] == "allow", command
 
 
-def test_runtime_eval_output_remains_the_documented_static_limit(
+def test_runtime_eval_output_is_blocked_as_opaque_unknown(
     tmp_path: Path,
 ) -> None:
     command = "eval `echo rm peer.py`"
+    parsed = parse_destructive_commands(command)
+    decision = _decision(tmp_path, command)
 
-    assert parse_destructive_commands(command) == ()
-    assert _decision(tmp_path, command)["decision"] == "allow"
+    assert len(parsed) == 1
+    assert parsed[0].reason == "parse_unable_wrapped"
+    assert decision["decision"] == "block"
+    assert decision["coordination_reason_code"] == "command_parse_unavailable"
 
 
 @pytest.mark.parametrize(

@@ -11,7 +11,7 @@ import ipaddress
 import re
 import shlex
 import socket
-from typing import Final
+from typing import Final, Literal, TypeAlias
 
 COMMAND_SEPARATORS: Final = frozenset({"&&", "||", ";", "|", "|&", "&"})
 _COMMAND_WRAPPERS: Final = frozenset({"bash", "sh", "zsh", "pwsh", "powershell"})
@@ -123,8 +123,48 @@ _SCP_ALL_VALUE_OPTIONS: Final = frozenset(
 _ENV_ASSIGNMENT_RE: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
 _WINDOWS_DRIVE_RE: Final = re.compile(r"^[A-Za-z]:[\\/]")
 _READ_ONLY_COMMANDS: Final = frozenset(
-    {"cat", "get-content", "git", "ls", "pwd", "rg", "test-path", "whoami"}
+    {
+        "cat",
+        "dir",
+        "echo",
+        "get-childitem",
+        "get-content",
+        "git",
+        "ls",
+        "printf",
+        "pwd",
+        "rg",
+        "select-string",
+        "test-path",
+        "whoami",
+    }
 )
+_POSIX_READ_ONLY_COMMANDS: Final = frozenset(
+    {"cat", "echo", "git", "ls", "printf", "pwd", "rg", "whoami"}
+)
+_POWERSHELL_READ_ONLY_COMMANDS: Final = frozenset(
+    {"get-childitem", "get-content", "select-string", "test-path"}
+)
+_CMD_READ_ONLY_COMMANDS: Final = frozenset({"dir", "echo"})
+_ReadOnlyDialect: TypeAlias = Literal["cmd", "direct", "posix", "powershell"]
+_POSIX_READ_ONLY_WRAPPERS: Final = frozenset(
+    {"ash", "bash", "csh", "dash", "fish", "ksh", "sh", "tcsh", "zsh"}
+)
+_POWERSHELL_READ_ONLY_WRAPPERS: Final = frozenset({"powershell", "pwsh"})
+_GET_CHILD_ITEM_SAFE_FLAGS: Final = frozenset(
+    {"-directory", "-file", "-force", "-name", "-recurse"}
+)
+_SELECT_STRING_SAFE_FLAGS: Final = frozenset(
+    {"-casesensitive", "-list", "-quiet", "-simplematch"}
+)
+_READ_ONLY_COMMANDS_BY_DIALECT: Final[
+    dict[_ReadOnlyDialect, frozenset[str]]
+] = {
+    "cmd": _CMD_READ_ONLY_COMMANDS,
+    "direct": _READ_ONLY_COMMANDS,
+    "posix": _POSIX_READ_ONLY_COMMANDS,
+    "powershell": _POWERSHELL_READ_ONLY_COMMANDS,
+}
 _READ_ONLY_GIT_SUBCOMMANDS: Final = frozenset({"rev-parse"})
 _RG_SAFE_FLAGS: Final = frozenset(
     {
@@ -219,7 +259,7 @@ class ShellClassification:
 
 def classify_shell_effect(command: str) -> ShellClassification:
     targets = _remote_targets(command)
-    if _is_proven_read_only(command):
+    if is_proven_read_only_command(command):
         return ShellClassification(ShellEffect.PROVEN_READ_ONLY)
     if any(_is_loopback_host(target.host) for target in targets):
         return ShellClassification(ShellEffect.LOCAL_OR_UNKNOWN, targets)
@@ -305,31 +345,130 @@ def is_remote_only_mutation_command(command: str) -> bool:
     return False
 
 
-def _is_proven_read_only(command: str) -> bool:
-    if any(marker in command for marker in ("\n", "\r", "`", "$(", ">", "<")):
+def is_proven_read_only_command(command: str) -> bool:
+    return _is_proven_read_only_script(command, "direct")
+
+
+def _is_proven_read_only_script(command: str, dialect: _ReadOnlyDialect) -> bool:
+    if any(
+        marker in command
+        for marker in ("\x00", "\n", "\r", "`", "$(", ">", "<")
+    ):
         return False
-    if command_operators(command):
+    if dialect == "cmd" and any(marker in command for marker in ("%", "!", "^")):
+        return False
+    if dialect == "powershell" and any(
+        marker in command for marker in ("$", "@", "{", "}")
+    ):
+        return False
+    if dialect == "posix" and "$" in command:
+        return False
+    operators = command_operators(command)
+    if operators - {"|"}:
         return False
     segments = command_segments(command)
-    if len(segments) != 1:
+    if not segments:
         return False
-    raw_tokens = segments[0]
+    return all(_is_proven_read_only_segment(segment, dialect) for segment in segments)
+
+
+def _is_proven_read_only_segment(
+    raw_tokens: tuple[str, ...],
+    dialect: _ReadOnlyDialect,
+) -> bool:
     if raw_tokens and _ENV_ASSIGNMENT_RE.fullmatch(raw_tokens[0]):
         return False
     tokens = without_environment_assignments(raw_tokens)
     if not tokens:
         return False
-    if not _is_bare_command_token(tokens[0]):
-        return False
     name = command_name(tokens[0])
-    if name not in _READ_ONLY_COMMANDS:
+    if _is_read_only_wrapper_name(name, dialect):
+        if not _is_canonical_wrapper_token(tokens[0], name):
+            return False
+    elif not _is_bare_command_token(tokens[0]):
         return False
     arguments = tuple(clean_token(token) for token in tokens[1:])
+    wrapped = _read_only_wrapper_payload(name, arguments, dialect)
+    if wrapped is not None:
+        payload, payload_dialect = wrapped
+        return _is_proven_read_only_script(payload, payload_dialect)
+    if _is_read_only_wrapper_name(name, dialect):
+        return False
+    if name == "command" and dialect == "posix":
+        return (
+            len(arguments) == 2
+            and arguments[0] in {"-v", "-V"}
+            and _is_bare_command_token(arguments[1])
+        )
+    if name not in _read_only_commands(dialect):
+        return False
     if name == "rg":
         return _is_proven_read_only_rg(arguments)
-    if name != "git":
-        return not any(argument.startswith("-") for argument in arguments)
-    if len(tokens) < 2:
+    if name == "git":
+        return _is_proven_read_only_git(arguments)
+    if name == "get-childitem":
+        return _is_proven_read_only_get_child_item(arguments)
+    if name == "select-string":
+        return _is_proven_read_only_select_string(arguments)
+    if name in {"pwd", "whoami"}:
+        return not arguments
+    if name in {"echo", "printf"}:
+        return all(_is_safe_literal(argument) for argument in arguments)
+    return (
+        not any(argument.startswith("-") for argument in arguments)
+        and all(_is_safe_read_only_path(argument) for argument in arguments)
+    )
+
+
+def _read_only_wrapper_payload(
+    name: str,
+    arguments: tuple[str, ...],
+    dialect: _ReadOnlyDialect,
+) -> tuple[str, _ReadOnlyDialect] | None:
+    if name == "cmd" and dialect == "direct":
+        if len(arguments) < 2 or arguments[0].casefold() != "/c":
+            return None
+        return " ".join(arguments[1:]), "cmd"
+    if name in _POWERSHELL_READ_ONLY_WRAPPERS and dialect == "direct":
+        if len(arguments) < 4 or tuple(
+            argument.casefold() for argument in arguments[:3]
+        ) != ("-noprofile", "-noninteractive", "-command"):
+            return None
+        return " ".join(arguments[3:]), "powershell"
+    if name in _POSIX_READ_ONLY_WRAPPERS and dialect in {"direct", "posix"}:
+        if len(arguments) < 2 or arguments[0].casefold() not in {"-c", "--command"}:
+            return None
+        return " ".join(arguments[1:]), "posix"
+    if name in {"builtin", "command"} and dialect == "posix" and arguments:
+        return " ".join(arguments), "posix"
+    return None
+
+
+def _is_read_only_wrapper_name(name: str, dialect: _ReadOnlyDialect) -> bool:
+    if dialect == "direct":
+        return (
+            name == "cmd"
+            or name in _POWERSHELL_READ_ONLY_WRAPPERS
+            or name in _POSIX_READ_ONLY_WRAPPERS
+        )
+    if dialect == "posix":
+        return name in _POSIX_READ_ONLY_WRAPPERS or name in {"builtin", "command"}
+    return False
+
+
+def _is_canonical_wrapper_token(token: str, name: str) -> bool:
+    cleaned = clean_token(token).casefold()
+    if name in {"cmd", "powershell", "pwsh"}:
+        return cleaned in {name, f"{name}.exe"}
+    return cleaned == name
+
+
+def _read_only_commands(dialect: _ReadOnlyDialect) -> frozenset[str]:
+    return _READ_ONLY_COMMANDS_BY_DIALECT[dialect]
+
+
+def _is_proven_read_only_git(arguments: tuple[str, ...]) -> bool:
+    if not arguments:
         return False
     subcommand = arguments[0].casefold()
     if subcommand in _READ_ONLY_GIT_SUBCOMMANDS:
@@ -338,6 +477,61 @@ def _is_proven_read_only(command: str) -> bool:
             for argument in arguments[1:]
         )
     return subcommand == "branch" and arguments[1:] == ("--show-current",)
+
+
+def _is_proven_read_only_get_child_item(arguments: tuple[str, ...]) -> bool:
+    paths = tuple(
+        argument
+        for argument in arguments
+        if argument.casefold() not in _GET_CHILD_ITEM_SAFE_FLAGS
+    )
+    return (
+        all(
+            not argument.startswith("-")
+            or argument.casefold() in _GET_CHILD_ITEM_SAFE_FLAGS
+            for argument in arguments
+        )
+        and len(paths) <= 1
+        and all(_is_safe_read_only_path(path) for path in paths)
+    )
+
+
+def _is_proven_read_only_select_string(arguments: tuple[str, ...]) -> bool:
+    index = 0
+    saw_pattern = False
+    while index < len(arguments):
+        argument = arguments[index]
+        normalized = argument.casefold()
+        if normalized in _SELECT_STRING_SAFE_FLAGS:
+            index += 1
+            continue
+        if normalized == "-pattern" and index + 1 < len(arguments):
+            saw_pattern = _is_safe_literal(arguments[index + 1])
+            index += 2
+            continue
+        return False
+    return saw_pattern
+
+
+def _is_safe_literal(value: str) -> bool:
+    return bool(value) and not any(
+        marker in value for marker in ("\x00", "\n", "\r", "`", "$", "@", "!")
+    )
+
+
+def _is_safe_read_only_path(value: str) -> bool:
+    normalized = clean_token(value).replace("\\", "/")
+    if normalized == ".":
+        return True
+    return bool(
+        normalized
+        and "/" not in normalized.removeprefix("./")
+        and normalized not in {".."}
+        and not normalized.startswith(("/", "//"))
+        and not _WINDOWS_DRIVE_RE.match(normalized)
+        and ":" not in normalized
+        and not any(marker in normalized for marker in ("*", "?", "[", "]", "$", "@", "%", "!"))
+    )
 
 
 def _is_proven_read_only_rg(arguments: tuple[str, ...]) -> bool:

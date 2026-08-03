@@ -90,9 +90,15 @@ def test_r2_corpus_non_destructive_commands_are_not_matched() -> None:
         "git add .",
         "npm install",
         "ls -la",
-        'bash -c "npm install"',
     ):
         assert parse_destructive_command(benign) is None, benign
+
+
+def test_r2_opaque_wrapper_unknown_is_blocked() -> None:
+    parsed = parse_destructive_command('bash -c "npm install"')
+
+    assert parsed is not None
+    assert parsed.reason == "parse_unable_wrapped"
 
 
 # --- R2 게이트 통합: attribution 주입 -----------------------------------------
