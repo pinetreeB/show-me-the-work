@@ -446,9 +446,11 @@ def main() -> int:
         if handler is None:
             return emit({})
         from adapters.qwen_code.common import read_payload
+        from core.ledger import ledger_read_cache
 
         payload = read_payload()
-        return handler(payload)
+        with ledger_read_cache():
+            return handler(payload)
     except Exception as exc:  # noqa: BLE001  # noqa: BROAD_EXCEPT_OK
         denied = fail_closed_runtime_env(event_name, exc)
         if denied is not None:
