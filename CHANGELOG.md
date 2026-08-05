@@ -24,9 +24,23 @@
   `cat payload.sh | bash`·`curl … | bash`는 통과했습니다. 셸 segment에 유입 구분자를 보존해
   `|` 수신자가 stdin을 스크립트로 읽는 POSIX 셸이면 fail-closed 합니다. `| head`·`| grep` 등
   비실행 수신자와 `| python`·`| node`·`| iex`는 건드리지 않았습니다.
-- 검증: 경쟁 에이전트가 미정산 파일을 점유한 상태의 게이트 종단 하네스에서 **차단 대상 37/37
-  BLOCK · 정상 작업 32/32 ALLOW(미탐 0 · 오탐 0)**. 새 어휘의 `--help`와 PowerShell `-WhatIf`
-  dry-run은 ALLOW로 고정했습니다.
+- **PowerShell 표준 별칭이 어휘 전체를 무력화하고 있었습니다.** `Remove-Item peer.py`를
+  `ri peer.py`로 **한 단어만 바꾸면 통과**했습니다(`ri`·`rni`·`cpi`·`mi`·`clc`·`sc`·`ni` 전원,
+  대소문자 무관). 셸이 PowerShell인 환경에서는 별칭이 오히려 기본 사용 형태입니다. 표준 별칭을
+  canonical cmdlet으로 정규화해 기존 탐지기로 보냅니다. `sc.exe` 같은 명시적 실행 파일명은
+  별칭 확장에서 제외합니다.
+- **쉼표로 묶은 경로 배열도 통과했습니다.** `Remove-Item a.py,peer.py`에서 파서가
+  `a.py,peer.py`를 **경로 하나**로 취급해 `peer.py`가 대상이 되지 않았습니다. 이번에 추가한
+  어휘뿐 아니라 **기존 `Remove-Item`도 같은 방식으로 뚫렸습니다**(수리 전 커밋 대조로 확인).
+  위치 인자와 `-Path`·`-LiteralPath`·`-Destination`의 쉼표 요소를 개별 경로로 펼칩니다.
+- **파이프 수신 셸 차단이 래퍼 한 단어로 우회됐습니다.** `curl … | sudo bash`·`| doas bash`·
+  `| nohup bash`·`| timeout 5 bash`가 통과했습니다. 수신자 판정 시 이 네 래퍼를 해제합니다.
+- **건조 실행은 통과시킵니다**: `Remove-Item -WhatIf`(다른 cmdlet은 이미 인정하는데 이것만
+  누락돼 있었습니다)와 `git rm -n`·`--dry-run`·`--cached`. 앞의 둘은 아무것도 지우지 않고
+  `--cached`는 인덱스에서만 제거해 워크트리 파일이 남습니다.
+- 검증: 경쟁 에이전트가 미정산 파일을 점유한 상태의 게이트 종단 하네스에서 **차단 대상 53/53
+  BLOCK · 정상 작업 40/40 ALLOW(미탐 0 · 오탐 0)**. 게이트 1회 평균 22.2 µs로 훅 지연 회귀는
+  없습니다. 새 어휘의 `--help`·`--version`도 ALLOW로 고정했습니다.
 
 ### Fixed
 
@@ -58,6 +72,10 @@
   `| node` 인터프리터 파이프 수신(`fnm env | iex` 같은 정당 관용구와 정적 구분 불가) ·
   `python -c` 임의 코드(기존 비목표) · `robocopy /MIR` · `rsync --delete` · `ln -sf` ·
   `tar -xf` · `Add-Content`(append 정책 정합 필요).
+- **대상 경로의 따옴표·이스케이프 분할은 아직 정규화하지 않습니다**(백로그 승격): `rm pe""er.py`·
+  `rm "pee"r.py`처럼 셸이 `peer.py`로 합치는 표기를 파서가 그대로 두어 귀속 조회가 빗나갑니다.
+  이번 수리 이전부터 있던 파서 일반 결함으로 `rm` 경로 전체에 영향이 있으며, 대상 경로 정규화가
+  필요한 별도 건입니다.
 - 설계 근거와 실측 기록: `docs/specs/2026-08-05-hardreview-fix.md`.
 
 ## [2.7.1] - 2026-08-04 — Adapter Cache Coverage
