@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import runpy
@@ -14,12 +15,16 @@ def _fail_open(message: str) -> int:
 
 def main() -> int:
     common: dict[str, object] = {}
+    cache_stack = ExitStack()
     try:
         root = Path(__file__).resolve().parents[2]
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
         common = runpy.run_path(str(Path(__file__).with_name("common.py")))
         payload = common["read_payload"]()
+        from core.ledger import ledger_read_cache
+
+        cache_stack.enter_context(ledger_read_cache())
         from core.adapter_observation import observe_post_tool, resolve_active_invocation, verification_covers
         from core.classify import classify_prompt
         from core.contract import EDIT_TOOLS, SHELL_TOOLS, record_contract_authored_event
@@ -140,6 +145,8 @@ def main() -> int:
             if denied is not None:
                 return denied
         return _fail_open(str(exc))
+    finally:
+        cache_stack.close()
 
 
 if __name__ == "__main__":

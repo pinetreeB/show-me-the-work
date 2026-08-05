@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import sys
@@ -72,6 +73,7 @@ def _fail_open(message: str) -> int:
 
 def main() -> int:
     runtime_env_fail_closed = None
+    cache_stack = ExitStack()
     try:
         root = Path(__file__).resolve().parents[2]
         if str(root) not in sys.path:
@@ -91,6 +93,9 @@ def main() -> int:
         from core.adapter_observation import start_turn
 
         payload = read_payload()
+        from core.ledger import ledger_read_cache
+
+        cache_stack.enter_context(ledger_read_cache())
         prompt_value = payload.get("prompt")
         prompt = prompt_value if isinstance(prompt_value, str) else ""
         root_value = project_root(payload)
@@ -146,6 +151,8 @@ def main() -> int:
             if denied is not None:
                 return denied
         return _fail_open(str(exc))
+    finally:
+        cache_stack.close()
 
 
 if __name__ == "__main__":
