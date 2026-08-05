@@ -107,6 +107,13 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     from core.adapter_observation import begin_invocation, resolve_active_invocation
 
     invocation = resolve_active_invocation(Path(root), invocation)
+    # AGY-01(CODEX-01/QWEN-01 이식): 복원된 invocation가 실제 session_id를 가진
+    # 뒤에도 attribution=legacy_default에 머물면 안 된다 — 다른 3개 어댑터와 동일한
+    # 승격. 그렇지 않으면 복원된 신원의 유효한 namespaced contract가 미귀속 편집으로
+    # 잘못 취급된다.
+    attribution = invocation.scorecard_attribution
+    if attribution == "legacy_default" and invocation.session_id != "default":
+        attribution = "exact"
     turn_payload = dict(payload)
     turn_payload["agent"] = invocation.agent
     turn_payload["session_id"] = invocation.session_id
@@ -124,7 +131,7 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
         "agent": invocation.agent,
         "session_id": invocation.session_id,
         "turn_id": invocation.turn_id,
-        "attribution": invocation.scorecard_attribution,
+        "attribution": attribution,
     })
     
     if result.get("decision") == "block":
@@ -174,6 +181,13 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
             evidence,
         )
         invocation = resolve_active_invocation(Path(root), invocation)
+        # AGY-02(CODEX-02/QWEN-02 이식): 복원된 신원의 attribution을 계약 저자 기록
+        # 전에 승격한다. 그렇지 않으면 복원된 신원의 namespaced-contract 편집이
+        # attribution=legacy_default로 기록돼 이후 exact-identity 고위험 편집의
+        # 상호 점검이 이뤄지지 않는다.
+        attribution = invocation.scorecard_attribution
+        if attribution == "legacy_default" and invocation.session_id != "default":
+            attribution = "exact"
         if family == "edit" and not invocation.identity_conflict:
             record_contract_authored_event(
                 {
@@ -183,7 +197,7 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
                     "agent": invocation.agent,
                     "session_id": invocation.session_id,
                     "turn_id": invocation.turn_id,
-                    "attribution": invocation.scorecard_attribution,
+                    "attribution": attribution,
                 }
             )
         observation = observe_post_tool(Path(root), invocation)
