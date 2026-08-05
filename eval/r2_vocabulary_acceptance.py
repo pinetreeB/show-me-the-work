@@ -26,6 +26,7 @@ from core.ledger import JsonObject, record_event  # noqa: E402
 
 PEER_FILE = "peer.py"
 PEER_IN_DIR = "shared-dir/peer.py"  # G1 — 디렉터리 대상 시 하위 peer 탐지 검증용
+PEER_SPACED = "peer dir/file.py"  # P2-1 — 공백 포함 인용 경로 검증용
 
 # ── beta(남)의 미정산 파일을 파괴 → 반드시 BLOCK ────────────────────────────
 MUST_BLOCK: list[tuple[str, str]] = [
@@ -98,6 +99,11 @@ MUST_BLOCK: list[tuple[str, str]] = [
     ("G12-switch", "git switch --orphan newroot"),
     ("G13-patch", "git checkout -p"),
     ("G13-patch", "git restore -p"),
+    # ★P2-2 — patch 모드가 옵션 값·클러스터 뒤에 오면 놓친다 (PR #54 리뷰봇)
+    ("P2-gitpatch", "git restore -s HEAD -p"),
+    ("P2-gitpatch", "git checkout --detach HEAD -p"),
+    ("P2-gitpatch", "git checkout -pq"),
+    ("P2-gitpatch", "git restore -pq"),
     # ★G3 — cp --context는 선택/무인수인데 필수 값으로 오인해 첫 source를 삼킴
     ("G3-context", f"cp --context mine.py {PEER_FILE}"),
     # (G2 `cp -tDIR` 붙임형은 쓰기 대상이 DIR/basename이라 이 픽스처로 못 잰다 → DIR_* 블록에서 측정)
@@ -251,6 +257,21 @@ DIR_MUST_ALLOW: list[tuple[str, str]] = [
     ("M1-nonrec", "rd shared-dir"),
 ]
 
+# ── P2-1 전용: peer가 공백 포함 경로 `peer dir/file.py`를 점유 ──────────────
+#    PowerShell은 콜론 결합 파라미터 값에도 인용 경로를 허용한다.
+SPACED_MUST_BLOCK: list[tuple[str, str]] = [
+    ("P2-quoted", f"Remove-Item -Path:'{PEER_SPACED}'"),
+    ("P2-quoted", f'Remove-Item -Path:"{PEER_SPACED}"'),
+    ("P2-quoted", f"Copy-Item -Destination:'{PEER_SPACED}' mine.py"),
+    ("P2-quoted-ctrl", f"Remove-Item -Path '{PEER_SPACED}'"),  # 대조: 분리형은 이미 차단
+    ("P2-quoted-ctrl", f"Remove-Item '{PEER_SPACED}'"),  # 대조: 위치 인자도 이미 차단
+]
+
+SPACED_MUST_ALLOW: list[tuple[str, str]] = [
+    ("P2-own", "Remove-Item -Path:'my own/file.py'"),
+    ("P2-own", "Get-Content -Path:'peer dir/file.py'"),  # 읽기는 파괴 아님
+]
+
 # ── 설계 결정으로 이번 범위에서 제외한 것 (기록만, 합불 무관) ────────────────
 KNOWN_LIMITATION: list[tuple[str, str]] = [
     ("KL1-redirect", "echo hello > brand_new_file.txt"),
@@ -389,8 +410,53 @@ def main() -> int:
             if verbose or not ok:
                 print(f"  {'PASS' if ok else '**FAIL(오탐)**':<16} [{tag:<12}] {cmd}")
 
+    # ── P2-1 전용 픽스처: peer가 공백 포함 경로를 점유 ──
+    with tempfile.TemporaryDirectory() as tmp3:
+        root3 = Path(tmp3)
+        beta3 = _identity(root3, "beta")
+        _ = record_event(
+            beta3
+            | {
+                "event": "prompt",
+                "prompt": "beta work",
+                "baseline_snapshot_id": "snapshot:base",
+                "current_snapshot_id": "snapshot:base",
+            }
+        )
+        _ = record_event(
+            beta3
+            | {
+                "event": "invocation",
+                "invocation_id": "beta-spaced",
+                "candidate_paths": [PEER_SPACED],
+            }
+        )
+        print()
+        print("=" * 84)
+        print(f"P2-1 — peer가 '{PEER_SPACED}' 점유. 콜론 결합 + 인용 경로")
+        print("=" * 84)
+        for tag, cmd in SPACED_MUST_BLOCK:
+            decision = _decide(root3, cmd)
+            ok = decision == "block"
+            if not ok:
+                failures.append(f"미탐 [{tag}] {cmd} -> {decision}")
+            if verbose or not ok:
+                print(f"  {'PASS' if ok else '**FAIL(미탐)**':<16} [{tag:<14}] {cmd}")
+        for tag, cmd in SPACED_MUST_ALLOW:
+            decision = _decide(root3, cmd)
+            ok = decision != "block"
+            if not ok:
+                failures.append(f"오탐 [{tag}] {cmd} -> {decision}")
+            if verbose or not ok:
+                print(f"  {'PASS' if ok else '**FAIL(오탐)**':<16} [{tag:<14}] {cmd}")
+
     total = (
-        len(MUST_BLOCK) + len(MUST_ALLOW) + len(DIR_MUST_BLOCK) + len(DIR_MUST_ALLOW)
+        len(MUST_BLOCK)
+        + len(MUST_ALLOW)
+        + len(DIR_MUST_BLOCK)
+        + len(DIR_MUST_ALLOW)
+        + len(SPACED_MUST_BLOCK)
+        + len(SPACED_MUST_ALLOW)
     )
     print()
     print("=" * 84)
