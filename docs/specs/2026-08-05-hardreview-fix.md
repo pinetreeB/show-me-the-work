@@ -106,6 +106,42 @@ block이면 즉시 반환(`:183`)이라 이후 broad except가 뒤집을 수 없
 6. **조용한 fail-open 표면**(백로그 신규): `warn_once`가 1회차만 경고하고
    2회차부터 빈 JSON만 출력 → 같은 세션에서 장애가 반복되면 아무 경고도 안 보임(실측 확인)
 
+## 5-A. P4 적대 검증 — 릴리스 전 2차 발견 (★이 단계가 값을 했다)
+
+구현 완료 후 우하 Qoder(87개 변형)·좌하 agy·좌상이 독립 적대 검증했다. **코퍼스 통과 상태에서
+추가 우회 20건이 나왔고 전부 수리했다**(커밋 `ec45067`). 발견 없이 릴리스했다면
+`ri peer.py` 한 줄로 무력화되는 채 "다 고쳤다"고 발표할 뻔했다.
+
+### 미탐 (전부 수리)
+| 발견 | 내용 | 기존/신규 |
+|------|------|-----------|
+| **M1 PowerShell 별칭** | `ri`·`rni`·`cpi`·`mi`·`clc`·`sc`·`ni`가 전원 ALLOW. `Remove-Item`→`ri` **한 단어 치환으로 어휘 전체 무력화**. 사용자 환경이 PowerShell이라 실사용 최다 형태 | 기존 |
+| **쉼표 배열** | `Remove-Item a.py,peer.py` → ALLOW. 파서가 `a.py,peer.py`를 **경로 하나**로 취급. 원래 어휘(`Remove-Item`)까지 뚫림 — `cb90ecb` 워크트리 대조로 기존 결함 확정 | 기존 |
+| **M3 파이프 래퍼** | `curl … \| sudo bash`·`\| doas bash`·`\| nohup bash`·`\| timeout 5 bash` → ALLOW. H1 수리가 래퍼 한 단어로 우회됨 | 신규(H1 미완) |
+
+### 오탐 (전부 수리 — 오탐 0 우선 원칙)
+| 발견 | 내용 |
+|------|------|
+| **F1 `-WhatIf` 불일치** | `Remove-Item -WhatIf peer.py`만 BLOCK. 다른 cmdlet은 전부 인정하는데 `_detect_remove`만 누락 — **이번 수리 내부의 불일치** |
+| **F2/F3 `git rm` 건조실행** | `git rm -n`·`--dry-run`·`--cached`가 BLOCK. 아무것도 안 지우거나 인덱스만 건드림 — **이번 수리가 신규 도입한 마찰** |
+
+### codex 자체 검토 추가 발견 (수리)
+`sc.exe`를 Set-Content 별칭으로 오인(오탐) · POSIX `cp -t` 목적지 역전.
+
+### 범위 제외 (백로그로 승격)
+- **M2 따옴표·이스케이프 분할** `rm pe""er.py`·`rm "pee"r.py` → ALLOW. **수리 이전부터의 파서
+  일반 결함**으로 `rm` 경로 전체에 영향. 대상 경로 정규화가 필요한 별도 건
+- M4 `dd oflag=append` · M5 `gsed -i`·`xargs` 수신
+
+### 견고성 확인 (뚫지 못한 각도)
+대소문자 변형 · `sed`/`perl` 옵션 조합 전원 · 서브셸·체인 · `busybox`/`sudo`/`env` 경유 ·
+dotnet 소문자·동적 인자 · `mv`/`cp` 다중 인자·`-t`·`--backup` · `| env bash`/`| bash -s` ·
+**정상 흐름 오탐 회귀 0**
+
+### 성능
+agy 실측: 게이트 1회 **평균 22.2 µs**(1,000회). v2.7.1이 달성한 훅 p50 300~370 ms 대비
+마이크로초 단위라 **훅 지연 회귀 없음**.
+
 ## 6-A. 구현 결과 (완료)
 
 | 커밋 | 내용 |
@@ -114,11 +150,16 @@ block이면 즉시 반환(`:183`)이라 이후 broad except가 뒤집을 수 없
 | `6c9779d` | High-02 캐시 테스트를 런타임 매트릭스로 교체 + 메타 강제 |
 | `72b71ff` | 신원 승격에도 동일한 구조적 매트릭스 (재발 방지) |
 | `8e60b28` | C1/H1/H2/`sed -i` — R2 어휘 확장 B-Routing (+718/-23) |
+| `ec45067` | P4 발견 20건 — PowerShell 별칭·쉼표 배열·파이프 래퍼·건조실행 오탐 |
 
-- 코퍼스: **PASS 69/69 (미탐 0 · 오탐 0)** — MUST_BLOCK 37/37 BLOCK, MUST_ALLOW 32/32 ALLOW
-- 신규 영속 회귀: `tests/test_hardreview_r2_v272_vocabulary.py` 78 passed
-- RED 증거: 최초 실행 39 failed / 코퍼스 4건 확장 직후 8 failed → 수리 후 전건 GREEN
-- 부수 보강: 새 어휘의 `--help`, PowerShell `-WhatIf` dry-run은 ALLOW 고정(오탐 우선 원칙)
+- 코퍼스: **PASS 93/93 (미탐 0 · 오탐 0)** — MUST_BLOCK 53/53 BLOCK, MUST_ALLOW 40/40 ALLOW
+- 신규 영속 회귀: `test_hardreview_r2_v272_vocabulary.py` 78 + `test_hardreview_r2_powershell_comma.py` 49
+- RED 증거: 어휘 최초 39 failed → GREEN / P4 확장 20 failed → GREEN / codex 자체발견 2 failed → GREEN
+- 부수 보강: 새 어휘의 `--help`, PowerShell `-WhatIf`, `git rm -n/--dry-run/--cached`는
+  ALLOW 고정(오탐 우선 원칙)
+- 좌상 독립 스팟체크(코퍼스 밖 13종): 대소문자(`Ri`·`RemoVe-ItEm`)·별칭+플래그(`ri -Path`·
+  `mi -Path -Destination`·`clc -LiteralPath`)·`doas`/`sudo -E`·공백 있는 쉼표·따옴표 쉼표 전건 BLOCK,
+  `sc.exe query`·`git rm -n --cached`·`ri mine.py`·`git log | head` 전건 ALLOW
 
 **재발 방지 장치 2종 실증**(좌상 독립 검증): `adapters/`에 가짜 어댑터 디렉토리를 만들자
 캐시 매트릭스·신원승격 매트릭스 메타 테스트가 **둘 다 즉시 RED**. 정리 후 워킹트리 무변경 확인.
