@@ -75,6 +75,13 @@ MUST_BLOCK: list[tuple[str, str]] = [
     # ★G8 — PowerShell -Parameter:Value 결합 문법
     ("G8-colon", f"Copy-Item -Path:mine.py -Destination:{PEER_FILE}"),
     ("G8-colon", f"Move-Item -Path:{PEER_FILE} -Destination:moved.py"),
+    # ★N5 — Move/Rename의 소스를 -Path로 명명하면 대상이 통째로 사라진다 (v2.8.0부터 존재)
+    #    positional `Move-Item peer.py out`은 정상 차단되는데 명명형만 뚫린다
+    ("N5-namedsrc", f"Move-Item -Path {PEER_FILE} out"),
+    ("N5-namedsrc", f"Rename-Item -Path {PEER_FILE} new.py"),
+    ("N5-namedsrc", f"Move-Item -Path:{PEER_FILE} out"),
+    ("N5-namedsrc", f"mi -Path {PEER_FILE} out"),
+    ("N5-namedsrc", f"Move-Item -LiteralPath {PEER_FILE} out"),
     # ★G9 — PowerShell 고유 접두사 파라미터
     ("G9-prefix", f"Copy-Item -Path mine.py -Dest {PEER_FILE}"),
     ("G9-prefix", f"Rename-Item -Path {PEER_FILE} -New renamed.py"),
@@ -192,6 +199,9 @@ MUST_ALLOW: list[tuple[str, str]] = [
     # 별칭 수리가 내 파일까지 막으면 안 됨
     ("own-alias", "ri my_own_scratch.py"),
     ("own-alias", "mi mine1.py mine2.py"),
+    # N5 수리가 내 파일까지 막으면 안 된다
+    ("own-namedsrc", "Move-Item -Path my_own.py out"),
+    ("own-namedsrc", "Rename-Item -Path my_own.py new.py"),
     # ★R2-F1 — perl -I는 include 경로 지정이지 in-place가 아니다
     ("perl-inc", f"perl -Ilib -e s/x/y/ {PEER_FILE}"),
     ("perl-inc", "perl -Ilib t/test.t"),
@@ -263,6 +273,9 @@ SPACED_MUST_BLOCK: list[tuple[str, str]] = [
     ("P2-quoted", f"Remove-Item -Path:'{PEER_SPACED}'"),
     ("P2-quoted", f'Remove-Item -Path:"{PEER_SPACED}"'),
     ("P2-quoted", f"Copy-Item -Destination:'{PEER_SPACED}' mine.py"),
+    ("P2-quoted", f"Move-Item -Path:'{PEER_SPACED}' out"),
+    ("P2-quoted", f"Move-Item -Path '{PEER_SPACED}' out"),
+    ("P2-quoted", f"Rename-Item -Path '{PEER_SPACED}' new.py"),
     ("P2-quoted-ctrl", f"Remove-Item -Path '{PEER_SPACED}'"),  # 대조: 분리형은 이미 차단
     ("P2-quoted-ctrl", f"Remove-Item '{PEER_SPACED}'"),  # 대조: 위치 인자도 이미 차단
 ]

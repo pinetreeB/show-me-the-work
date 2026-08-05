@@ -117,3 +117,64 @@ def test_pr54_p2_non_destructive_controls_stay_allowed(
     peer_path: str | None,
 ) -> None:
     assert _decision(tmp_path, command, peer_path) == "allow"
+
+
+@pytest.mark.parametrize(
+    ("command", "peer_path"),
+    (
+        ("Move-Item -Path peer.py out", "peer.py"),
+        ("Rename-Item -Path peer.py new.py", "peer.py"),
+        ("Move-Item -Path:peer.py out", "peer.py"),
+        ("mi -Path peer.py out", "peer.py"),
+        ("Move-Item -LiteralPath peer.py out", "peer.py"),
+        ("Move-Item -Path:'peer dir/file.py' out", "peer dir/file.py"),
+        ("Move-Item -Path 'peer dir/file.py' out", "peer dir/file.py"),
+        ("Rename-Item -Path 'peer dir/file.py' new.py", "peer dir/file.py"),
+        ("Copy-Item -Path mine.py peer.py", "peer.py"),
+    ),
+)
+def test_named_source_with_positional_destination_reaches_gate(
+    tmp_path: Path,
+    command: str,
+    peer_path: str,
+) -> None:
+    assert _decision(tmp_path, command, peer_path) == "block"
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_targets"),
+    (
+        ("Move-Item -Path peer.py out", ("peer.py", "out", "out/peer.py")),
+        ("Rename-Item -Path peer.py new.py", ("peer.py", "new.py")),
+        ("Copy-Item -Path mine.py peer.py", ("peer.py", "peer.py/mine.py")),
+        (
+            "Move-Item -Path:'peer dir/file.py' out",
+            ("peer dir/file.py", "out", "out/file.py"),
+        ),
+    ),
+)
+def test_named_source_with_positional_destination_preserves_targets(
+    command: str,
+    expected_targets: tuple[str, ...],
+) -> None:
+    parsed = parse_destructive_command(command)
+
+    assert parsed is not None
+    assert parsed.resolved is True
+    assert parsed.targets == expected_targets
+
+
+@pytest.mark.parametrize(
+    ("command", "peer_path"),
+    (
+        ("Move-Item -Path my_own.py out", "peer.py"),
+        ("Rename-Item -Path my_own.py new.py", "peer.py"),
+        ("Copy-Item -Path peer.py out", "peer.py"),
+    ),
+)
+def test_named_source_with_positional_destination_controls_stay_allowed(
+    tmp_path: Path,
+    command: str,
+    peer_path: str,
+) -> None:
+    assert _decision(tmp_path, command, peer_path) == "allow"

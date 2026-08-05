@@ -1157,7 +1157,7 @@ def _transfer_operands(
             positionals.append(tokens[index])
             index += 1
         if destination is None:
-            if len(positionals) < 2:
+            if len(positionals) < (1 if sources else 2):
                 return None
             destination = positionals[-1]
             sources.extend(positionals[:-1])
