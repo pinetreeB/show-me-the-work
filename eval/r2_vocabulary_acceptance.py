@@ -25,6 +25,7 @@ from core.destructive_guard import evaluate_r2_destructive_gate  # noqa: E402
 from core.ledger import JsonObject, record_event  # noqa: E402
 
 PEER_FILE = "peer.py"
+PEER_IN_DIR = "shared-dir/peer.py"  # G1 — 디렉터리 대상 시 하위 peer 탐지 검증용
 
 # ── beta(남)의 미정산 파일을 파괴 → 반드시 BLOCK ────────────────────────────
 MUST_BLOCK: list[tuple[str, str]] = [
@@ -62,6 +63,47 @@ MUST_BLOCK: list[tuple[str, str]] = [
     ("C1-sweep", f"git rm {PEER_FILE}"),
     ("C1-sweep", f"Rename-Item {PEER_FILE} renamed.py"),
     ("C1-sweep", f"New-Item -Force {PEER_FILE}"),
+    # ★★G1 [Critical] — 상위 디렉터리를 대면 하위 peer 파일이 통째로 비껴간다
+    #    (별도 픽스처 필요: peer가 shared-dir/peer.py를 점유. DIR_CASES에서 별도 측정)
+    # ★G5 — sed 단축옵션 묶음 안의 i
+    ("G5-sedcluster", f"sed -ni s/x/y/ {PEER_FILE}"),
+    ("G5-sedcluster", f"sed -Ei s/x/y/ {PEER_FILE}"),
+    # ★G6 — find의 파일 출력 action이 기존 파일을 절단
+    ("G6-find", f"find . -fprint {PEER_FILE}"),
+    ("G6-find", f"find . -fls {PEER_FILE}"),
+    # ★G8 — PowerShell -Parameter:Value 결합 문법
+    ("G8-colon", f"Copy-Item -Path:mine.py -Destination:{PEER_FILE}"),
+    ("G8-colon", f"Move-Item -Path:{PEER_FILE} -Destination:moved.py"),
+    # ★G9 — PowerShell 고유 접두사 파라미터
+    ("G9-prefix", f"Copy-Item -Path mine.py -Dest {PEER_FILE}"),
+    ("G9-prefix", f"Rename-Item -Path {PEER_FILE} -New renamed.py"),
+    ("G9-prefix", f"New-Item -Fo {PEER_FILE}"),
+    # ★G10 — 파이프라인 바인딩
+    ("G10-pipebind", f"'mine.py' | Copy-Item -Destination {PEER_FILE}"),
+    ("G10-pipebind", f"'Remove-Item {PEER_FILE}' | Invoke-Expression"),
+    # ★G11 — Tee-Object 정식 이름 미등록
+    ("G11-tee", f"'x' | Tee-Object -FilePath {PEER_FILE}"),
+    # ★G12/G13 — git switch 파괴 모드 · checkout/restore 무경로 patch
+    ("G12-switch", "git switch -f main"),
+    ("G12-switch", "git switch --orphan newroot"),
+    ("G13-patch", "git checkout -p"),
+    ("G13-patch", "git restore -p"),
+    # ★G3 — cp --context는 선택/무인수인데 필수 값으로 오인해 첫 source를 삼킴
+    ("G3-context", f"cp --context mine.py {PEER_FILE}"),
+    # (G2 `cp -tDIR` 붙임형은 쓰기 대상이 DIR/basename이라 이 픽스처로 못 잰다 → DIR_* 블록에서 측정)
+    # ★R2-N1 — 식(expression) fail-closed가 삭제 탐지기만 비껴감 (v2.8.0이 도입한 불일치)
+    ("R2-expr", f"Remove-Item (gi {PEER_FILE})"),
+    ("R2-expr", f"ri (Join-Path a {PEER_FILE})"),
+    ("R2-expr", f"del (gi {PEER_FILE})"),
+    # ★R2-N2 — @( ) 배열 부분식이 ( 규칙 전체를 우회
+    ("R2-arrsub", f"Remove-Item @({PEER_FILE})"),
+    ("R2-arrsub", f"Clear-Content -Path @({PEER_FILE})"),
+    ("R2-arrsub", f"Move-Item @({PEER_FILE}) out"),
+    ("R2-arrsub", f"New-Item -Force @({PEER_FILE})"),
+    # ★R2-N3 — 파이프 수신 셸 unwrap 잔존 구멍
+    ("R2-pipe2", "echo x | nice bash"),
+    ("R2-pipe2", "echo x | setsid bash"),
+    ("R2-pipe2", "echo x | powershell"),
     # ★P4-M1 — PowerShell 내장 별칭. 한 단어 치환으로 어휘 전체 무력화(수리 전부터 존재)
     ("P4-alias", f"ri {PEER_FILE}"),
     ("P4-alias", f"RI {PEER_FILE}"),
@@ -134,8 +176,15 @@ MUST_ALLOW: list[tuple[str, str]] = [
     # 별칭 수리가 내 파일까지 막으면 안 됨
     ("own-alias", "ri my_own_scratch.py"),
     ("own-alias", "mi mine1.py mine2.py"),
+    # ★R2-F1 — perl -I는 include 경로 지정이지 in-place가 아니다
+    ("perl-inc", f"perl -Ilib -e s/x/y/ {PEER_FILE}"),
+    ("perl-inc", "perl -Ilib t/test.t"),
+    # ★R2-F2 — cmd의 sc(서비스 제어)는 Set-Content 별칭이 아니다
+    ("sc-svc", "sc stop peersvc"),
+    ("sc-svc", "sc query peersvc"),
     # ★P4-F1/F2/F3 — 건조 실행·인덱스 전용은 파일을 안 지우므로 통과해야 함
     ("dryrun", f"Remove-Item -WhatIf {PEER_FILE}"),
+    ("dryrun", f"Remove-Item {PEER_FILE} -WhatIf:$true"),
     ("dryrun", f"git rm -n {PEER_FILE}"),
     ("dryrun", f"git rm --dry-run {PEER_FILE}"),
     ("dryrun", f"git rm --cached {PEER_FILE}"),
@@ -148,6 +197,39 @@ MUST_ALLOW: list[tuple[str, str]] = [
     ("git-ok", "git add -A"),
     ("git-ok", "git commit -m 'fix: something'"),
     ("git-ok", "git checkout -b worker/new-branch"),
+]
+
+# ── G1 전용: peer가 shared-dir/peer.py를 점유. 상위 디렉터리를 대는 명령들 ──
+#    파일을 직접 대면 막히는데 부모 디렉터리를 대면 통과하는지가 쟁점이다.
+DIR_MUST_BLOCK: list[tuple[str, str]] = [
+    ("G1-dir", "rm -r shared-dir"),
+    ("G1-dir", "rm -rf shared-dir"),
+    ("G1-dir", "Remove-Item -Recurse shared-dir"),
+    ("G1-dir", "mv shared-dir moved-dir"),
+    ("G1-dir", "Move-Item shared-dir moved-dir"),
+    ("G1-dir", "Rename-Item shared-dir renamed-dir"),
+    ("G1-dir", "git checkout -- shared-dir"),
+    ("G1-dir", "git restore -- shared-dir"),
+    ("G1-dir", "git rm -r shared-dir"),
+    ("G1-dir-ctrl", "rm shared-dir/peer.py"),  # 대조: 직접 대면 이미 막힘
+    # ★G2 — `cp -tDIR`/`mv -tDIR` 붙임형. 쓰기 대상이 DIR/basename(source)이므로
+    #    peer가 shared-dir/peer.py를 점유한 이 픽스처에서만 정확히 잴 수 있다.
+    ("G2-tattached", "cp -tshared-dir peer.py"),
+    ("G2-tattached", "mv -tshared-dir peer.py"),
+    ("G2-tattached", "cp --target-directory=shared-dir peer.py"),
+]
+
+DIR_MUST_ALLOW: list[tuple[str, str]] = [
+    ("G1-own", "rm -r my_own_dir"),
+    ("G1-own", "Remove-Item -Recurse my_own_dir"),
+    ("G1-own", "mv my_own_dir renamed_own"),
+    ("G1-read", "ls -la shared-dir"),
+    ("G1-read", "grep -r TODO shared-dir"),
+    # 이름이 겹치는 다른 디렉터리는 막으면 안 된다 (prefix 비교 경계 검증)
+    ("G1-sibling", "rm -r shared-directory"),
+    ("G1-sibling", "rm -r shared"),
+    # 붙임형 target-directory라도 내 디렉터리면 통과
+    ("G2-own", "cp -tmy_own_dir mine.py"),
 ]
 
 # ── 설계 결정으로 이번 범위에서 제외한 것 (기록만, 합불 무관) ────────────────
@@ -248,7 +330,49 @@ def main() -> int:
         for tag, cmd in KNOWN_LIMITATION:
             print(f"  {_decide(root, cmd).upper():<16} [{tag:<14}] {cmd}")
 
-    total = len(MUST_BLOCK) + len(MUST_ALLOW)
+    # ── G1 전용 픽스처: peer가 디렉터리 하위 파일을 점유 ──
+    with tempfile.TemporaryDirectory() as tmp2:
+        root2 = Path(tmp2)
+        beta2 = _identity(root2, "beta")
+        _ = record_event(
+            beta2
+            | {
+                "event": "prompt",
+                "prompt": "beta work",
+                "baseline_snapshot_id": "snapshot:base",
+                "current_snapshot_id": "snapshot:base",
+            }
+        )
+        _ = record_event(
+            beta2
+            | {
+                "event": "invocation",
+                "invocation_id": "beta-dir",
+                "candidate_paths": [PEER_IN_DIR],
+            }
+        )
+        print()
+        print("=" * 84)
+        print(f"G1 — peer가 {PEER_IN_DIR} 점유. 상위 디렉터리 대상 명령")
+        print("=" * 84)
+        for tag, cmd in DIR_MUST_BLOCK:
+            decision = _decide(root2, cmd)
+            ok = decision == "block"
+            if not ok:
+                failures.append(f"미탐 [{tag}] {cmd} -> {decision}")
+            if verbose or not ok:
+                print(f"  {'PASS' if ok else '**FAIL(미탐)**':<16} [{tag:<12}] {cmd}")
+        for tag, cmd in DIR_MUST_ALLOW:
+            decision = _decide(root2, cmd)
+            ok = decision != "block"
+            if not ok:
+                failures.append(f"오탐 [{tag}] {cmd} -> {decision}")
+            if verbose or not ok:
+                print(f"  {'PASS' if ok else '**FAIL(오탐)**':<16} [{tag:<12}] {cmd}")
+
+    total = (
+        len(MUST_BLOCK) + len(MUST_ALLOW) + len(DIR_MUST_BLOCK) + len(DIR_MUST_ALLOW)
+    )
     print()
     print("=" * 84)
     if failures:
