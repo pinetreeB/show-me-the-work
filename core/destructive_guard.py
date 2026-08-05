@@ -25,14 +25,25 @@ SHELL_TOOLS: Final[frozenset[str]] = frozenset({"Bash", "PowerShell"})
 COMMAND_SEPARATORS: Final[frozenset[str]] = frozenset({"&&", "||", ";", "|"})
 
 GIT_SUBCOMMANDS_ALWAYS_IMPLICIT: Final[frozenset[str]] = frozenset({"reset", "clean", "stash", "read-tree"})
-GIT_SUBCOMMANDS_PATHSPEC: Final[frozenset[str]] = frozenset({"checkout", "restore"})
+GIT_SUBCOMMANDS_PATHSPEC: Final[frozenset[str]] = frozenset({"checkout", "restore", "rm"})
 GIT_SWITCH_DISCARD_FLAGS: Final[frozenset[str]] = frozenset({"--discard-changes"})
 GIT_SUBCOMMAND_NAMES: Final[frozenset[str]] = (
     GIT_SUBCOMMANDS_ALWAYS_IMPLICIT | GIT_SUBCOMMANDS_PATHSPEC | frozenset({"switch"})
 )
 
-REMOVE_COMMAND_NAMES: Final[frozenset[str]] = frozenset({"rm", "remove-item", "del", "rd", "rmdir"})
-TRUNCATE_COMMAND_NAMES: Final[frozenset[str]] = frozenset({"set-content", "out-file"})
+REMOVE_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
+    {"rm", "remove-item", "del", "rd", "rmdir", "shred", "unlink"}
+)
+TRUNCATE_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
+    {"clear-content", "set-content", "out-file"}
+)
+TRANSFER_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
+    {"copy-item", "cp", "move-item", "mv", "rename-item"}
+)
+MOVE_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
+    {"move-item", "mv", "rename-item"}
+)
+SINK_PATHS: Final[frozenset[str]] = frozenset({"/dev/null", "nul"})
 SHELL_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
     {
         "ash",
@@ -46,9 +57,13 @@ SHELL_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
         "zsh",
     }
 )
+INVOKE_EXPRESSION_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
+    {"iex", "invoke-expression"}
+)
 WRAPPER_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
     {
         *SHELL_COMMAND_NAMES,
+        *INVOKE_EXPRESSION_COMMAND_NAMES,
         "busybox",
         "builtin",
         "cmd",
@@ -76,6 +91,7 @@ WRAPPER_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
 OPAQUE_WRAPPER_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
     {
         *SHELL_COMMAND_NAMES,
+        *INVOKE_EXPRESSION_COMMAND_NAMES,
         "cmd",
         "cmd.exe",
         "eval",
@@ -157,6 +173,14 @@ _FUNCTION_CALL_RE = re.compile(
 _CASE_BLOCK_RE = re.compile(r"(?ms)(?:^|[;&]\s*)case\b.*?\bin\b(?P<body>.*?)\besac\b")
 _CASE_CLAUSE_RE = re.compile(r"(?ms)(?:^|;;)\s*[^)]*\)\s*(?P<body>.*?)(?=;;|$)")
 _AMBIGUOUS_NESTED_BACKTICK_RE = re.compile(r"`[^`\r\n]*`[^`\r\n]+``")
+_DOTNET_FILE_CALL_RE = re.compile(
+    r"^\[(?:system\.)?io\.file\]::"
+    r"(?P<method>delete|writeall(?:text|bytes|lines))\((?P<arguments>.*)\)$",
+    re.IGNORECASE,
+)
+_DOTNET_FIRST_LITERAL_RE = re.compile(
+    r"^\s*(?P<quote>['\"])(?P<path>.*?)(?P=quote)\s*(?:,|$)"
+)
 
 
 class _ShellScanState(Enum):
@@ -213,6 +237,12 @@ class _HeredocDeclaration:
     strip_tabs: bool
     quoted: bool
     consumer: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CommandSegment:
+    text: str
+    incoming_separator: str | None
 
 
 def _tokenize(command: str) -> list[str]:
@@ -398,7 +428,14 @@ def _detect_git(tokens: list[str]) -> ParsedDestructiveCommand | None:
 
 
 def _detect_remove(tokens: list[str]) -> ParsedDestructiveCommand | None:
-    if _command_name(tokens[0]) not in REMOVE_COMMAND_NAMES:
+    command = _command_name(tokens[0])
+    if command not in REMOVE_COMMAND_NAMES:
+        return None
+    if (
+        command in {"shred", "unlink"}
+        and len(tokens) > 1
+        and _unquote(tokens[1]).casefold() in {"--help", "--version"}
+    ):
         return None
     positionals: list[str] = []
     index = 1
@@ -426,9 +463,68 @@ def _detect_remove(tokens: list[str]) -> ParsedDestructiveCommand | None:
     return ParsedDestructiveCommand(CATEGORY_REMOVE, True, tuple(targets), "")
 
 
+def _resolved_static_targets(
+    category: str,
+    raw_targets: list[str],
+) -> ParsedDestructiveCommand:
+    if not raw_targets:
+        return _blocked(category, "parse_unable_missing_target")
+    targets: list[str] = []
+    for raw in raw_targets:
+        target = _unquote(raw)
+        validity = _validate_target(target)
+        if validity == "ok":
+            if target not in targets:
+                targets.append(target)
+        elif validity == "implicit_scope":
+            return _blocked(category, "implicit_scope")
+        else:
+            return _blocked(category, "parse_unable_target")
+    return ParsedDestructiveCommand(category, True, tuple(targets), "")
+
+
+_CLEAR_CONTENT_OPTIONS_WITH_VALUE: Final[frozenset[str]] = frozenset(
+    {"-credential", "-exclude", "-filter", "-include", "-stream"}
+)
+
+
+def _detect_clear_content(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    explicit_targets: list[str] = []
+    positionals: list[str] = []
+    index = 1
+    while index < len(tokens):
+        token = _unquote(tokens[index])
+        option = token.casefold()
+        if option in {"-?", "-help", "--help", "-whatif"}:
+            return None
+        if option in PATH_FLAGS:
+            if index + 1 >= len(tokens):
+                return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
+            explicit_targets.append(tokens[index + 1])
+            index += 2
+            continue
+        if option in _CLEAR_CONTENT_OPTIONS_WITH_VALUE:
+            if index + 1 >= len(tokens):
+                return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    return _resolved_static_targets(
+        CATEGORY_TRUNCATE,
+        explicit_targets or positionals,
+    )
+
+
 def _detect_truncate_cmdlet(tokens: list[str]) -> ParsedDestructiveCommand | None:
-    if _command_name(tokens[0]) not in TRUNCATE_COMMAND_NAMES:
+    command = _command_name(tokens[0])
+    if command not in TRUNCATE_COMMAND_NAMES:
         return None
+    if command == "clear-content":
+        return _detect_clear_content(tokens)
     index = 1
     while index < len(tokens):
         if tokens[index].casefold() in PATH_FLAGS:
@@ -448,6 +544,352 @@ def _detect_truncate_cmdlet(tokens: list[str]) -> ParsedDestructiveCommand | Non
             return _blocked(CATEGORY_TRUNCATE, "parse_unable_target")
         index += 1
     return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_path_flag")
+
+
+def _detect_truncate_file(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    if _command_name(tokens[0]) != "truncate":
+        return None
+    positionals: list[str] = []
+    has_size_source = False
+    after_double_dash = False
+    index = 1
+    while index < len(tokens):
+        token = _unquote(tokens[index])
+        option = token.casefold()
+        if not after_double_dash and option in {"--help", "--version"}:
+            return None
+        if not after_double_dash and token == "--":
+            after_double_dash = True
+            index += 1
+            continue
+        if not after_double_dash and option in {"-s", "--size", "-r", "--reference"}:
+            if index + 1 >= len(tokens):
+                return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
+            has_size_source = True
+            index += 2
+            continue
+        if not after_double_dash and (
+            option.startswith(("--size=", "--reference="))
+            or (len(option) > 2 and option.startswith(("-s", "-r")))
+        ):
+            has_size_source = True
+            index += 1
+            continue
+        if not after_double_dash and token.startswith("-"):
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    if not has_size_source:
+        return None
+    return _resolved_static_targets(CATEGORY_TRUNCATE, positionals)
+
+
+def _detect_dd_output(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    if _command_name(tokens[0]) != "dd":
+        return None
+    output: str | None = None
+    append = False
+    for raw_token in tokens[1:]:
+        token = _unquote(raw_token)
+        key, separator, value = token.partition("=")
+        if not separator:
+            continue
+        option = key.casefold()
+        if option == "of":
+            output = value
+        elif option == "oflag":
+            append = "append" in {flag.casefold() for flag in value.split(",")}
+    if output is None or append:
+        return None
+    return _resolved_static_targets(CATEGORY_TRUNCATE, [output])
+
+
+_POWERSHELL_TRANSFER_VALUE_OPTIONS: Final[frozenset[str]] = frozenset(
+    {"-credential", "-exclude", "-filter", "-include"}
+)
+_POSIX_TRANSFER_VALUE_OPTIONS: Final[frozenset[str]] = frozenset(
+    {"-S", "--context", "--suffix"}
+)
+
+
+def _transfer_operands(tokens: list[str]) -> tuple[list[str], str] | None:
+    command = _command_name(tokens[0])
+    if command in {"copy-item", "move-item", "rename-item"}:
+        sources: list[str] = []
+        positionals: list[str] = []
+        destination: str | None = None
+        index = 1
+        while index < len(tokens):
+            token = _unquote(tokens[index])
+            option = token.casefold()
+            if option in {"-?", "-help", "--help", "-whatif"}:
+                return None
+            if option in {"-path", "-literalpath"}:
+                if index + 1 >= len(tokens):
+                    return None
+                sources.append(tokens[index + 1])
+                index += 2
+                continue
+            if option in {"-destination", "-newname"}:
+                if index + 1 >= len(tokens):
+                    return None
+                destination = tokens[index + 1]
+                index += 2
+                continue
+            if option in _POWERSHELL_TRANSFER_VALUE_OPTIONS:
+                if index + 1 >= len(tokens):
+                    return None
+                index += 2
+                continue
+            if token.startswith("-"):
+                index += 1
+                continue
+            positionals.append(token)
+            index += 1
+        if destination is None:
+            if len(positionals) < 2:
+                return None
+            destination = positionals[-1]
+            sources.extend(positionals[:-1])
+        else:
+            sources.extend(positionals)
+        return (sources, destination) if sources else None
+
+    positionals = []
+    destination = None
+    after_double_dash = False
+    index = 1
+    while index < len(tokens):
+        token = _unquote(tokens[index])
+        if not after_double_dash and token in {"--help", "--version"}:
+            return None
+        if not after_double_dash and token == "--":
+            after_double_dash = True
+            index += 1
+            continue
+        if not after_double_dash and token in {"-t", "--target-directory"}:
+            if index + 1 >= len(tokens):
+                return None
+            destination = tokens[index + 1]
+            index += 2
+            continue
+        if not after_double_dash and token.startswith("--target-directory="):
+            destination = token.split("=", 1)[1]
+            index += 1
+            continue
+        if not after_double_dash and token in _POSIX_TRANSFER_VALUE_OPTIONS:
+            if index + 1 >= len(tokens):
+                return None
+            index += 2
+            continue
+        if not after_double_dash and token.startswith("-") and token != "-":
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    if destination is None:
+        if len(positionals) < 2:
+            return None
+        destination = positionals[-1]
+        positionals = positionals[:-1]
+    return (positionals, destination) if positionals else None
+
+
+def _transfer_destination_candidates(sources: list[str], destination: str) -> list[str]:
+    candidates = [destination]
+    if len(sources) > 1 or destination.endswith(("/", "\\")):
+        separator = "\\" if "\\" in destination and "/" not in destination else "/"
+        base = destination.rstrip("/\\")
+        for raw_source in sources:
+            source = _unquote(raw_source)
+            if _validate_target(source) != "ok":
+                continue
+            basename = source.replace("\\", "/").rsplit("/", 1)[-1]
+            candidate = f"{base}{separator}{basename}"
+            if candidate not in candidates:
+                candidates.append(candidate)
+    return candidates
+
+
+def _detect_transfer(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    command = _command_name(tokens[0])
+    if command not in TRANSFER_COMMAND_NAMES:
+        return None
+    operands = _transfer_operands(tokens)
+    if operands is None:
+        return None
+    sources, destination = operands
+    if (
+        command == "rename-item"
+        and len(sources) == 1
+        and not any(separator in _unquote(destination) for separator in ("/", "\\"))
+    ):
+        source = _unquote(sources[0]).replace("\\", "/")
+        if "/" in source:
+            destination = f"{source.rsplit('/', 1)[0]}/{destination}"
+    sink = _unquote(destination).replace("\\", "/").casefold() in SINK_PATHS
+    destination_targets = [] if sink else _transfer_destination_candidates(sources, destination)
+    if command in MOVE_COMMAND_NAMES:
+        return _resolved_static_targets(CATEGORY_REMOVE, [*sources, *destination_targets])
+    return _resolved_static_targets(CATEGORY_TRUNCATE, destination_targets)
+
+
+def _detect_dotnet_file(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    match = _DOTNET_FILE_CALL_RE.match(" ".join(tokens))
+    if match is None:
+        return None
+    method = match.group("method").casefold()
+    literal = _DOTNET_FIRST_LITERAL_RE.match(match.group("arguments"))
+    category = CATEGORY_REMOVE if method == "delete" else CATEGORY_TRUNCATE
+    if literal is None:
+        return _blocked(category, "parse_unable_dynamic_expression")
+    return _resolved_static_targets(category, [literal.group("path")])
+
+
+def _detect_sed_in_place(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    if _command_name(tokens[0]) != "sed":
+        return None
+    in_place = False
+    script_supplied = False
+    positionals: list[str] = []
+    after_double_dash = False
+    index = 1
+    while index < len(tokens):
+        token = _unquote(tokens[index])
+        if not after_double_dash and token == "--":
+            after_double_dash = True
+            index += 1
+            continue
+        if not after_double_dash and (
+            token in {"-i", "--in-place"}
+            or token.startswith(("-i.", "--in-place="))
+        ):
+            in_place = True
+            if token == "-i" and index + 1 < len(tokens) and tokens[index + 1] in {"''", '\"\"'}:
+                index += 2
+            else:
+                index += 1
+            continue
+        if not after_double_dash and token in {"-e", "--expression", "-f", "--file"}:
+            if index + 1 >= len(tokens):
+                return None
+            script_supplied = True
+            index += 2
+            continue
+        if not after_double_dash and token.startswith(("-e", "-f")) and len(token) > 2:
+            script_supplied = True
+            index += 1
+            continue
+        if not after_double_dash and token.startswith("-"):
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    if not in_place:
+        return None
+    files = positionals if script_supplied else positionals[1:]
+    if not files:
+        return None
+    return _resolved_static_targets(CATEGORY_TRUNCATE, files)
+
+
+def _detect_perl_in_place(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    if _command_name(tokens[0]) != "perl":
+        return None
+    in_place = False
+    script_supplied = False
+    positionals: list[str] = []
+    after_double_dash = False
+    index = 1
+    while index < len(tokens):
+        token = _unquote(tokens[index])
+        if not after_double_dash and token == "--":
+            after_double_dash = True
+            index += 1
+            continue
+        if not after_double_dash and token in {"--help", "--version"}:
+            return None
+        if not after_double_dash and token.startswith("-") and token != "-":
+            short_options = token[1:]
+            if "i" in short_options:
+                in_place = True
+            expression_index = short_options.find("e")
+            if expression_index >= 0:
+                script_supplied = True
+                if expression_index == len(short_options) - 1:
+                    if index + 1 >= len(tokens):
+                        return None
+                    index += 2
+                    continue
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    if not in_place:
+        return None
+    files = positionals if script_supplied else positionals[1:]
+    if not files:
+        return None
+    return _resolved_static_targets(CATEGORY_TRUNCATE, files)
+
+
+_NEW_ITEM_OPTIONS_WITH_VALUE: Final[frozenset[str]] = frozenset(
+    {"-credential", "-itemtype", "-target", "-type", "-value"}
+)
+
+
+def _detect_forced_new_item(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    if _command_name(tokens[0]) != "new-item":
+        return None
+    force = False
+    explicit_paths: list[str] = []
+    positionals: list[str] = []
+    name: str | None = None
+    index = 1
+    while index < len(tokens):
+        token = _unquote(tokens[index])
+        option = token.casefold()
+        if option in {"-?", "-help", "--help", "-whatif"}:
+            return None
+        if option == "-force":
+            force = True
+            index += 1
+            continue
+        if option in PATH_FLAGS:
+            if index + 1 >= len(tokens):
+                return None
+            explicit_paths.append(tokens[index + 1])
+            index += 2
+            continue
+        if option == "-name":
+            if index + 1 >= len(tokens):
+                return None
+            name = tokens[index + 1]
+            index += 2
+            continue
+        if option in _NEW_ITEM_OPTIONS_WITH_VALUE:
+            if index + 1 >= len(tokens):
+                return None
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    if not force:
+        return None
+    targets = explicit_paths or positionals
+    if name is not None:
+        if explicit_paths:
+            targets = [
+                f"{_unquote(path).rstrip('/\\')}/{_unquote(name)}"
+                for path in explicit_paths
+            ]
+        elif not targets:
+            targets = [name]
+    return _resolved_static_targets(CATEGORY_TRUNCATE, targets)
 
 
 def _detect_truncate_redirect(tokens: list[str]) -> ParsedDestructiveCommand | None:
@@ -541,15 +983,20 @@ def _detect_wrapper_indirect(tokens: list[str]) -> ParsedDestructiveCommand | No
     payload_tokens = _wrapper_payload_tokens(tokens, wrapper)
     if not payload_tokens:
         return None
-    nested = parse_destructive_command(" ".join(_unquote(token) for token in payload_tokens))
+    payload_command = " ".join(_unquote(token) for token in payload_tokens)
+    nested = parse_destructive_command(payload_command)
     if nested is not None:
         if wrapper in OPAQUE_WRAPPER_COMMAND_NAMES:
             return _blocked(nested.category, "parse_unable_wrapped")
         return nested
     if wrapper not in OPAQUE_WRAPPER_COMMAND_NAMES:
         return None
-    wrapped_command = " ".join(_unquote(token) for token in tokens)
-    if is_proven_read_only_command(wrapped_command):
+    read_only_candidate = (
+        payload_command
+        if wrapper in INVOKE_EXPRESSION_COMMAND_NAMES
+        else " ".join(_unquote(token) for token in tokens)
+    )
+    if is_proven_read_only_command(read_only_candidate):
         return None
     return _blocked(CATEGORY_REMOVE, "parse_unable_wrapped")
 
@@ -1074,21 +1521,22 @@ def _has_ambiguous_nested_backticks(command: str) -> bool:
     return _AMBIGUOUS_NESTED_BACKTICK_RE.search("".join(visible)) is not None
 
 
-def _command_segments(command: str) -> tuple[list[str], bool]:
+def _command_segments(command: str) -> tuple[list[_CommandSegment], bool]:
     """Split shell text only at executable command boundaries.
 
     Quoted and escaped operators remain arguments.  Outside those lexical
     states, ``&`` and physical newlines open a command position just like the
     separators handled by the original parser.
     """
-    segments: list[str] = []
-    nested_segments: list[str] = []
+    segments: list[_CommandSegment] = []
+    nested_segments: list[_CommandSegment] = []
     malformed = _has_ambiguous_nested_backticks(command)
     start = 0
     state = _ShellScanState.EXPECT_COMMAND
     return_state = _ShellScanState.EXPECT_COMMAND
     case_active = False
     case_expects_pattern = False
+    incoming_separator: str | None = None
     index = 0
     while index < len(command):
         character = command[index]
@@ -1208,12 +1656,13 @@ def _command_segments(command: str) -> tuple[list[str], bool]:
             if case_expects_pattern and segment.strip():
                 segment = f"case _ in {segment}"
                 case_expects_pattern = False
-            segments.append(segment)
+            segments.append(_CommandSegment(segment, incoming_separator))
             separator = command[index : index + separator_width]
             if case_active and separator in {";;", ";&", ";;&"}:
                 case_expects_pattern = True
             index += separator_width
             start = index
+            incoming_separator = separator
             state = _ShellScanState.AFTER_SEPARATOR
             continue
         if not character.isspace():
@@ -1222,7 +1671,7 @@ def _command_segments(command: str) -> tuple[list[str], bool]:
     final_segment = command[start:]
     if case_expects_pattern and final_segment.strip():
         final_segment = f"case _ in {final_segment}"
-    segments.append(final_segment)
+    segments.append(_CommandSegment(final_segment, incoming_separator))
     return segments + nested_segments, malformed
 
 
@@ -1262,6 +1711,12 @@ _DETECTORS: Final[tuple[Callable[[list[str]], ParsedDestructiveCommand | None], 
     _detect_git,
     _detect_remove,
     _detect_truncate_cmdlet,
+    _detect_truncate_file,
+    _detect_dd_output,
+    _detect_transfer,
+    _detect_sed_in_place,
+    _detect_perl_in_place,
+    _detect_forced_new_item,
     _detect_find_exec,
     _detect_wrapper_indirect,
 )
@@ -1342,7 +1797,33 @@ _EXECUTABLE_PREFIX_WRAPPERS: Final[frozenset[str]] = frozenset(
 )
 
 
-def _r2_command_segments(command: str) -> tuple[list[str], bool]:
+def _effective_command_tokens(raw_tokens: list[str]) -> list[str]:
+    tokens = _command_position_tokens(raw_tokens)
+    while tokens and _command_name(tokens[0]) in _EXECUTABLE_PREFIX_WRAPPERS:
+        wrapper = _command_name(tokens[0])
+        payload = _wrapper_payload_tokens(tokens, wrapper)
+        if not payload or payload == tokens:
+            return []
+        tokens = _command_position_tokens(payload)
+    return tokens
+
+
+def _detect_pipeline_shell_receiver(
+    segment: _CommandSegment,
+) -> ParsedDestructiveCommand | None:
+    if segment.incoming_separator not in {"|", "|&"}:
+        return None
+    tokens = _effective_command_tokens(_tokenize(segment.text))
+    if (
+        tokens
+        and _command_name(tokens[0]) in SHELL_COMMAND_NAMES
+        and _shell_stdin_is_script(tokens)
+    ):
+        return _blocked(CATEGORY_REMOVE, "parse_unable_pipeline")
+    return None
+
+
+def _r2_command_segments(command: str) -> tuple[list[_CommandSegment], bool]:
     """Return the executable segments consumed by the R2 parser."""
     normalized_command = _normalize_attached_here_strings(command)
     executable_text, heredoc_malformed, heredoc_bodies = _without_heredoc_bodies(
@@ -1371,14 +1852,7 @@ def executable_command_positions(command: str) -> tuple[tuple[str, ...], ...]:
     positions: list[tuple[str, ...]] = []
     segments, _malformed = _r2_command_segments(command)
     for segment in segments:
-        tokens = _command_position_tokens(_tokenize(segment))
-        while tokens and _command_name(tokens[0]) in _EXECUTABLE_PREFIX_WRAPPERS:
-            wrapper = _command_name(tokens[0])
-            payload = _wrapper_payload_tokens(tokens, wrapper)
-            if not payload or payload == tokens:
-                tokens = []
-                break
-            tokens = _command_position_tokens(payload)
+        tokens = _effective_command_tokens(_tokenize(segment.text))
         if tokens:
             positions.append(tuple(_unquote(token) for token in tokens))
     return tuple(positions)
@@ -1393,6 +1867,9 @@ def _parse_destructive_segment(command: str) -> ParsedDestructiveCommand | None:
     tokens = _command_position_tokens(raw_tokens)
     if not tokens:
         return None
+    dotnet_file = _detect_dotnet_file(tokens)
+    if dotnet_file is not None:
+        return dotnet_file
     dynamic = _detect_dynamic_command_head(tokens)
     if dynamic is not None:
         return dynamic
@@ -1415,7 +1892,9 @@ def parse_destructive_commands(command: str) -> tuple[ParsedDestructiveCommand, 
     if malformed:
         parsed.append(_blocked(CATEGORY_REMOVE, "parse_unable_shell_syntax"))
     for segment in segments:
-        result = _parse_destructive_segment(segment)
+        result = _detect_pipeline_shell_receiver(segment)
+        if result is None:
+            result = _parse_destructive_segment(segment.text)
         if result is not None and result not in parsed:
             parsed.append(result)
     return tuple(parsed)
