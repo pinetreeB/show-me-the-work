@@ -3,10 +3,10 @@
 ## 결과
 
 - 브랜치: `worker/review2-fix`
-- 수용 코퍼스: `PASS — 146/146 충족 (미탐 0 · 오탐 0)`
-- 전체 회귀: `1907 passed, 2 skipped in 392.32s`
-- 관련 회귀: `235 passed`
-- 신규 회귀: 최초 RED `59 failed, 13 passed`, G2 정정 RED `1/146` → GREEN `79 passed`
+- 수용 코퍼스: `PASS — 158/158 충족 (미탐 0 · 오탐 0)`
+- 전체 회귀: `1921 passed, 2 skipped in 366.20s`
+- 야간 후속 관련 회귀: `171 passed` (review2 문법·컨테이너·기존 v2.7.2 정책)
+- 신규 회귀: 최초 RED `59 failed, 13 passed`, G2 정정 RED `1/146` → GREEN `79 passed`, 야간 후속 RED `9 failed, 82 passed` → GREEN `93 passed`
 - 정적 검사: Ruff check/format 통과, basedpyright `0 errors, 0 warnings, 0 notes`
 
 ## P0 — 디렉터리 하위 귀속 [Critical]
@@ -50,10 +50,20 @@
 - sc: 확장자 없는 bare `sc`도 표준 서비스 제어 동사일 때만 Set-Content 별칭에서 면제한다. 일반 `sc <path> <value>` 형태는 면제하지 않는다.
 - WhatIf: bare `-WhatIf`와 `-WhatIf:$true`는 ALLOW, `-WhatIf:$false`는 계속 실제 파괴 경로로 평가한다.
 
+## 야간 후속 M1~M4
+
+- M1 cmd 재귀: `rd`/`rmdir`에 한해서 대소문자 무관 `/s`를 재귀 컨테이너 표식으로 해석한다. `/q`는 부가 옵션으로 소비하며 비재귀 `rd shared-dir`는 계속 ALLOW다.
+- M2 별칭: 정적 파이프 바인딩이 문자열 `invoke-expression` 하나가 아니라 `iex`를 포함한 Invoke-Expression 계열 판정을 사용한다.
+- M3 공통 파라미터: `-Verbose`·`-Force`처럼 Command 입력을 제공하지 않는 옵션이 있어도 파이프 literal을 바인딩한다. 반대로 위치 Command나 명시적 `-Command`가 있으면 파이프 입력을 덧붙이지 않는다.
+- M4 불투명 입력: 비-literal 파이프가 명시적 Command 없이 Invoke-Expression 계열로 들어가면 셸 stdin script와 동일하게 `parse_unable_pipeline`로 fail-closed한다.
+- 정책 정합: 과거 `fnm env | iex` ALLOW 회귀는 새 M4 계약과 모순되어 파이프 코드 수신기 BLOCK 회귀로 이동했다. 명령별 예외를 두어 같은 우회를 남기지 않았다.
+- 오탐 대조: `rd /s my_own_dir`, `rmdir /s /q my_own_dir`, 비재귀 `rd shared-dir`, `'pwd' | iex -Verbose`, 명시적 `-Command 'pwd'`는 모두 ALLOW를 유지한다.
+
 ## 영속 회귀 테스트
 
 - `tests/test_review2_fix41_containers.py`: open/persisted peer descendant, 재귀 복사 파생 범위, 경로 경계, own/read 대조군.
 - `tests/test_review2_fix41_syntax.py`: P1~P5 문법, 동형 단언, ambiguous prefix, WhatIf true/false, Tee append, 모든 래퍼 대조군.
+- `tests/test_hardreview_r2_v272_vocabulary.py`: 동적 입력의 bash/iex 코드 수신기를 동일한 fail-closed 정책으로 고정한다.
 
 ## 범위 제외 백로그
 

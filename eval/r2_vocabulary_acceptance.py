@@ -81,6 +81,16 @@ MUST_BLOCK: list[tuple[str, str]] = [
     # ★G10 — 파이프라인 바인딩
     ("G10-pipebind", f"'mine.py' | Copy-Item -Destination {PEER_FILE}"),
     ("G10-pipebind", f"'Remove-Item {PEER_FILE}' | Invoke-Expression"),
+    # ★M2 — 파이프 바인딩이 본명만 인식하고 별칭 iex를 놓침
+    ("M2-iexalias", f"'rm {PEER_FILE}' | iex"),
+    ("M2-iexalias", f'"rm {PEER_FILE}" | iex'),
+    # ★M3 — 바인딩이 수신 토큰 1개일 때만 발동. 파라미터 하나로 무력화
+    ("M3-bindparam", f"'rm {PEER_FILE}' | Invoke-Expression -Verbose"),
+    ("M3-bindparam", f"'rm {PEER_FILE}' | iex -Force"),
+    # ★M4 — 비-literal 파이프 입력이 eval 계열로 흘러도 fail-closed 아님
+    #    (대조: `cat x.sh | bash`는 이미 차단됨 — 같은 성격인데 iex만 통과)
+    ("M4-dyneval", "Get-Content x.ps1 | iex"),
+    ("M4-dyneval", "Get-Content x.ps1 | Invoke-Expression"),
     # ★G11 — Tee-Object 정식 이름 미등록
     ("G11-tee", f"'x' | Tee-Object -FilePath {PEER_FILE}"),
     # ★G12/G13 — git switch 파괴 모드 · checkout/restore 무경로 patch
@@ -212,6 +222,10 @@ DIR_MUST_BLOCK: list[tuple[str, str]] = [
     ("G1-dir", "git restore -- shared-dir"),
     ("G1-dir", "git rm -r shared-dir"),
     ("G1-dir-ctrl", "rm shared-dir/peer.py"),  # 대조: 직접 대면 이미 막힘
+    # ★M1 — cmd 재귀 플래그 /s. G1 컨테이너 보호가 Windows 표준 문법에서 무력화됐다
+    ("M1-cmdrec", "rd /s shared-dir"),
+    ("M1-cmdrec", "rd /S /Q shared-dir"),
+    ("M1-cmdrec", "rmdir /s shared-dir"),
     # ★G2 — `cp -tDIR`/`mv -tDIR` 붙임형. 쓰기 대상이 DIR/basename(source)이므로
     #    peer가 shared-dir/peer.py를 점유한 이 픽스처에서만 정확히 잴 수 있다.
     ("G2-tattached", "cp -tshared-dir peer.py"),
@@ -230,6 +244,11 @@ DIR_MUST_ALLOW: list[tuple[str, str]] = [
     ("G1-sibling", "rm -r shared"),
     # 붙임형 target-directory라도 내 디렉터리면 통과
     ("G2-own", "cp -tmy_own_dir mine.py"),
+    # /s 재귀 인식이 내 디렉터리까지 막으면 안 된다
+    ("M1-own", "rd /s my_own_dir"),
+    ("M1-own", "rmdir /s /q my_own_dir"),
+    # 비재귀 rd는 비어있지 않으면 실패하는 명령이라 컨테이너 취급 대상 아님
+    ("M1-nonrec", "rd shared-dir"),
 ]
 
 # ── 설계 결정으로 이번 범위에서 제외한 것 (기록만, 합불 무관) ────────────────

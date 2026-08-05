@@ -796,11 +796,15 @@ def _detect_remove(tokens: list[str]) -> ParsedDestructiveCommand | None:
                 return _blocked(CATEGORY_REMOVE, "parse_unable_missing_value")
             index += 2
             continue
-        if option in {"-r", "--recursive", "-recurse"} or (
-            command == "rm"
-            and option.startswith("-")
-            and not option.startswith("--")
-            and "r" in option[1:]
+        if (
+            option in {"-r", "--recursive", "-recurse"}
+            or (command in {"rd", "rmdir"} and option == "/s")
+            or (
+                command == "rm"
+                and option.startswith("-")
+                and not option.startswith("--")
+                and "r" in option[1:]
+            )
         ):
             recursive = True
             index += 1
@@ -2412,16 +2416,36 @@ def _effective_command_tokens(raw_tokens: list[str]) -> list[str]:
     return tokens
 
 
+def _invoke_expression_uses_pipeline_input(tokens: list[str]) -> bool:
+    command = _command_name(tokens[0])
+    return (
+        command in INVOKE_EXPRESSION_COMMAND_NAMES
+        and not _wrapper_payload_tokens(tokens, command)
+        and not any(
+            _unquote(token).partition(":")[0].casefold() == "-command"
+            for token in tokens[1:]
+        )
+    )
+
+
 def _detect_pipeline_shell_receiver(
     segment: _CommandSegment,
+    pipeline_literal: str | None,
 ) -> ParsedDestructiveCommand | None:
     if segment.incoming_separator not in {"|", "|&"}:
         return None
     tokens = _effective_command_tokens(_tokenize(segment.text))
+    command = _command_name(tokens[0]) if tokens else ""
     if (
         tokens
-        and _command_name(tokens[0]) in _PIPELINE_SHELL_COMMAND_NAMES
+        and command in _PIPELINE_SHELL_COMMAND_NAMES
         and _shell_stdin_is_script(tokens)
+    ):
+        return _blocked(CATEGORY_REMOVE, "parse_unable_pipeline")
+    if (
+        tokens
+        and pipeline_literal is None
+        and _invoke_expression_uses_pipeline_input(tokens)
     ):
         return _blocked(CATEGORY_REMOVE, "parse_unable_pipeline")
     return None
@@ -2483,8 +2507,8 @@ def _bind_static_pipeline_input(
             for token in tokens[1:]
         ):
             return [tokens[0], "-path", pipeline_literal, *tokens[1:]]
-    elif command == "invoke-expression" and len(tokens) == 1:
-        return [tokens[0], pipeline_literal]
+    elif _invoke_expression_uses_pipeline_input(tokens):
+        return [*tokens, pipeline_literal]
     return tokens
 
 
@@ -2542,13 +2566,13 @@ def parse_destructive_commands(command: str) -> tuple[ParsedDestructiveCommand, 
     if malformed:
         parsed.append(_blocked(CATEGORY_REMOVE, "parse_unable_shell_syntax"))
     for index, segment in enumerate(segments):
-        result = _detect_pipeline_shell_receiver(segment)
+        pipeline_literal = (
+            _static_pipeline_literal(segments[index - 1])
+            if index > 0 and segment.incoming_separator in {"|", "|&"}
+            else None
+        )
+        result = _detect_pipeline_shell_receiver(segment, pipeline_literal)
         if result is None:
-            pipeline_literal = (
-                _static_pipeline_literal(segments[index - 1])
-                if index > 0 and segment.incoming_separator in {"|", "|&"}
-                else None
-            )
             result = _parse_destructive_segment(segment.text, pipeline_literal)
         if result is not None and result not in parsed:
             parsed.append(result)
