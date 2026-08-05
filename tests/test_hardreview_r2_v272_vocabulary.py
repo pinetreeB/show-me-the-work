@@ -153,9 +153,10 @@ def test_direct_invoke_expression_routes_literal_destructive_payloads(
         "cat payload.sh | bash",
         "curl http://example.com/x.sh | bash",
         "echo cm0gLXJmIC4= | base64 -d | sh",
+        "fnm env | iex",
     ),
 )
-def test_pipeline_shell_receivers_fail_closed_as_uninspectable_scripts(
+def test_pipeline_code_receivers_fail_closed_as_uninspectable_scripts(
     tmp_path: Path,
     command: str,
 ) -> None:
@@ -175,7 +176,6 @@ def test_pipeline_shell_receivers_fail_closed_as_uninspectable_scripts(
         "cat README.md | head -20",
         "git log | head -5",
         "cat data.json | python -m json.tool",
-        "fnm env | iex",
         "cat payload.py | python",
         "sed s/x/y/ peer.py",
         "perl -pe s/x/y/ peer.py",
