@@ -2,6 +2,99 @@
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-08-06 — Container Attribution & PowerShell Binder Coverage
+
+v2.8.0 직후 2차 적대 리뷰 3건(문서 규격 감사 · 100변형 폭격 · 미검토 영역)에서 **41건**이 나왔고,
+그 수리를 다시 검증해 **4건**이 더 나왔습니다. 전부 닫습니다. 그중 하나는 Critical이며
+**v2.8.0 이전부터 있던 결함**입니다.
+
+리뷰 지적은 게이트 종단으로 **전건 재현한 뒤에만** 채택했습니다. 적대 검증은 3라운드
+(100 · 108 · 75변형) 돌렸고 마지막 라운드에서 처음으로 신규 발견이 0건이었습니다.
+
+### Security
+
+- **🔴 상위 디렉터리를 대면 하위의 미정산 파일이 통째로 비껴갔습니다.** 게이트가 canonical
+  경로의 **정확 일치만** 비교하고 prefix 관계를 보지 않아, 다른 에이전트가 `shared-dir/peer.py`를
+  점유한 상태에서 `rm shared-dir/peer.py`는 차단되지만 **`rm -r shared-dir`는 통과**했습니다.
+  `rm -rf` · `Remove-Item -Recurse` · `mv`/`Move-Item`/`Rename-Item` 소스 · `git checkout|restore -- <dir>` ·
+  `git rm -r` 전부 해당합니다. 폴더 단위 파괴가 파일 단위보다 피해가 크다는 점에서 실질 위험이
+  가장 컸던 갭입니다.
+  이제 파괴 대상 중 컨테이너 의미가 있는 경로는 `/` 경계를 보존한 하위 관계로 open invocation
+  candidate와 영속 `path_attribution`을 모두 검사합니다. 재귀 복사는 `destination/source` 파생
+  경로까지 봅니다. 이름이 겹치는 형제(`shared-dir` 대 `shared-directory`), 읽기 명령, 자기 소유
+  디렉터리는 계속 통과합니다.
+- **PowerShell 동적 식 차단이 삭제 계열만 비껴갔습니다.** v2.8.0이 도입한 `(`-시작 경로
+  fail-closed가 공용 resolver에만 적용돼, `mv (gi peer.py) out`은 차단되는데
+  **`Remove-Item (gi peer.py)`는 통과**했습니다. 또 `@(`·`+(`·`&{`·`.{`는 규칙 자체를 비껴갔습니다
+  (`Remove-Item @(peer.py)`). 이제 모든 탐지기가 공용 resolver를 쓰고 지정 접두사 전체를
+  fail-closed 합니다. 따옴표로 감싼 `'(literal).py'`·`'@(literal).py'`는 정적 파일명으로 유지합니다.
+- **PowerShell 공식 바인더 문법을 덮습니다**: `-Name:Value` 콜론 결합, 모호하지 않은 파라미터
+  접두사(`-Dest`·`-New`·`-Fo`), 정적 literal의 파이프라인 by-value 바인딩
+  (`'mine.py' | Copy-Item -Destination peer.py`, `'Remove-Item peer.py' | Invoke-Expression`),
+  그리고 `Tee-Object` 정식 cmdlet 이름(별칭 `tee`만 등록돼 있었습니다). 모호한 접두사는
+  fail-closed 하고 switch의 `$true`/`$false` 의미는 보존합니다.
+- **옵션 문법 갭**: `sed -ni`·`-Ei`(cluster 안의 실제 `i`) · `find -fprint`/`-fprint0`/`-fls`/`-fprintf`
+  (기존 파일을 0바이트로 절단합니다) · `git switch -f`/`--force`/`--orphan` ·
+  `git checkout|restore -p`(pathspec 없는 patch 모드) · `cp`/`mv`의 `-tDIR` 붙임형과
+  `--target-directory=DIR` · `cp --parents`(상대경로 보존) · `cp`/`mv --context`(선택/무인수).
+- **Windows cmd의 재귀 삭제 문법이 컨테이너 보호를 비껴갔습니다.** 위 컨테이너 귀속 비교가
+  `-r`/`--recursive`/`-Recurse`만 재귀로 인식해 **`rd /s <dir>`·`rmdir /s <dir>`(대문자 `/S` 포함)가
+  통과**했습니다. `rm -r`과 같은 작업인데 셸 문법만 달랐습니다. 비재귀 `rd <dir>`은 비어 있지 않으면
+  실패하는 명령이라 계속 통과합니다.
+- **파이프 by-value 바인딩이 본명만 인식했습니다.** `'rm peer.py' | Invoke-Expression`은 차단되는데
+  **별칭 `| iex`는 통과**했고(PowerShell에서는 별칭이 더 흔합니다), 수신 토큰이 정확히 1개일 때만
+  바인딩이 발동해 **`| Invoke-Expression -Verbose`처럼 파라미터가 하나만 붙어도 무력화**됐습니다.
+  또 비-literal 입력(`Get-Content x.ps1 | iex`)이 eval 계열로 흘러도 fail-closed 되지 않았습니다 —
+  `cat x.sh | bash`는 이미 차단하던 것과 같은 성격입니다.
+- **`Move-Item`/`Rename-Item`의 소스를 `-Path`로 명명하면 대상이 통째로 사라졌습니다.**
+  `Move-Item peer.py out`(위치 인자)은 차단되는데 **`Move-Item -Path peer.py out`은 통과**했습니다.
+  명명 소스와 위치 목적지를 섞는 조합에서 positional fallback이 성립하지 않았습니다.
+  `-LiteralPath`·콜론 결합·별칭(`mi`·`rni`)도 같았습니다. PowerShell에서 파라미터 명시는 권장
+  스타일이라 실사용 형태입니다.
+- **콜론 결합 파라미터의 인용 경로가 첫 조각만 취해졌습니다.** `Remove-Item -Path:'peer dir/file.py'`가
+  `'peer`를 대상으로 잡아 통과했습니다. 공백 있는 경로는 Windows에서 흔합니다.
+- **git patch 모드가 옵션 값·단축 묶음 뒤에 오면 놓쳤습니다.** `git checkout -p`는 차단되는데
+  `git restore -s HEAD -p`·`git checkout --detach HEAD -p`·`-pq`는 통과했습니다. 값 옵션을 소비하기
+  전에 정확히 `-p`/`--patch` 토큰만 매칭해 `HEAD`를 경로로 기록했습니다. pathspec 없는 patch 모드는
+  저장소 전역 대화식 되돌리기라 미정산 파일을 건드릴 수 있습니다.
+- **파이프 수신 셸 래퍼가 계속 드리프트했습니다.** unwrap 목록을 손으로 관리해
+  `nice`·`setsid`·`ionice`·`stdbuf`·`time`·`busybox`·`toybox`가 빠져 있었습니다. 이제
+  `WRAPPER_COMMAND_NAMES`에서 **파생**해 두 집합이 벌어지지 않습니다. `powershell`·`pwsh`·`cmd`도
+  파이프 수신 셸로 취급하되 명시적 command/script 옵션은 stdin script로 오인하지 않습니다.
+
+### Fixed
+
+정상 개발 흐름을 막던 오탐을 함께 수리했습니다. 이 도구는 마찰이 커지면 꺼지고, 꺼진 게이트는
+미탐 100%이므로 오탐을 미탐보다 우선합니다.
+
+- **`perl -Ilib`·`-Mstrict`가 in-place 편집으로 오인**됐습니다. 옵션 payload 안의 문자 `i`를
+  option letter와 구분하지 않았습니다. 실제 `-i`·`-pi`·`-i.bak`는 계속 탐지합니다.
+- **`sc stop <서비스>`가 차단**됐습니다. `sc`를 무조건 `Set-Content` 별칭으로 정규화해 cmd의 서비스
+  제어와 충돌했습니다. 표준 서비스 제어 동사일 때만 별칭 확장에서 면제합니다.
+- **`-WhatIf:$true`가 차단**됐습니다. 면제가 bare `-WhatIf` 토큰만 일치했습니다.
+  `-WhatIf:$false`는 계속 실제 파괴 경로로 평가합니다.
+- **`bash -C`가 `-c`로 오인**돼 short option 대소문자를 보존하도록 고쳤습니다(수리 중 발견).
+
+### Changed
+
+- 회귀 테스트에 **동형 단언**을 넣었습니다. 같은 입력이 한 탐지기에서 차단되면 다른 탐지기에서도
+  차단되는지 검사합니다(`mv (gi …)` 대 `Remove-Item (gi …)`). 이번 Critical의 원인이
+  "수리를 한 탐지기에만 적용하고 지나간 것"이었고, 이 프로젝트에서 같은 계열 사고가
+  세 번째였기 때문입니다(v2.7.1 어댑터 캐시 · v2.8.0 신원 승격 · 이번 동적 식).
+- 수용 하네스 `eval/r2_vocabulary_acceptance.py`가 **179건**으로 확장됐습니다(v2.8.0 시점 93건).
+  컨테이너 귀속과 공백 포함 경로를 재는 별도 픽스처가 추가됐습니다.
+
+### Known Limitation
+
+- **positional `Set-Content mine.txt 'data'`·`Out-File mine.txt`가 차단됩니다.** `-Path` 없이 위치
+  인자로만 경로를 주면 fail-closed 합니다. `-Path`/`-FilePath` 명시형은 통과합니다. PowerShell에서
+  positional은 일상 문법이라 실사용 마찰이 있으며, **v2.8.0부터 존재하던 동작**입니다(이번 릴리스가
+  만든 것이 아님을 diff로 확인). 후속 수리 대상입니다.
+- 기존 한계는 변동 없습니다: `>` 리다이렉션의 신규 파일 오차단 · `| iex`/`| python`/`| node`
+  인터프리터 파이프 수신 · `python -c` 임의 코드 · `robocopy /MIR` · `rsync --delete` · `ln -sf` ·
+  `tar -xf` · `Add-Content` · 대상 경로의 따옴표·이스케이프 분할(`rm pe""er.py`).
+
+
 ## [2.8.0] - 2026-08-05 — Destructive-Vocabulary & PowerShell Parser Coverage
 
 R2가 "파괴 형태 아님"으로 흘려보내던 명령들을 닫습니다. 탐지 어휘가 좁아
