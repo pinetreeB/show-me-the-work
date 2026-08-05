@@ -101,6 +101,20 @@ OPAQUE_WRAPPER_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
     }
 )
 PATH_FLAGS: Final[frozenset[str]] = frozenset({"-path", "-literalpath", "-filepath"})
+_POWERSHELL_COMMAND_ALIASES: Final[dict[str, str]] = {
+    "ac": "add-content",
+    "clc": "clear-content",
+    "copy": "copy-item",
+    "cpi": "copy-item",
+    "erase": "remove-item",
+    "mi": "move-item",
+    "move": "move-item",
+    "ni": "new-item",
+    "ren": "rename-item",
+    "ri": "remove-item",
+    "rni": "rename-item",
+    "sc": "set-content",
+}
 FIND_TESTS_WITH_VALUE: Final[frozenset[str]] = frozenset(
     {
         "-name",
@@ -263,7 +277,9 @@ def _normalize_attached_here_strings(command: str) -> str:
 
 def _command_name(token: str) -> str:
     name = token.replace("\\", "/").rsplit("/", 1)[-1].casefold()
-    return name.removesuffix(".exe")
+    if name.endswith(".exe"):
+        return name.removesuffix(".exe")
+    return _POWERSHELL_COMMAND_ALIASES.get(name, name)
 
 
 def _deobfuscated_name(token: str) -> str:
@@ -418,6 +434,13 @@ def _detect_git(tokens: list[str]) -> ParsedDestructiveCommand | None:
             return _blocked(CATEGORY_GIT, "implicit_scope")
         return None
     rest = tokens[2:]
+    if subcommand == "rm":
+        for token in rest:
+            option = _unquote(token).casefold()
+            if option == "--":
+                break
+            if option in {"-n", "--dry-run", "--cached"}:
+                return None
     if subcommand == "checkout":
         force, branch_creation = _parse_checkout_options(rest)
         if force:
@@ -430,6 +453,11 @@ def _detect_git(tokens: list[str]) -> ParsedDestructiveCommand | None:
 def _detect_remove(tokens: list[str]) -> ParsedDestructiveCommand | None:
     command = _command_name(tokens[0])
     if command not in REMOVE_COMMAND_NAMES:
+        return None
+    if command in {"remove-item", "rm", "del", "rd", "rmdir"} and any(
+        _unquote(token).casefold() in {"-?", "-help", "--help", "-whatif"}
+        for token in tokens[1:]
+    ):
         return None
     if (
         command in {"shred", "unlink"}
@@ -450,6 +478,8 @@ def _detect_remove(tokens: list[str]) -> ParsedDestructiveCommand | None:
         index += 1
     if not positionals:
         return _blocked(CATEGORY_REMOVE, "implicit_scope")
+    if command in {"remove-item", "rm", "del", "rd", "rmdir"}:
+        positionals = _powershell_path_elements(positionals)
     targets: list[str] = []
     for raw in positionals:
         target = _unquote(raw)
@@ -481,6 +511,15 @@ def _resolved_static_targets(
         else:
             return _blocked(category, "parse_unable_target")
     return ParsedDestructiveCommand(category, True, tuple(targets), "")
+
+
+def _powershell_path_elements(raw_targets: list[str]) -> list[str]:
+    return [
+        element
+        for raw in raw_targets
+        for element in (part.strip() for part in _unquote(raw).split(","))
+        if element
+    ]
 
 
 _CLEAR_CONTENT_OPTIONS_WITH_VALUE: Final[frozenset[str]] = frozenset(
@@ -515,7 +554,7 @@ def _detect_clear_content(tokens: list[str]) -> ParsedDestructiveCommand | None:
         index += 1
     return _resolved_static_targets(
         CATEGORY_TRUNCATE,
-        explicit_targets or positionals,
+        _powershell_path_elements(explicit_targets or positionals),
     )
 
 
@@ -535,13 +574,10 @@ def _detect_truncate_cmdlet(tokens: list[str]) -> ParsedDestructiveCommand | Non
                 return _blocked(CATEGORY_TRUNCATE, "parse_unable_dynamic_expression")
             if index + 2 < len(tokens) and tokens[index + 2] == "+":
                 return _blocked(CATEGORY_TRUNCATE, "parse_unable_dynamic_expression")
-            target = _unquote(value_token)
-            validity = _validate_target(target)
-            if validity == "ok":
-                return ParsedDestructiveCommand(CATEGORY_TRUNCATE, True, (target,), "")
-            if validity == "implicit_scope":
-                return _blocked(CATEGORY_TRUNCATE, "implicit_scope")
-            return _blocked(CATEGORY_TRUNCATE, "parse_unable_target")
+            return _resolved_static_targets(
+                CATEGORY_TRUNCATE,
+                _powershell_path_elements([value_token]),
+            )
         index += 1
     return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_path_flag")
 
@@ -615,7 +651,22 @@ _POSIX_TRANSFER_VALUE_OPTIONS: Final[frozenset[str]] = frozenset(
 
 def _transfer_operands(tokens: list[str]) -> tuple[list[str], str] | None:
     command = _command_name(tokens[0])
-    if command in {"copy-item", "move-item", "rename-item"}:
+    powershell_syntax = command in {"copy-item", "move-item", "rename-item"} or any(
+        _unquote(token).casefold()
+        in {
+            "-?",
+            "-destination",
+            "-help",
+            "--help",
+            "-literalpath",
+            "-newname",
+            "-path",
+            "-whatif",
+            *_POWERSHELL_TRANSFER_VALUE_OPTIONS,
+        }
+        for token in tokens[1:]
+    )
+    if powershell_syntax:
         sources: list[str] = []
         positionals: list[str] = []
         destination: str | None = None
@@ -720,16 +771,30 @@ def _detect_transfer(tokens: list[str]) -> ParsedDestructiveCommand | None:
     if operands is None:
         return None
     sources, destination = operands
+    if command in {"copy-item", "move-item", "rename-item", "cp", "mv"}:
+        sources = _powershell_path_elements(sources)
+        destinations = _powershell_path_elements([destination])
+    else:
+        destinations = [destination]
     if (
         command == "rename-item"
         and len(sources) == 1
-        and not any(separator in _unquote(destination) for separator in ("/", "\\"))
     ):
         source = _unquote(sources[0]).replace("\\", "/")
         if "/" in source:
-            destination = f"{source.rsplit('/', 1)[0]}/{destination}"
-    sink = _unquote(destination).replace("\\", "/").casefold() in SINK_PATHS
-    destination_targets = [] if sink else _transfer_destination_candidates(sources, destination)
+            parent = source.rsplit("/", 1)[0]
+            destinations = [
+                destination
+                if any(separator in destination for separator in ("/", "\\"))
+                else f"{parent}/{destination}"
+                for destination in destinations
+            ]
+    destination_targets = [
+        candidate
+        for destination in destinations
+        if _unquote(destination).replace("\\", "/").casefold() not in SINK_PATHS
+        for candidate in _transfer_destination_candidates(sources, destination)
+    ]
     if command in MOVE_COMMAND_NAMES:
         return _resolved_static_targets(CATEGORY_REMOVE, [*sources, *destination_targets])
     return _resolved_static_targets(CATEGORY_TRUNCATE, destination_targets)
@@ -1793,7 +1858,7 @@ def _command_position_tokens(tokens: list[str]) -> list[str]:
 
 
 _EXECUTABLE_PREFIX_WRAPPERS: Final[frozenset[str]] = frozenset(
-    {"builtin", "command", "env", "exec"}
+    {"builtin", "command", "doas", "env", "exec", "nohup", "sudo", "timeout"}
 )
 
 
