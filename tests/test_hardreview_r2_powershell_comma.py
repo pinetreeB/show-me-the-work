@@ -72,8 +72,11 @@ def _decision(root: Path, command: str, *, peer_owned: bool) -> str:
         ),
         ("Clear-Content a.py,peer.py", ("a.py", "peer.py")),
         ("Clear-Content -LiteralPath a.py,peer.py", ("a.py", "peer.py")),
-        ("Copy-Item x.py -Destination a.py,peer.py", ("a.py", "peer.py")),
-        ("Remove-Item 'a.py,peer.py'", ("a.py", "peer.py")),
+        (
+            "Copy-Item x.py -Destination a.py,peer.py",
+            ("a.py", "a.py/x.py", "peer.py", "peer.py/x.py"),
+        ),
+        ("Remove-Item 'a.py,peer.py'", ("a.py,peer.py",)),
     ),
 )
 def test_powershell_comma_array_routes_every_static_path(
@@ -253,4 +256,4 @@ def test_posix_target_directory_option_keeps_destination_role() -> None:
 
     # Then: the explicit target directory remains the destructive destination.
     assert parsed is not None
-    assert parsed.targets == ("out",)
+    assert parsed.targets == ("out", "out/source.py")
