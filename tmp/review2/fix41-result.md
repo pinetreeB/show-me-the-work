@@ -3,10 +3,10 @@
 ## 결과
 
 - 브랜치: `worker/review2-fix`
-- 수용 코퍼스: `PASS — 158/158 충족 (미탐 0 · 오탐 0)`
-- 전체 회귀: `1921 passed, 2 skipped in 366.20s`
+- 수용 코퍼스: `PASS — 169/169 충족 (미탐 0 · 오탐 0)`
+- 전체 회귀: `1940 passed, 2 skipped in 426.20s`
 - 야간 후속 관련 회귀: `171 passed` (review2 문법·컨테이너·기존 v2.7.2 정책)
-- 신규 회귀: 최초 RED `59 failed, 13 passed`, G2 정정 RED `1/146` → GREEN `79 passed`, 야간 후속 RED `9 failed, 82 passed` → GREEN `93 passed`
+- 신규 회귀: 최초 RED `59 failed, 13 passed`, G2 정정 RED `1/146` → GREEN `79 passed`, 야간 후속 RED `9 failed, 82 passed` → GREEN `93 passed`, PR #54 P2 RED `14 failed, 4 passed` → GREEN `19 passed`
 - 정적 검사: Ruff check/format 통과, basedpyright `0 errors, 0 warnings, 0 notes`
 
 ## P0 — 디렉터리 하위 귀속 [Critical]
@@ -59,11 +59,20 @@
 - 정책 정합: 과거 `fnm env | iex` ALLOW 회귀는 새 M4 계약과 모순되어 파이프 코드 수신기 BLOCK 회귀로 이동했다. 명령별 예외를 두어 같은 우회를 남기지 않았다.
 - 오탐 대조: `rd /s my_own_dir`, `rmdir /s /q my_own_dir`, 비재귀 `rd shared-dir`, `'pwd' | iex -Verbose`, 명시적 `-Command 'pwd'`는 모두 ALLOW를 유지한다.
 
+## PR #54 리뷰봇 P2
+
+- P2-1 콜론 결합 인용 값: PowerShell parameter 정규화가 `-Path:'peer dir/file.py'`처럼 토큰화된 인용 값을 닫는 따옴표까지 다시 결합한다. Path/LiteralPath/Destination 모두 기존 cmdlet별 바인딩으로 전달되며, own 경로와 읽기 전용 Get-Content는 계속 ALLOW다.
+- P2-2 git patch 모드: checkout/restore의 공식 값 옵션을 먼저 소비하고 short cluster를 문법대로 해석한다. 따라서 `-s HEAD`와 `--detach HEAD`의 HEAD를 pathspec으로 오인하지 않고, `-pq` 안의 `p`도 patch 모드로 판정한다.
+- 자체 점검 보강: parameter normalizer의 index 기반 순회에서 미등록 파라미터 분기도 반드시 전진하도록 고정해 무한루프 회귀를 차단했다.
+- 게이트 종단 QA: 원래 미탐 7건은 모두 BLOCK, `Remove-Item -Path:'my own/file.py'`와 `Get-Content -Path:'peer dir/file.py'`는 ALLOW였다.
+- 확인된 파서 결과: 네 git 명령은 모두 `resolved=False`, `reason=implicit_scope`; 콜론 결합 세 명령은 완전한 `peer dir/file.py`를 쓰기 후보로 산출한다.
+
 ## 영속 회귀 테스트
 
 - `tests/test_review2_fix41_containers.py`: open/persisted peer descendant, 재귀 복사 파생 범위, 경로 경계, own/read 대조군.
 - `tests/test_review2_fix41_syntax.py`: P1~P5 문법, 동형 단언, ambiguous prefix, WhatIf true/false, Tee append, 모든 래퍼 대조군.
 - `tests/test_hardreview_r2_v272_vocabulary.py`: 동적 입력의 bash/iex 코드 수신기를 동일한 fail-closed 정책으로 고정한다.
+- `tests/test_pr54_p2_parser.py`: 콜론 결합 인용 경로 보존, git 값 옵션 소비, short cluster patch 판정, own/read/non-patch 대조군을 게이트 종단과 parser 단위 양쪽에 고정한다.
 
 ## 범위 제외 백로그
 

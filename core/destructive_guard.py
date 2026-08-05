@@ -536,10 +536,13 @@ def _normalize_powershell_parameters(
     if command not in _POWERSHELL_COMMAND_PARAMETERS:
         return tokens, None
     normalized = [tokens[0]]
-    for raw_token in tokens[1:]:
+    index = 1
+    while index < len(tokens):
+        raw_token = tokens[index]
         token = _unquote(raw_token)
         if not token.startswith("-") or token.startswith("--") or token == "-?":
             normalized.append(raw_token)
+            index += 1
             continue
         option, separator, attached = token[1:].partition(":")
         parameter = _powershell_parameter_name(command, option)
@@ -547,10 +550,12 @@ def _normalize_powershell_parameters(
             return tokens, "parse_unable_target"
         if parameter is None:
             normalized.append(raw_token)
+            index += 1
             continue
         canonical = f"-{parameter}"
         if not separator:
             normalized.append(canonical)
+            index += 1
             continue
         if parameter in _POWERSHELL_SWITCH_PARAMETERS:
             enabled = attached.casefold()
@@ -558,9 +563,11 @@ def _normalize_powershell_parameters(
                 normalized.append(canonical)
             elif enabled != "$false":
                 return tokens, "parse_unable_target"
+            index += 1
             continue
         if not attached:
             return tokens, "parse_unable_missing_value"
+        attached, index = _joined_attached_option_value(tokens, index, ":")
         normalized.extend((canonical, attached))
     return normalized, None
 
@@ -589,14 +596,62 @@ def _blocked(category: str, reason: str) -> ParsedDestructiveCommand:
     return ParsedDestructiveCommand(category, False, (), reason)
 
 
+_GIT_LONG_OPTIONS_WITH_VALUE: Final[dict[str, frozenset[str]]] = {
+    "checkout": frozenset(
+        {
+            "--conflict",
+            "--inter-hunk-context",
+            "--orphan",
+            "--pathspec-from-file",
+            "--unified",
+        }
+    ),
+    "restore": frozenset(
+        {
+            "--conflict",
+            "--inter-hunk-context",
+            "--no-source",
+            "--pathspec-from-file",
+            "--source",
+            "--unified",
+        }
+    ),
+}
+_GIT_SHORT_OPTIONS_WITH_VALUE: Final[dict[str, frozenset[str]]] = {
+    "checkout": frozenset({"B", "U", "b"}),
+    "restore": frozenset({"U", "s"}),
+}
+
+
+def _git_option_flags(subcommand: str, token: str) -> tuple[frozenset[str], bool]:
+    if token.startswith("--"):
+        option, separator, _attached = token.partition("=")
+        consumes_next = not separator and option in _GIT_LONG_OPTIONS_WITH_VALUE.get(
+            subcommand, frozenset()
+        )
+        return frozenset(), consumes_next
+    if not token.startswith("-") or token == "-":
+        return frozenset(), False
+    cluster = token[1:]
+    flags: set[str] = set()
+    value_flags = _GIT_SHORT_OPTIONS_WITH_VALUE.get(subcommand, frozenset())
+    for index, flag in enumerate(cluster):
+        flags.add(flag)
+        if flag in value_flags:
+            return frozenset(flags), index == len(cluster) - 1
+    return frozenset(flags), False
+
+
 def _parse_git_pathspec(
     subcommand: str, rest: list[str]
 ) -> ParsedDestructiveCommand | None:
     positionals: list[str] = []
     index = 0
     after_double_dash = False
+    checkout_target_pending = False
     while index < len(rest):
-        token = rest[index]
+        raw_token = rest[index]
+        token = _unquote(raw_token)
         if token in COMMAND_SEPARATORS:
             break
         if not after_double_dash and token == "--":
@@ -606,9 +661,16 @@ def _parse_git_pathspec(
         if not after_double_dash and token.startswith("--pathspec-from-file"):
             return _blocked(CATEGORY_GIT, "parse_unable_pathspec_from_file")
         if not after_double_dash and token.startswith("-"):
+            flags, consumes_next = _git_option_flags(subcommand, token)
+            if subcommand == "checkout" and (token == "--detach" or "d" in flags):
+                checkout_target_pending = True
+            index += 2 if consumes_next else 1
+            continue
+        if not after_double_dash and checkout_target_pending:
+            checkout_target_pending = False
             index += 1
             continue
-        positionals.append(token)
+        positionals.append(raw_token)
         index += 1
     if not positionals:
         # `git checkout`/`git restore` 인자 없음: 대상 pathspec이 없어 특정 파일을 복원하지
@@ -678,6 +740,24 @@ def _parse_checkout_options(rest: list[str]) -> tuple[bool, bool]:
     return force, branch_creation
 
 
+def _git_patch_mode(subcommand: str, rest: list[str]) -> bool:
+    patch_mode = False
+    index = 0
+    while index < len(rest):
+        token = _unquote(rest[index])
+        if token == "--":
+            break
+        flags, consumes_next = _git_option_flags(subcommand, token)
+        if token == "--patch":
+            patch_mode = True
+        elif token == "--no-patch":
+            patch_mode = False
+        elif "p" in flags:
+            patch_mode = True
+        index += 2 if consumes_next else 1
+    return patch_mode
+
+
 def _detect_git(tokens: list[str]) -> ParsedDestructiveCommand | None:
     if _command_name(tokens[0]) != "git":
         return None
@@ -714,8 +794,8 @@ def _detect_git(tokens: list[str]) -> ParsedDestructiveCommand | None:
             return _blocked(CATEGORY_GIT, "implicit_scope")
         if branch_creation:
             return None
+    patch_mode = _git_patch_mode(subcommand, rest)
     parsed = _parse_git_pathspec(subcommand, rest)
-    patch_mode = any(_unquote(token).casefold() in {"-p", "--patch"} for token in rest)
     if parsed is None:
         return _blocked(CATEGORY_GIT, "implicit_scope") if patch_mode else None
     recursive_rm = subcommand == "rm" and any(
@@ -1635,8 +1715,10 @@ _WRAPPER_OPTIONS_WITH_VALUE: Final[dict[str, frozenset[str]]] = {
 }
 
 
-def _joined_option_value(tokens: list[str], index: int) -> tuple[str, int]:
-    value = tokens[index].split("=", 1)[1]
+def _joined_attached_option_value(
+    tokens: list[str], index: int, separator: str
+) -> tuple[str, int]:
+    value = tokens[index].split(separator, 1)[1]
     quote = value[0] if value.startswith(("'", '"')) else ""
     cursor = index + 1
     pieces = [value]
@@ -1655,7 +1737,9 @@ def _wrapper_payload_tokens(tokens: list[str], wrapper: str) -> list[str]:
         option = tokens[index].split("=", 1)[0]
         if wrapper == "env" and option in {"-S", "--split-string"}:
             if "=" in tokens[index]:
-                split_payload, next_index = _joined_option_value(tokens, index)
+                split_payload, next_index = _joined_attached_option_value(
+                    tokens, index, "="
+                )
                 return [split_payload, *tokens[next_index:]]
             return tokens[index + 1 :]
         index += 2 if option in options_with_value and "=" not in tokens[index] else 1
