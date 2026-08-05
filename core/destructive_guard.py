@@ -24,9 +24,15 @@ Decision: TypeAlias = dict[str, JsonValue]
 SHELL_TOOLS: Final[frozenset[str]] = frozenset({"Bash", "PowerShell"})
 COMMAND_SEPARATORS: Final[frozenset[str]] = frozenset({"&&", "||", ";", "|"})
 
-GIT_SUBCOMMANDS_ALWAYS_IMPLICIT: Final[frozenset[str]] = frozenset({"reset", "clean", "stash", "read-tree"})
-GIT_SUBCOMMANDS_PATHSPEC: Final[frozenset[str]] = frozenset({"checkout", "restore", "rm"})
-GIT_SWITCH_DISCARD_FLAGS: Final[frozenset[str]] = frozenset({"--discard-changes"})
+GIT_SUBCOMMANDS_ALWAYS_IMPLICIT: Final[frozenset[str]] = frozenset(
+    {"reset", "clean", "stash", "read-tree"}
+)
+GIT_SUBCOMMANDS_PATHSPEC: Final[frozenset[str]] = frozenset(
+    {"checkout", "restore", "rm"}
+)
+GIT_SWITCH_DISCARD_FLAGS: Final[frozenset[str]] = frozenset(
+    {"-f", "--force", "--discard-changes", "--orphan"}
+)
 GIT_SUBCOMMAND_NAMES: Final[frozenset[str]] = (
     GIT_SUBCOMMANDS_ALWAYS_IMPLICIT | GIT_SUBCOMMANDS_PATHSPEC | frozenset({"switch"})
 )
@@ -115,6 +121,192 @@ _POWERSHELL_COMMAND_ALIASES: Final[dict[str, str]] = {
     "rni": "rename-item",
     "sc": "set-content",
 }
+_POWERSHELL_COMMON_PARAMETERS: Final[frozenset[str]] = frozenset(
+    {
+        "confirm",
+        "debug",
+        "erroraction",
+        "errorvariable",
+        "informationaction",
+        "informationvariable",
+        "outbuffer",
+        "outvariable",
+        "pipelinevariable",
+        "progressaction",
+        "verbose",
+        "warningaction",
+        "warningvariable",
+        "whatif",
+    }
+)
+_POWERSHELL_COMMAND_PARAMETERS: Final[dict[str, frozenset[str]]] = {
+    "clear-content": frozenset(
+        {
+            "credential",
+            "exclude",
+            "filter",
+            "force",
+            "include",
+            "literalpath",
+            "path",
+            "stream",
+        }
+    ),
+    "copy-item": frozenset(
+        {
+            "container",
+            "credential",
+            "destination",
+            "exclude",
+            "filter",
+            "force",
+            "fromsession",
+            "include",
+            "literalpath",
+            "passthru",
+            "path",
+            "recurse",
+            "tosession",
+        }
+    ),
+    "invoke-expression": frozenset({"command"}),
+    "move-item": frozenset(
+        {
+            "credential",
+            "destination",
+            "exclude",
+            "filter",
+            "force",
+            "include",
+            "literalpath",
+            "passthru",
+            "path",
+        }
+    ),
+    "new-item": frozenset(
+        {
+            "credential",
+            "force",
+            "itemtype",
+            "name",
+            "options",
+            "path",
+            "target",
+            "type",
+            "value",
+        }
+    ),
+    "out-file": frozenset(
+        {
+            "append",
+            "encoding",
+            "filepath",
+            "force",
+            "inputobject",
+            "noclobber",
+            "nonewline",
+            "width",
+        }
+    ),
+    "remove-item": frozenset(
+        {
+            "credential",
+            "exclude",
+            "filter",
+            "force",
+            "include",
+            "literalpath",
+            "path",
+            "recurse",
+            "stream",
+        }
+    ),
+    "rename-item": frozenset(
+        {"credential", "force", "literalpath", "newname", "passthru", "path"}
+    ),
+    "set-content": frozenset(
+        {
+            "asbytestream",
+            "credential",
+            "encoding",
+            "exclude",
+            "filter",
+            "force",
+            "include",
+            "literalpath",
+            "nonewline",
+            "passthru",
+            "path",
+            "stream",
+            "value",
+        }
+    ),
+    "tee-object": frozenset(
+        {"append", "filepath", "inputobject", "literalpath", "variable"}
+    ),
+}
+_POWERSHELL_SWITCH_PARAMETERS: Final[frozenset[str]] = frozenset(
+    {
+        "append",
+        "asbytestream",
+        "confirm",
+        "container",
+        "debug",
+        "force",
+        "noclobber",
+        "nonewline",
+        "passthru",
+        "recurse",
+        "verbose",
+        "whatif",
+    }
+)
+_POWERSHELL_COMMON_VALUE_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "-erroraction",
+        "-errorvariable",
+        "-informationaction",
+        "-informationvariable",
+        "-outbuffer",
+        "-outvariable",
+        "-pipelinevariable",
+        "-progressaction",
+        "-warningaction",
+        "-warningvariable",
+    }
+)
+_SC_SERVICE_VERBS: Final[frozenset[str]] = frozenset(
+    {
+        "boot",
+        "config",
+        "continue",
+        "control",
+        "create",
+        "delete",
+        "description",
+        "enumdepend",
+        "failure",
+        "failureflag",
+        "getdisplayname",
+        "getkeyname",
+        "interrogate",
+        "lock",
+        "pause",
+        "qc",
+        "qdescription",
+        "qfailure",
+        "qfailureflag",
+        "qprivs",
+        "qprotected",
+        "query",
+        "queryex",
+        "sdset",
+        "sdshow",
+        "start",
+        "stop",
+        "triggerinfo",
+    }
+)
 FIND_TESTS_WITH_VALUE: Final[frozenset[str]] = frozenset(
     {
         "-name",
@@ -243,6 +435,7 @@ class ParsedDestructiveCommand:
     resolved: bool
     targets: tuple[str, ...]
     reason: str
+    container_targets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -318,13 +511,87 @@ def _validate_target(target: str) -> str:
     return "ok"
 
 
+def _powershell_parameter_name(command: str, raw_name: str) -> str | None:
+    parameters = _POWERSHELL_COMMAND_PARAMETERS.get(command)
+    if parameters is None:
+        return None
+    name = raw_name.casefold()
+    if name == "pspath":
+        return "literalpath"
+    available = parameters | _POWERSHELL_COMMON_PARAMETERS
+    if name in available:
+        return name
+    matches = tuple(parameter for parameter in available if parameter.startswith(name))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        return ""
+    return None
+
+
+def _normalize_powershell_parameters(
+    tokens: list[str],
+) -> tuple[list[str], str | None]:
+    command = _command_name(tokens[0])
+    if command not in _POWERSHELL_COMMAND_PARAMETERS:
+        return tokens, None
+    normalized = [tokens[0]]
+    for raw_token in tokens[1:]:
+        token = _unquote(raw_token)
+        if not token.startswith("-") or token.startswith("--") or token == "-?":
+            normalized.append(raw_token)
+            continue
+        option, separator, attached = token[1:].partition(":")
+        parameter = _powershell_parameter_name(command, option)
+        if parameter == "":
+            return tokens, "parse_unable_target"
+        if parameter is None:
+            normalized.append(raw_token)
+            continue
+        canonical = f"-{parameter}"
+        if not separator:
+            normalized.append(canonical)
+            continue
+        if parameter in _POWERSHELL_SWITCH_PARAMETERS:
+            enabled = attached.casefold()
+            if enabled == "$true":
+                normalized.append(canonical)
+            elif enabled != "$false":
+                return tokens, "parse_unable_target"
+            continue
+        if not attached:
+            return tokens, "parse_unable_missing_value"
+        normalized.extend((canonical, attached))
+    return normalized, None
+
+
+def _is_powershell_dynamic_path(raw: str) -> bool:
+    stripped = raw.lstrip()
+    if stripped.startswith(("'", '"')):
+        return False
+    return stripped.startswith(("(", "@(", "+(", "&{", ".{"))
+
+
+def _has_enabled_whatif(tokens: list[str]) -> bool:
+    return any(_unquote(token).casefold() == "-whatif" for token in tokens[1:])
+
+
+def _is_bare_sc_service_command(tokens: list[str]) -> bool:
+    raw_name = _unquote(tokens[0]).replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    return (
+        raw_name == "sc"
+        and len(tokens) > 1
+        and _unquote(tokens[1]).casefold() in _SC_SERVICE_VERBS
+    )
 
 
 def _blocked(category: str, reason: str) -> ParsedDestructiveCommand:
     return ParsedDestructiveCommand(category, False, (), reason)
 
 
-def _parse_git_pathspec(subcommand: str, rest: list[str]) -> ParsedDestructiveCommand | None:
+def _parse_git_pathspec(
+    subcommand: str, rest: list[str]
+) -> ParsedDestructiveCommand | None:
     positionals: list[str] = []
     index = 0
     after_double_dash = False
@@ -447,16 +714,60 @@ def _detect_git(tokens: list[str]) -> ParsedDestructiveCommand | None:
             return _blocked(CATEGORY_GIT, "implicit_scope")
         if branch_creation:
             return None
-    return _parse_git_pathspec(subcommand, rest)
+    parsed = _parse_git_pathspec(subcommand, rest)
+    patch_mode = any(_unquote(token).casefold() in {"-p", "--patch"} for token in rest)
+    if parsed is None:
+        return _blocked(CATEGORY_GIT, "implicit_scope") if patch_mode else None
+    recursive_rm = subcommand == "rm" and any(
+        option in {"-r", "--recursive"}
+        or (
+            option.startswith("-") and not option.startswith("--") and "r" in option[1:]
+        )
+        for option in (_unquote(token).casefold() for token in rest)
+    )
+    container_targets = (
+        parsed.targets
+        if (
+            (subcommand == "checkout" and "--" in rest)
+            or subcommand == "restore"
+            or recursive_rm
+        )
+        else ()
+    )
+    return ParsedDestructiveCommand(
+        parsed.category,
+        parsed.resolved,
+        parsed.targets,
+        parsed.reason,
+        container_targets,
+    )
+
+
+_REMOVE_OPTIONS_WITH_VALUE: Final[frozenset[str]] = frozenset(
+    {
+        "-credential",
+        "-exclude",
+        "-filter",
+        "-include",
+        "-iterations",
+        "-random-source",
+        "-size",
+        "-stream",
+        *_POWERSHELL_COMMON_VALUE_OPTIONS,
+    }
+)
 
 
 def _detect_remove(tokens: list[str]) -> ParsedDestructiveCommand | None:
     command = _command_name(tokens[0])
     if command not in REMOVE_COMMAND_NAMES:
         return None
-    if command in {"remove-item", "rm", "del", "rd", "rmdir"} and any(
-        _unquote(token).casefold() in {"-?", "-help", "--help", "-whatif"}
-        for token in tokens[1:]
+    if command in {"remove-item", "rm", "del", "rd", "rmdir"} and (
+        _has_enabled_whatif(tokens)
+        or any(
+            _unquote(token).casefold() in {"-?", "-help", "--help"}
+            for token in tokens[1:]
+        )
     ):
         return None
     if (
@@ -465,43 +776,63 @@ def _detect_remove(tokens: list[str]) -> ParsedDestructiveCommand | None:
         and _unquote(tokens[1]).casefold() in {"--help", "--version"}
     ):
         return None
+    explicit_targets: list[str] = []
     positionals: list[str] = []
+    recursive = False
     index = 1
     while index < len(tokens):
-        token = tokens[index]
+        token = _unquote(tokens[index])
+        option = token.casefold()
         if token in COMMAND_SEPARATORS:
             break
+        if option in {"-path", "-literalpath"}:
+            if index + 1 >= len(tokens):
+                return _blocked(CATEGORY_REMOVE, "parse_unable_missing_value")
+            explicit_targets.append(tokens[index + 1])
+            index += 2
+            continue
+        if option in _REMOVE_OPTIONS_WITH_VALUE:
+            if index + 1 >= len(tokens):
+                return _blocked(CATEGORY_REMOVE, "parse_unable_missing_value")
+            index += 2
+            continue
+        if option in {"-r", "--recursive", "-recurse"} or (
+            command == "rm"
+            and option.startswith("-")
+            and not option.startswith("--")
+            and "r" in option[1:]
+        ):
+            recursive = True
+            index += 1
+            continue
         if token.startswith("-") or token.startswith("/"):
             index += 1
             continue
-        positionals.append(token)
+        positionals.append(tokens[index])
         index += 1
-    if not positionals:
+    raw_targets = explicit_targets or positionals
+    if not raw_targets:
         return _blocked(CATEGORY_REMOVE, "implicit_scope")
     if command in {"remove-item", "rm", "del", "rd", "rmdir"}:
-        positionals = _powershell_path_elements(positionals)
-    targets: list[str] = []
-    for raw in positionals:
-        target = _unquote(raw)
-        validity = _validate_target(target)
-        if validity == "ok":
-            targets.append(target)
-        elif validity == "implicit_scope":
-            return _blocked(CATEGORY_REMOVE, "implicit_scope")
-        else:
-            return _blocked(CATEGORY_REMOVE, "parse_unable_target")
-    return ParsedDestructiveCommand(CATEGORY_REMOVE, True, tuple(targets), "")
+        raw_targets = _powershell_path_elements(raw_targets)
+    return _resolved_static_targets(
+        CATEGORY_REMOVE,
+        raw_targets,
+        container_targets=raw_targets if recursive else (),
+    )
 
 
 def _resolved_static_targets(
     category: str,
     raw_targets: list[str],
+    *,
+    container_targets: list[str] | tuple[str, ...] = (),
 ) -> ParsedDestructiveCommand:
     if not raw_targets:
         return _blocked(category, "parse_unable_missing_target")
     targets: list[str] = []
     for raw in raw_targets:
-        if raw.lstrip().startswith("("):
+        if _is_powershell_dynamic_path(raw):
             return _blocked(category, "parse_unable_dynamic_expression")
         target = _unquote(raw)
         validity = _validate_target(target)
@@ -512,7 +843,28 @@ def _resolved_static_targets(
             return _blocked(category, "implicit_scope")
         else:
             return _blocked(category, "parse_unable_target")
-    return ParsedDestructiveCommand(category, True, tuple(targets), "")
+    containers: list[str] = []
+    for raw in container_targets:
+        if _is_powershell_dynamic_path(raw):
+            return _blocked(category, "parse_unable_dynamic_expression")
+        target = _unquote(raw)
+        validity = _validate_target(target)
+        if validity != "ok":
+            return _blocked(
+                category,
+                "implicit_scope"
+                if validity == "implicit_scope"
+                else "parse_unable_target",
+            )
+        if target not in containers:
+            containers.append(target)
+    return ParsedDestructiveCommand(
+        category,
+        True,
+        tuple(targets),
+        "",
+        tuple(containers),
+    )
 
 
 def _powershell_path_elements(raw_targets: list[str]) -> list[str]:
@@ -525,7 +877,14 @@ def _powershell_path_elements(raw_targets: list[str]) -> list[str]:
 
 
 _CLEAR_CONTENT_OPTIONS_WITH_VALUE: Final[frozenset[str]] = frozenset(
-    {"-credential", "-exclude", "-filter", "-include", "-stream"}
+    {
+        "-credential",
+        "-exclude",
+        "-filter",
+        "-include",
+        "-stream",
+        *_POWERSHELL_COMMON_VALUE_OPTIONS,
+    }
 )
 
 
@@ -536,7 +895,7 @@ def _detect_clear_content(tokens: list[str]) -> ParsedDestructiveCommand | None:
     while index < len(tokens):
         token = _unquote(tokens[index])
         option = token.casefold()
-        if option in {"-?", "-help", "--help", "-whatif"}:
+        if option in {"-?", "-help", "--help"} or _has_enabled_whatif(tokens):
             return None
         if option in PATH_FLAGS:
             if index + 1 >= len(tokens):
@@ -552,7 +911,7 @@ def _detect_clear_content(tokens: list[str]) -> ParsedDestructiveCommand | None:
         if token.startswith("-"):
             index += 1
             continue
-        positionals.append(token)
+        positionals.append(tokens[index])
         index += 1
     return _resolved_static_targets(
         CATEGORY_TRUNCATE,
@@ -563,6 +922,8 @@ def _detect_clear_content(tokens: list[str]) -> ParsedDestructiveCommand | None:
 def _detect_truncate_cmdlet(tokens: list[str]) -> ParsedDestructiveCommand | None:
     command = _command_name(tokens[0])
     if command not in TRUNCATE_COMMAND_NAMES:
+        return None
+    if _has_enabled_whatif(tokens):
         return None
     if command == "clear-content":
         return _detect_clear_content(tokens)
@@ -616,7 +977,7 @@ def _detect_truncate_file(tokens: list[str]) -> ParsedDestructiveCommand | None:
         if not after_double_dash and token.startswith("-"):
             index += 1
             continue
-        positionals.append(token)
+        positionals.append(tokens[index])
         index += 1
     if not has_size_source:
         return None
@@ -644,14 +1005,20 @@ def _detect_dd_output(tokens: list[str]) -> ParsedDestructiveCommand | None:
 
 
 _POWERSHELL_TRANSFER_VALUE_OPTIONS: Final[frozenset[str]] = frozenset(
-    {"-credential", "-exclude", "-filter", "-include"}
+    {
+        "-credential",
+        "-exclude",
+        "-filter",
+        "-include",
+        *_POWERSHELL_COMMON_VALUE_OPTIONS,
+    }
 )
-_POSIX_TRANSFER_VALUE_OPTIONS: Final[frozenset[str]] = frozenset(
-    {"-S", "--context", "--suffix"}
-)
+_POSIX_TRANSFER_VALUE_OPTIONS: Final[frozenset[str]] = frozenset({"-S", "--suffix"})
 
 
-def _transfer_operands(tokens: list[str]) -> tuple[list[str], str] | None:
+def _transfer_operands(
+    tokens: list[str],
+) -> tuple[list[str], str, bool, bool] | None:
     command = _command_name(tokens[0])
     powershell_syntax = command in {"copy-item", "move-item", "rename-item"} or any(
         _unquote(token).casefold()
@@ -672,12 +1039,17 @@ def _transfer_operands(tokens: list[str]) -> tuple[list[str], str] | None:
         sources: list[str] = []
         positionals: list[str] = []
         destination: str | None = None
+        recursive = False
         index = 1
         while index < len(tokens):
             token = _unquote(tokens[index])
             option = token.casefold()
-            if option in {"-?", "-help", "--help", "-whatif"}:
+            if option in {"-?", "-help", "--help"} or _has_enabled_whatif(tokens):
                 return None
+            if option == "-recurse":
+                recursive = True
+                index += 1
+                continue
             if option in {"-path", "-literalpath"}:
                 if index + 1 >= len(tokens):
                     return None
@@ -698,7 +1070,7 @@ def _transfer_operands(tokens: list[str]) -> tuple[list[str], str] | None:
             if token.startswith("-"):
                 index += 1
                 continue
-            positionals.append(token)
+            positionals.append(tokens[index])
             index += 1
         if destination is None:
             if len(positionals) < 2:
@@ -707,10 +1079,12 @@ def _transfer_operands(tokens: list[str]) -> tuple[list[str], str] | None:
             sources.extend(positionals[:-1])
         else:
             sources.extend(positionals)
-        return (sources, destination) if sources else None
+        return (sources, destination, recursive, False) if sources else None
 
     positionals = []
     destination = None
+    recursive = False
+    preserve_parents = False
     after_double_dash = False
     index = 1
     while index < len(tokens):
@@ -731,25 +1105,62 @@ def _transfer_operands(tokens: list[str]) -> tuple[list[str], str] | None:
             destination = token.split("=", 1)[1]
             index += 1
             continue
+        if not after_double_dash and token in {"--context", "--parents"}:
+            preserve_parents = preserve_parents or token == "--parents"
+            index += 1
+            continue
+        if not after_double_dash and token in {"--archive", "--recursive"}:
+            recursive = True
+            index += 1
+            continue
+        if not after_double_dash and token.startswith("--context="):
+            index += 1
+            continue
         if not after_double_dash and token in _POSIX_TRANSFER_VALUE_OPTIONS:
             if index + 1 >= len(tokens):
                 return None
             index += 2
             continue
-        if not after_double_dash and token.startswith("-") and token != "-":
+        if (
+            not after_double_dash
+            and token.startswith("-")
+            and not token.startswith("--")
+            and token != "-"
+        ):
+            cluster = token[1:]
+            recursive = recursive or any(flag in cluster for flag in ("a", "r", "R"))
+            target_index = cluster.find("t")
+            if target_index >= 0:
+                attached = cluster[target_index + 1 :]
+                if attached:
+                    destination = attached
+                    index += 1
+                elif index + 1 < len(tokens):
+                    destination = tokens[index + 1]
+                    index += 2
+                else:
+                    return None
+                continue
             index += 1
             continue
-        positionals.append(token)
+        positionals.append(tokens[index])
         index += 1
     if destination is None:
         if len(positionals) < 2:
             return None
         destination = positionals[-1]
         positionals = positionals[:-1]
-    return (positionals, destination) if positionals else None
+    return (
+        (positionals, destination, recursive, preserve_parents) if positionals else None
+    )
 
 
-def _transfer_destination_candidates(sources: list[str], destination: str) -> list[str]:
+def _transfer_destination_candidates(
+    sources: list[str],
+    destination: str,
+    *,
+    preserve_parents: bool,
+) -> list[str]:
     candidates = [destination]
     separator = "\\" if "\\" in destination and "/" not in destination else "/"
     base = destination.rstrip("/\\")
@@ -757,8 +1168,15 @@ def _transfer_destination_candidates(sources: list[str], destination: str) -> li
         source = _unquote(raw_source)
         if _validate_target(source) != "ok":
             continue
-        basename = source.replace("\\", "/").rsplit("/", 1)[-1]
-        candidate = f"{base}{separator}{basename}"
+        normalized_source = source.replace("\\", "/")
+        while normalized_source.startswith("./"):
+            normalized_source = normalized_source[2:]
+        relative = (
+            normalized_source
+            if preserve_parents
+            else normalized_source.rsplit("/", 1)[-1]
+        )
+        candidate = f"{base}{separator}{relative}"
         if candidate not in candidates:
             candidates.append(candidate)
     return candidates
@@ -771,16 +1189,13 @@ def _detect_transfer(tokens: list[str]) -> ParsedDestructiveCommand | None:
     operands = _transfer_operands(tokens)
     if operands is None:
         return None
-    sources, destination = operands
+    sources, destination, recursive, preserve_parents = operands
     if command in {"copy-item", "move-item", "rename-item", "cp", "mv"}:
         sources = _powershell_path_elements(sources)
         destinations = _powershell_path_elements([destination])
     else:
         destinations = [destination]
-    if (
-        command == "rename-item"
-        and len(sources) == 1
-    ):
+    if command == "rename-item" and len(sources) == 1:
         source = _unquote(sources[0]).replace("\\", "/")
         if "/" in source:
             parent = source.rsplit("/", 1)[0]
@@ -790,19 +1205,34 @@ def _detect_transfer(tokens: list[str]) -> ParsedDestructiveCommand | None:
                 else f"{parent}/{destination}"
                 for destination in destinations
             ]
-    destination_targets = [
-        candidate
-        for destination in destinations
-        if _unquote(destination).replace("\\", "/").casefold() not in SINK_PATHS
-        for candidate in (
-            [destination]
+    destination_targets: list[str] = []
+    copy_container_targets: list[str] = []
+    for target_destination in destinations:
+        if _unquote(target_destination).replace("\\", "/").casefold() in SINK_PATHS:
+            continue
+        candidates = (
+            [target_destination]
             if command == "rename-item"
-            else _transfer_destination_candidates(sources, destination)
+            else _transfer_destination_candidates(
+                sources,
+                target_destination,
+                preserve_parents=preserve_parents,
+            )
         )
-    ]
+        destination_targets.extend(candidates)
+        if recursive:
+            copy_container_targets.extend(candidates[1:])
     if command in MOVE_COMMAND_NAMES:
-        return _resolved_static_targets(CATEGORY_REMOVE, [*sources, *destination_targets])
-    return _resolved_static_targets(CATEGORY_TRUNCATE, destination_targets)
+        return _resolved_static_targets(
+            CATEGORY_REMOVE,
+            [*sources, *destination_targets],
+            container_targets=sources,
+        )
+    return _resolved_static_targets(
+        CATEGORY_TRUNCATE,
+        destination_targets,
+        container_targets=copy_container_targets,
+    )
 
 
 def _detect_dotnet_file(tokens: list[str]) -> ParsedDestructiveCommand | None:
@@ -832,11 +1262,14 @@ def _detect_sed_in_place(tokens: list[str]) -> ParsedDestructiveCommand | None:
             index += 1
             continue
         if not after_double_dash and (
-            token in {"-i", "--in-place"}
-            or token.startswith(("-i", "--in-place="))
+            token in {"-i", "--in-place"} or token.startswith(("-i", "--in-place="))
         ):
             in_place = True
-            if token == "-i" and index + 1 < len(tokens) and tokens[index + 1] in {"''", '\"\"'}:
+            if (
+                token == "-i"
+                and index + 1 < len(tokens)
+                and tokens[index + 1] in {"''", '""'}
+            ):
                 index += 2
             else:
                 index += 1
@@ -847,14 +1280,34 @@ def _detect_sed_in_place(tokens: list[str]) -> ParsedDestructiveCommand | None:
             script_supplied = True
             index += 2
             continue
-        if not after_double_dash and token.startswith(("-e", "-f")) and len(token) > 2:
-            script_supplied = True
+        if (
+            not after_double_dash
+            and token.startswith("-")
+            and not token.startswith("--")
+            and token != "-"
+        ):
+            cluster = token[1:]
+            cluster_index = 0
+            consumed_next = False
+            while cluster_index < len(cluster):
+                option = cluster[cluster_index]
+                if option == "i":
+                    in_place = True
+                    break
+                if option in {"e", "f"}:
+                    script_supplied = True
+                    if cluster_index == len(cluster) - 1:
+                        if index + 1 >= len(tokens):
+                            return None
+                        consumed_next = True
+                    break
+                cluster_index += 1
+            index += 2 if consumed_next else 1
+            continue
+        if not after_double_dash and token.startswith("--"):
             index += 1
             continue
-        if not after_double_dash and token.startswith("-"):
-            index += 1
-            continue
-        positionals.append(token)
+        positionals.append(tokens[index])
         index += 1
     if not in_place:
         return None
@@ -882,19 +1335,30 @@ def _detect_perl_in_place(tokens: list[str]) -> ParsedDestructiveCommand | None:
             return None
         if not after_double_dash and token.startswith("-") and token != "-":
             short_options = token[1:]
-            if "i" in short_options:
-                in_place = True
-            expression_index = short_options.find("e")
-            if expression_index >= 0:
-                script_supplied = True
-                if expression_index == len(short_options) - 1:
-                    if index + 1 >= len(tokens):
-                        return None
-                    index += 2
-                    continue
-            index += 1
+            option_index = 0
+            consumed_next = False
+            while option_index < len(short_options):
+                option = short_options[option_index]
+                if option == "i":
+                    in_place = True
+                    break
+                if option in {"I", "M", "m"}:
+                    if option_index == len(short_options) - 1:
+                        if index + 1 >= len(tokens):
+                            return None
+                        consumed_next = True
+                    break
+                if option in {"e", "E"}:
+                    script_supplied = True
+                    if option_index == len(short_options) - 1:
+                        if index + 1 >= len(tokens):
+                            return None
+                        consumed_next = True
+                    break
+                option_index += 1
+            index += 2 if consumed_next else 1
             continue
-        positionals.append(token)
+        positionals.append(tokens[index])
         index += 1
     if not in_place:
         return None
@@ -905,7 +1369,15 @@ def _detect_perl_in_place(tokens: list[str]) -> ParsedDestructiveCommand | None:
 
 
 _NEW_ITEM_OPTIONS_WITH_VALUE: Final[frozenset[str]] = frozenset(
-    {"-credential", "-itemtype", "-target", "-type", "-value"}
+    {
+        "-credential",
+        "-itemtype",
+        "-options",
+        "-target",
+        "-type",
+        "-value",
+        *_POWERSHELL_COMMON_VALUE_OPTIONS,
+    }
 )
 
 
@@ -920,7 +1392,7 @@ def _detect_forced_new_item(tokens: list[str]) -> ParsedDestructiveCommand | Non
     while index < len(tokens):
         token = _unquote(tokens[index])
         option = token.casefold()
-        if option in {"-?", "-help", "--help", "-whatif"}:
+        if option in {"-?", "-help", "--help"} or _has_enabled_whatif(tokens):
             return None
         if option == "-force":
             force = True
@@ -946,7 +1418,7 @@ def _detect_forced_new_item(tokens: list[str]) -> ParsedDestructiveCommand | Non
         if token.startswith("-"):
             index += 1
             continue
-        positionals.append(token)
+        positionals.append(tokens[index])
         index += 1
     if not force:
         return None
@@ -979,7 +1451,9 @@ def _detect_truncate_redirect(tokens: list[str]) -> ParsedDestructiveCommand | N
             if index + 1 >= len(tokens):
                 return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_target")
             target = _unquote(tokens[index + 1])
-        if match.group("operator").endswith(">&") and (target == "-" or target.isdigit()):
+        if match.group("operator").endswith(">&") and (
+            target == "-" or target.isdigit()
+        ):
             continue
         validity = _validate_target(target)
         if validity == "ok":
@@ -991,7 +1465,44 @@ def _detect_truncate_redirect(tokens: list[str]) -> ParsedDestructiveCommand | N
 
 
 def _detect_tee(tokens: list[str]) -> ParsedDestructiveCommand | None:
-    if _command_name(tokens[0]) != "tee":
+    command = _command_name(tokens[0])
+    if command == "tee-object":
+        append = False
+        explicit_targets: list[str] = []
+        positionals: list[str] = []
+        index = 1
+        while index < len(tokens):
+            token = _unquote(tokens[index])
+            option = token.casefold()
+            if option in {"-filepath", "-literalpath"}:
+                if index + 1 >= len(tokens):
+                    return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
+                explicit_targets.append(tokens[index + 1])
+                index += 2
+                continue
+            if option == "-append":
+                append = True
+                index += 1
+                continue
+            if option in {
+                "-inputobject",
+                "-variable",
+                *_POWERSHELL_COMMON_VALUE_OPTIONS,
+            }:
+                if index + 1 >= len(tokens):
+                    return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
+                index += 2
+                continue
+            if token.startswith("-"):
+                index += 1
+                continue
+            positionals.append(tokens[index])
+            index += 1
+        if append:
+            return None
+        targets = explicit_targets or positionals[:1]
+        return _resolved_static_targets(CATEGORY_TRUNCATE, targets) if targets else None
+    if command != "tee":
         return None
     append = False
     targets: list[str] = []
@@ -1178,6 +1689,7 @@ def _detect_coproc(tokens: list[str]) -> ParsedDestructiveCommand | None:
 def _detect_find_exec(tokens: list[str]) -> ParsedDestructiveCommand | None:
     if _command_name(tokens[0]) != "find":
         return None
+    output_targets: list[str] = []
     index = 1
     while index < len(tokens):
         token = _unquote(tokens[index]).casefold()
@@ -1186,6 +1698,16 @@ def _detect_find_exec(tokens: list[str]) -> ParsedDestructiveCommand | None:
             continue
         if token == "-delete":
             return _blocked(CATEGORY_REMOVE, "implicit_scope")
+        if token in {"-fls", "-fprint", "-fprint0", "-fprintf"}:
+            if index + 1 >= len(tokens):
+                return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
+            output_targets.append(tokens[index + 1])
+            index += 2
+            if token == "-fprintf":
+                if index >= len(tokens):
+                    return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
+                index += 1
+            continue
         if token not in {"-exec", "-execdir", "-ok", "-okdir"}:
             index += 1
             continue
@@ -1205,7 +1727,11 @@ def _detect_find_exec(tokens: list[str]) -> ParsedDestructiveCommand | None:
         if nested is not None:
             return nested
         index = terminator + 1
-    return None
+    return (
+        _resolved_static_targets(CATEGORY_TRUNCATE, output_targets)
+        if output_targets
+        else None
+    )
 
 
 def _find_arithmetic_end(line: str, opening: int) -> int | None:
@@ -1355,17 +1881,22 @@ def _shell_stdin_is_script(tokens: list[str]) -> bool:
     index = 1
     while index < len(tokens):
         token = _unquote(tokens[index])
-        if token in {"-c", "--command"} or token.startswith("--command="):
+        option = token.casefold()
+        if (
+            token == "-c"
+            or option in {"-command", "--command"}
+            or option.startswith(("-command:", "--command="))
+        ):
             return False
-        if token in {"--help", "--version"}:
+        if option in {"--help", "--version"}:
             return False
-        if token == "--":
+        if option == "--":
             return stdin_forced or index + 1 >= len(tokens)
-        if token in {"-", "-s", "--stdin"}:
+        if option in {"-", "-s", "--stdin"}:
             stdin_forced = True
             index += 1
             continue
-        if token in {"-o", "+o", "-O", "--init-file", "--rcfile"}:
+        if option in {"-o", "+o", "--init-file", "--rcfile"}:
             if index + 1 >= len(tokens):
                 return True
             index += 2
@@ -1447,9 +1978,7 @@ def _without_heredoc_bodies(command: str) -> tuple[str, bool, list[str]]:
         line_ending = line[len(content) :]
         if pending:
             declaration, executable, body = pending[0]
-            candidate = (
-                content.lstrip("\t") if declaration.strip_tabs else content
-            )
+            candidate = content.lstrip("\t") if declaration.strip_tabs else content
             retained.append(line_ending)
             if candidate == declaration.delimiter:
                 pending.pop(0)
@@ -1775,7 +2304,9 @@ def _detect_obfuscated_fallback(tokens: list[str]) -> ParsedDestructiveCommand |
     return None
 
 
-_DETECTORS: Final[tuple[Callable[[list[str]], ParsedDestructiveCommand | None], ...]] = (
+_DETECTORS: Final[
+    tuple[Callable[[list[str]], ParsedDestructiveCommand | None], ...]
+] = (
     _detect_tee,
     _detect_truncate_redirect,
     _detect_git,
@@ -1814,7 +2345,9 @@ def _command_position_tokens(tokens: list[str]) -> list[str]:
         pattern_end = next(
             (
                 index
-                for index, token in enumerate(tokens[in_index + 1 :], start=in_index + 1)
+                for index, token in enumerate(
+                    tokens[in_index + 1 :], start=in_index + 1
+                )
                 if ")" in _unquote(token)
             ),
             None,
@@ -1853,9 +2386,7 @@ def _command_position_tokens(tokens: list[str]) -> list[str]:
     ):
         return []
     while (
-        normalized
-        and closing_stack
-        and _unquote(normalized[-1]) == closing_stack[-1]
+        normalized and closing_stack and _unquote(normalized[-1]) == closing_stack[-1]
     ):
         normalized = normalized[:-1]
         closing_stack.pop()
@@ -1863,7 +2394,10 @@ def _command_position_tokens(tokens: list[str]) -> list[str]:
 
 
 _EXECUTABLE_PREFIX_WRAPPERS: Final[frozenset[str]] = frozenset(
-    {"builtin", "command", "doas", "env", "exec", "nohup", "sudo", "timeout"}
+    WRAPPER_COMMAND_NAMES - OPAQUE_WRAPPER_COMMAND_NAMES - {"xargs"}
+)
+_PIPELINE_SHELL_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
+    SHELL_COMMAND_NAMES | {"cmd", "powershell", "pwsh"}
 )
 
 
@@ -1886,7 +2420,7 @@ def _detect_pipeline_shell_receiver(
     tokens = _effective_command_tokens(_tokenize(segment.text))
     if (
         tokens
-        and _command_name(tokens[0]) in SHELL_COMMAND_NAMES
+        and _command_name(tokens[0]) in _PIPELINE_SHELL_COMMAND_NAMES
         and _shell_stdin_is_script(tokens)
     ):
         return _blocked(CATEGORY_REMOVE, "parse_unable_pipeline")
@@ -1928,7 +2462,44 @@ def executable_command_positions(command: str) -> tuple[tuple[str, ...], ...]:
     return tuple(positions)
 
 
-def _parse_destructive_segment(command: str) -> ParsedDestructiveCommand | None:
+def _static_pipeline_literal(segment: _CommandSegment) -> str | None:
+    text = segment.text.strip()
+    if len(text) < 2 or text[0] != text[-1] or text[0] not in "'\"":
+        return None
+    tokens = _tokenize(text)
+    return tokens[0] if len(tokens) == 1 and tokens[0] == text else None
+
+
+def _bind_static_pipeline_input(
+    tokens: list[str],
+    pipeline_literal: str | None,
+) -> list[str]:
+    if pipeline_literal is None:
+        return tokens
+    command = _command_name(tokens[0])
+    if command in {"copy-item", "move-item", "remove-item", "rename-item"}:
+        if not any(
+            _unquote(token).casefold() in {"-path", "-literalpath"}
+            for token in tokens[1:]
+        ):
+            return [tokens[0], "-path", pipeline_literal, *tokens[1:]]
+    elif command == "invoke-expression" and len(tokens) == 1:
+        return [tokens[0], pipeline_literal]
+    return tokens
+
+
+def _powershell_parse_failure_category(command: str) -> str:
+    return (
+        CATEGORY_REMOVE
+        if command in {"move-item", "remove-item", "rename-item", "invoke-expression"}
+        else CATEGORY_TRUNCATE
+    )
+
+
+def _parse_destructive_segment(
+    command: str,
+    pipeline_literal: str | None = None,
+) -> ParsedDestructiveCommand | None:
     """연산자 경계가 제거된 단일 shell segment를 분류한다."""
     raw_tokens = _tokenize(command)
     coproc = _detect_coproc(raw_tokens)
@@ -1937,6 +2508,15 @@ def _parse_destructive_segment(command: str) -> ParsedDestructiveCommand | None:
     tokens = _command_position_tokens(raw_tokens)
     if not tokens:
         return None
+    if _is_bare_sc_service_command(tokens):
+        return None
+    tokens, normalization_error = _normalize_powershell_parameters(tokens)
+    if normalization_error is not None:
+        return _blocked(
+            _powershell_parse_failure_category(_command_name(tokens[0])),
+            normalization_error,
+        )
+    tokens = _bind_static_pipeline_input(tokens, pipeline_literal)
     dotnet_file = _detect_dotnet_file(tokens)
     if dotnet_file is not None:
         return dotnet_file
@@ -1961,10 +2541,15 @@ def parse_destructive_commands(command: str) -> tuple[ParsedDestructiveCommand, 
     parsed: list[ParsedDestructiveCommand] = []
     if malformed:
         parsed.append(_blocked(CATEGORY_REMOVE, "parse_unable_shell_syntax"))
-    for segment in segments:
+    for index, segment in enumerate(segments):
         result = _detect_pipeline_shell_receiver(segment)
         if result is None:
-            result = _parse_destructive_segment(segment.text)
+            pipeline_literal = (
+                _static_pipeline_literal(segments[index - 1])
+                if index > 0 and segment.incoming_separator in {"|", "|&"}
+                else None
+            )
+            result = _parse_destructive_segment(segment.text, pipeline_literal)
         if result is not None and result not in parsed:
             parsed.append(result)
     return tuple(parsed)
@@ -1982,7 +2567,9 @@ def parse_destructive_command(command: str) -> ParsedDestructiveCommand | None:
 # --- §6-3/§6-4 게이트 판정 ---------------------------------------------------
 
 
-def _default_lookup_path_attribution(ledger: JsonObject, canonical_path: str) -> JsonObject | None:
+def _default_lookup_path_attribution(
+    ledger: JsonObject, canonical_path: str
+) -> JsonObject | None:
     # F1(core/ledger_v2.py) 동결 계약 — 병행 구현 중이라 아직 없을 수 있다. 지연 임포트로
     # ImportError/AttributeError를 호출부(evaluate_r2_destructive_gate)의 try에서
     # "귀속 신뢰 불가 = degraded"로 흡수시킨다(§6-3 fail-closed).
@@ -2086,9 +2673,7 @@ def _peer_open_invocation_candidates(
 def _block(reason_code: str) -> Decision:
     return {
         "decision": "block",
-        "coordination_reason_code": _coordination_reason_for_block(
-            reason_code
-        ).value,
+        "coordination_reason_code": _coordination_reason_for_block(reason_code).value,
         "reason": (
             f"[smtw] R2: 파괴 조치가 차단되었습니다({reason_code}). "
             f"{_block_explanation(reason_code)} {RESOLUTION_PROCEDURES}"
@@ -2132,8 +2717,12 @@ def _allow(message: str) -> Decision:
 def evaluate_r2_destructive_gate(
     payload: Mapping[str, JsonValue],
     *,
-    lookup_path_attribution: Callable[[JsonObject, str], JsonObject | None] = _default_lookup_path_attribution,
-    attribution_health: Callable[[JsonObject], JsonObject] = _default_attribution_health,
+    lookup_path_attribution: Callable[
+        [JsonObject, str], JsonObject | None
+    ] = _default_lookup_path_attribution,
+    attribution_health: Callable[
+        [JsonObject], JsonObject
+    ] = _default_attribution_health,
 ) -> Decision:
     # 판정 로직 자체는 _decide_r2에 그대로 있다 — 이 래퍼는 block 판정에 한해
     # quarantine 백업(B1 Q-1~Q-4)을 best-effort로 덧붙일 뿐, decision/
@@ -2236,8 +2825,12 @@ def _append_quarantine_reason(decision: Decision, note: str) -> Decision:
 def _decide_r2(
     payload: Mapping[str, JsonValue],
     *,
-    lookup_path_attribution: Callable[[JsonObject, str], JsonObject | None] = _default_lookup_path_attribution,
-    attribution_health: Callable[[JsonObject], JsonObject] = _default_attribution_health,
+    lookup_path_attribution: Callable[
+        [JsonObject, str], JsonObject | None
+    ] = _default_lookup_path_attribution,
+    attribution_health: Callable[
+        [JsonObject], JsonObject
+    ] = _default_attribution_health,
 ) -> Decision:
     tool = payload.get("tool_name")
     if tool not in SHELL_TOOLS:
@@ -2299,4 +2892,32 @@ def _decide_r2(
                 return _block("peer_unsettled_revision")
             if canonical in peer_candidates:
                 return _block("peer_open_invocation_candidate")
+        for raw_container in parsed.container_targets:
+            disposition, container = _canonicalize_target(root, raw_container)
+            if disposition == _CANON_UNRESOLVABLE:
+                return _block("canonicalization_unavailable")
+            if disposition == _CANON_OUT_OF_ROOT or container is None:
+                continue
+            if any(
+                _is_path_within_container(candidate, container)
+                for candidate in peer_candidates
+            ):
+                return _block("peer_open_invocation_candidate")
+            attribution_index = ledger.get("path_attribution")
+            if not isinstance(attribution_index, dict):
+                continue
+            for candidate in attribution_index:
+                if not _is_path_within_container(candidate, container):
+                    continue
+                try:
+                    record = lookup_path_attribution(ledger, candidate)
+                except Exception:  # noqa: BLE001
+                    return _block("attribution_lookup_unavailable")
+                if _owned_by_unsettled_peer(record, caller_agent_key):
+                    return _block("peer_unsettled_revision")
     return _allow("r2 pass")
+
+
+def _is_path_within_container(candidate: str, container: str) -> bool:
+    scope = container.rstrip("/")
+    return candidate == scope or candidate.startswith(f"{scope}/")
