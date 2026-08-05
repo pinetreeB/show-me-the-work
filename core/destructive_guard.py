@@ -501,6 +501,8 @@ def _resolved_static_targets(
         return _blocked(category, "parse_unable_missing_target")
     targets: list[str] = []
     for raw in raw_targets:
+        if raw.lstrip().startswith("("):
+            return _blocked(category, "parse_unable_dynamic_expression")
         target = _unquote(raw)
         validity = _validate_target(target)
         if validity == "ok":
@@ -514,12 +516,12 @@ def _resolved_static_targets(
 
 
 def _powershell_path_elements(raw_targets: list[str]) -> list[str]:
-    return [
-        element
-        for raw in raw_targets
-        for element in (part.strip() for part in _unquote(raw).split(","))
-        if element
-    ]
+    elements: list[str] = []
+    for raw in raw_targets:
+        quoted = len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\""
+        parts = (raw,) if quoted else raw.split(",")
+        elements.extend(part.strip() for part in parts if part.strip())
+    return elements
 
 
 _CLEAR_CONTENT_OPTIONS_WITH_VALUE: Final[frozenset[str]] = frozenset(
@@ -749,17 +751,16 @@ def _transfer_operands(tokens: list[str]) -> tuple[list[str], str] | None:
 
 def _transfer_destination_candidates(sources: list[str], destination: str) -> list[str]:
     candidates = [destination]
-    if len(sources) > 1 or destination.endswith(("/", "\\")):
-        separator = "\\" if "\\" in destination and "/" not in destination else "/"
-        base = destination.rstrip("/\\")
-        for raw_source in sources:
-            source = _unquote(raw_source)
-            if _validate_target(source) != "ok":
-                continue
-            basename = source.replace("\\", "/").rsplit("/", 1)[-1]
-            candidate = f"{base}{separator}{basename}"
-            if candidate not in candidates:
-                candidates.append(candidate)
+    separator = "\\" if "\\" in destination and "/" not in destination else "/"
+    base = destination.rstrip("/\\")
+    for raw_source in sources:
+        source = _unquote(raw_source)
+        if _validate_target(source) != "ok":
+            continue
+        basename = source.replace("\\", "/").rsplit("/", 1)[-1]
+        candidate = f"{base}{separator}{basename}"
+        if candidate not in candidates:
+            candidates.append(candidate)
     return candidates
 
 
@@ -793,7 +794,11 @@ def _detect_transfer(tokens: list[str]) -> ParsedDestructiveCommand | None:
         candidate
         for destination in destinations
         if _unquote(destination).replace("\\", "/").casefold() not in SINK_PATHS
-        for candidate in _transfer_destination_candidates(sources, destination)
+        for candidate in (
+            [destination]
+            if command == "rename-item"
+            else _transfer_destination_candidates(sources, destination)
+        )
     ]
     if command in MOVE_COMMAND_NAMES:
         return _resolved_static_targets(CATEGORY_REMOVE, [*sources, *destination_targets])
@@ -828,7 +833,7 @@ def _detect_sed_in_place(tokens: list[str]) -> ParsedDestructiveCommand | None:
             continue
         if not after_double_dash and (
             token in {"-i", "--in-place"}
-            or token.startswith(("-i.", "--in-place="))
+            or token.startswith(("-i", "--in-place="))
         ):
             in_place = True
             if token == "-i" and index + 1 < len(tokens) and tokens[index + 1] in {"''", '\"\"'}:
