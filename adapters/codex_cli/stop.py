@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 from datetime import UTC, datetime
 import json
 import os
@@ -109,6 +110,7 @@ def _run_process_reaper(repo_root: Path, project_root: str) -> None:
 
 def main() -> int:
     runtime_env_fail_closed = None
+    cache_stack = ExitStack()
     try:
         root = Path(__file__).resolve().parents[2]
         if str(root) not in sys.path:
@@ -125,6 +127,9 @@ def main() -> int:
         from core.verify_state import evaluate_stop
 
         payload = read_payload()
+        from core.ledger import ledger_read_cache
+
+        cache_stack.enter_context(ledger_read_cache())
         project_root_value = project_root(payload)
         invocation = canonical_invocation(payload, "stop", "other", [], "", True, "")
         invocation = resolve_active_invocation(Path(project_root_value), invocation)
@@ -152,6 +157,8 @@ def main() -> int:
             if denied is not None:
                 return denied
         return _fail_open(str(exc))
+    finally:
+        cache_stack.close()
 
 
 if __name__ == "__main__":

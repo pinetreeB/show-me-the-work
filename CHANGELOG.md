@@ -2,6 +2,82 @@
 
 ## [Unreleased]
 
+### Security
+
+- **R2가 삭제·절단 명령의 상당수를 "파괴 형태 아님"으로 흘려보내던 문제를 닫았습니다.** 탐지
+  어휘가 `rm`·`Remove-Item`·`del`·`rd`·`rmdir`(삭제)와 `Set-Content`·`Out-File`(절단)뿐이어서,
+  탐지기가 0건을 내면 `not destructive-shaped`로 **귀속 검사 자체를 건너뛰었습니다**. 그 결과
+  `unlink`·`shred`·`truncate`·`Clear-Content`·`dd of=`·`cp /dev/null f`·`mv f /dev/null`·
+  `sed -i`·`perl -i`·`git rm`·`Rename-Item`·`New-Item -Force`·정적 `[IO.File]::Delete`/
+  `WriteAllText`가 **다른 에이전트의 미정산 파일을 대상으로 해도 통과**했습니다. 인코딩·동적
+  코드가 아닌 리터럴 경로의 정적 단일 명령이므로 기존에 선언한 비목표로 면책되지 않습니다.
+- **접근 방식은 B-Routing입니다**: 파서는 "파괴적이다/아니다"를 최종 판정하지 않고 정적 경로
+  후보를 **귀속 검사로 라우팅만** 합니다. 파서는 `stat`을 호출하지 않으므로 TOCTOU를 새로
+  들이지 않고, 덮어쓰기 여부를 판정할 필요도 없습니다 — 남의 미정산 경로일 때만 차단됩니다.
+  `cp`/`Copy-Item`은 목적지만, `mv`/`Move-Item`/`Rename-Item`은 소스와 목적지를 모두 대상으로
+  잡습니다(sink 목적지면 소스만). 소스를 읽기만 하는 `cp peer.py backup.py`는 통과합니다.
+- **직접 호출한 `Invoke-Expression`/`iex`가 우회 경로였습니다.** `eval`은 불투명 래퍼였으나
+  PowerShell의 동일 기능은 목록에 없어 `iex 'Remove-Item f'`가 통과했습니다. `WRAPPER` ·
+  `OPAQUE_WRAPPER` 양쪽에 등록했습니다(한쪽만 넣으면 첫 membership 검사에서 빠져나가 수리가
+  무효가 됩니다).
+- **파이프로 스크립트를 받는 셸의 비대칭을 해소했습니다.** `bash < payload.sh`는 차단되는데
+  `cat payload.sh | bash`·`curl … | bash`는 통과했습니다. 셸 segment에 유입 구분자를 보존해
+  `|` 수신자가 stdin을 스크립트로 읽는 POSIX 셸이면 fail-closed 합니다. `| head`·`| grep` 등
+  비실행 수신자와 `| python`·`| node`·`| iex`는 건드리지 않았습니다.
+- **PowerShell 표준 별칭이 어휘 전체를 무력화하고 있었습니다.** `Remove-Item peer.py`를
+  `ri peer.py`로 **한 단어만 바꾸면 통과**했습니다(`ri`·`rni`·`cpi`·`mi`·`clc`·`sc`·`ni` 전원,
+  대소문자 무관). 셸이 PowerShell인 환경에서는 별칭이 오히려 기본 사용 형태입니다. 표준 별칭을
+  canonical cmdlet으로 정규화해 기존 탐지기로 보냅니다. `sc.exe` 같은 명시적 실행 파일명은
+  별칭 확장에서 제외합니다.
+- **쉼표로 묶은 경로 배열도 통과했습니다.** `Remove-Item a.py,peer.py`에서 파서가
+  `a.py,peer.py`를 **경로 하나**로 취급해 `peer.py`가 대상이 되지 않았습니다. 이번에 추가한
+  어휘뿐 아니라 **기존 `Remove-Item`도 같은 방식으로 뚫렸습니다**(수리 전 커밋 대조로 확인).
+  위치 인자와 `-Path`·`-LiteralPath`·`-Destination`의 쉼표 요소를 개별 경로로 펼칩니다.
+- **파이프 수신 셸 차단이 래퍼 한 단어로 우회됐습니다.** `curl … | sudo bash`·`| doas bash`·
+  `| nohup bash`·`| timeout 5 bash`가 통과했습니다. 수신자 판정 시 이 네 래퍼를 해제합니다.
+- **건조 실행은 통과시킵니다**: `Remove-Item -WhatIf`(다른 cmdlet은 이미 인정하는데 이것만
+  누락돼 있었습니다)와 `git rm -n`·`--dry-run`·`--cached`. 앞의 둘은 아무것도 지우지 않고
+  `--cached`는 인덱스에서만 제거해 워크트리 파일이 남습니다.
+- 검증: 경쟁 에이전트가 미정산 파일을 점유한 상태의 게이트 종단 하네스에서 **차단 대상 53/53
+  BLOCK · 정상 작업 40/40 ALLOW(미탐 0 · 오탐 0)**. 게이트 1회 평균 22.2 µs로 훅 지연 회귀는
+  없습니다. 새 어휘의 `--help`·`--version`도 ALLOW로 고정했습니다.
+
+### Fixed
+
+- **Antigravity 어댑터에만 복원 신원 승격(`legacy_default` → `exact`)이 없었습니다.** 나머지 세
+  어댑터에는 모두 있던 수리입니다. 누락 시 유효한 namespaced 계약이 미귀속 편집으로 오인되고
+  계약 저자 감사 증거가 Antigravity에서만 기록되지 않습니다.
+- **`codex_cli`의 `post_tool_use`·`stop`·`user_prompt_submit`에 ledger 읽기 캐시가 없었습니다.**
+  v2.7.1이 어댑터 단위로는 전수했으나 codex 자신의 형제 엔트리포인트는 빠져 있었습니다. 런타임
+  실측 uncached 로드: stop 9 → 1, user_prompt_submit 6 → 3, post_tool_use 12 → 2.
+
+### Changed
+
+- **어댑터 커버리지를 테스트가 구조적으로 강제합니다.** 기존 캐시 검사는
+  `inspect.getsource()` + 문자열 포함 단언이라 코드를 실행하지 않았고 claude 엔트리포인트만
+  봤습니다. 런타임 계측(`_load_ledger_uncached` 호출 횟수)과 어댑터 × 엔트리포인트 매트릭스로
+  교체하고, `adapters/` 전수를 열거해 미등록 어댑터·미등록 엔트리포인트가 있으면 실패하는 메타
+  테스트를 캐시·신원승격 양쪽에 추가했습니다. 새 어댑터는 등록 없이 통과할 수 없습니다.
+
+### Documentation
+
+- **v2.7.0의 "19종 차단" 기록에 범위를 명시합니다.** 당시 나열한
+  `[IO.File]::WriteAllText`·`Invoke-Expression`·`Add-Content`·`Clear-Content`·`Copy-Item`·
+  `Move-Item`·`New-Item -Force` 7종은 **`powershell -Command`로 감쌌을 때만** 차단됐고, 셸 자체가
+  PowerShell이라 최상위로 호출되는 형태는 통과했습니다(`Out-File`만 양쪽 차단). 원문이
+  "all passed through `powershell -Command`"로 범위를 밝히긴 했으나 이어지는
+  "0 false negatives"가 일반적 안전 주장으로 읽혔습니다. 이번 릴리스가 bare 형태를 덮습니다.
+- **Known Limitation을 명시합니다**(모두 현행 ALLOW로 실측 확인): `>` 리다이렉션의 신규 파일
+  오차단(TOCTOU 방어 불가, 기존 확정) · 귀속 없는 일반 copy overwrite · `| iex`/`| python`/
+  `| node` 인터프리터 파이프 수신(`fnm env | iex` 같은 정당 관용구와 정적 구분 불가) ·
+  `python -c` 임의 코드(기존 비목표) · `robocopy /MIR` · `rsync --delete` · `ln -sf` ·
+  `tar -xf` · `Add-Content`(append 정책 정합 필요).
+- **대상 경로의 따옴표·이스케이프 분할은 아직 정규화하지 않습니다**(백로그 승격): `rm pe""er.py`·
+  `rm "pee"r.py`처럼 셸이 `peer.py`로 합치는 표기를 파서가 그대로 두어 귀속 조회가 빗나갑니다.
+  이번 수리 이전부터 있던 파서 일반 결함으로 `rm` 경로 전체에 영향이 있으며, 대상 경로 정규화가
+  필요한 별도 건입니다.
+- 설계 근거와 실측 기록: `docs/specs/2026-08-05-hardreview-fix.md`.
+
 ## [2.7.1] - 2026-08-04 — Adapter Cache Coverage
 
 v2.7.0의 ledger read cache가 `codex_cli` 어댑터에만 적용돼 있었습니다. 감독
