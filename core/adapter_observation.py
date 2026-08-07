@@ -31,7 +31,7 @@ from .provenance_policy import (
 from .provenance_lifecycle import ProvenanceLifecycle
 from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
-from .ledger_v2 import turn_is_closed
+from .ledger_v2 import turn_is_terminal
 from .project_root import is_user_home_root
 from .provenance_store import SnapshotStoreError
 from .provenance_turn_resume import MissingTurnBaselineError, TurnBootstrapError
@@ -836,11 +836,11 @@ def _active_invocation(root: Path, invocation: CanonicalInvocation) -> Canonical
         if (
             isinstance(turn_id, str)
             and turn_id
-            and not turn_is_closed(ledger, invocation.agent_key, invocation.turn_id)
+            and not turn_is_terminal(ledger, invocation.agent_key, invocation.turn_id)
         ):
             return replace(invocation, turn_id=turn_id, turn_synthetic=False)
         return replace(invocation, identity_conflict=True)
-    if turn_is_closed(ledger, invocation.agent_key, invocation.turn_id):
+    if turn_is_terminal(ledger, invocation.agent_key, invocation.turn_id):
         return replace(invocation, identity_conflict=True)
     if not invocation.identity_synthetic:
         return invocation
@@ -863,7 +863,7 @@ def _active_invocation(root: Path, invocation: CanonicalInvocation) -> Canonical
         turn_id != invocation.turn_id
         and not invocation.turn_synthetic
         and (
-            turn_is_closed(ledger, key, invocation.turn_id)
+            turn_is_terminal(ledger, key, invocation.turn_id)
             or _turn_closed_for_host_agent(ledger, invocation)
         )
     ):
