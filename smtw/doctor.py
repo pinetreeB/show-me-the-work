@@ -253,10 +253,17 @@ def _ledger_snapshot(authority: Path) -> dict[str, Any]:
     # invocation-status backfill이 필요하다(unsafe row는 자동 close하지 않음).
     needs_migration = invocation_status_backfill_required(raw)
     safe_command = (
-        ["smtw migrate --invocation-statuses --check"]
+        # W5: status-less row는 자동 backfill이 구조적으로 불가능하다(started_at 부재).
+        # 진단이 막다른 명령을 권하지 않도록, 실제로 복구 가능한 경로를 안내한다.
+        ["smtw maintenance plan"]
         if needs_migration
         else []
     )
+    # W5: 스키마가 invalid여도 raw active turn 수는 셀 수 있다. 이것을 0으로 보고하면
+    # "활성 턴 없음"으로 오독되어 진단이 스스로를 오진한다(2026-08-07 실측: 실제 39개를
+    # 0으로 보고해 초기 오진을 유발했다).
+    raw_turns = raw.get("active_turns")
+    raw_active_count = len(raw_turns) if isinstance(raw_turns, dict) else 0
     # DOCTOR-03A (INV-06): runtime ledger loader와 공유하는 schema 게이트.
     # unsupported schema(0·3·99·비정수)·누락 필드가 healthy로 fall-through하지
     # 않는다. 스키마 필드 위반만 invalid로, 위반 필드 경로를 보고한다.
@@ -265,6 +272,7 @@ def _ledger_snapshot(authority: Path) -> dict[str, Any]:
     except LedgerSchemaError as exc:
         return {
             **empty,
+            "active_turns": raw_active_count,
             "ledger_health": "invalid",
             "ledger_error_field": exc.field,
             "needs_migration": needs_migration,
@@ -273,6 +281,7 @@ def _ledger_snapshot(authority: Path) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {
             **empty,
+            "active_turns": raw_active_count,
             "ledger_health": "invalid",
             "needs_migration": needs_migration,
             "next_safe_command": safe_command,

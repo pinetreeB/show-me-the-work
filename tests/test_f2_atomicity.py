@@ -824,9 +824,9 @@ def test_synthetic_identity_finds_closed_turn_in_another_session() -> None:
         False,
     )
 
-    assert adapter_observation._turn_closed_for_host_agent(ledger, invocation) is True
+    assert adapter_observation._turn_terminal_for_host_agent(ledger, invocation) is True
     assert (
-        adapter_observation._turn_closed_for_host_agent(
+        adapter_observation._turn_terminal_for_host_agent(
             ledger,
             replace(invocation, host="other"),
         )

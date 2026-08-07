@@ -262,6 +262,8 @@ def validate_v2_ledger(value: JsonValue) -> JsonObject:
     _validate_path_attribution(ledger)
     if "closed_turns" in ledger:
         _validate_closed_turns(ledger["closed_turns"])
+    if "retired_turns" in ledger:
+        _validate_retired_turns(ledger["retired_turns"])
     if "coordination_outbox" in ledger:
         _validate_coordination_outbox(ledger["coordination_outbox"])
     if "coordination_degraded" in ledger:
@@ -388,6 +390,25 @@ def _validate_closed_turns(value: JsonValue) -> None:
             _required(entry, "closed_seq", field),
             f"{field}.closed_seq",
         )
+
+
+def _validate_retired_turns(value: JsonValue) -> None:
+    """W5: 증거 부족으로 퇴역한 턴 기록. closed와 달리 archive digest를 필수로 갖는다."""
+    if not isinstance(value, list):
+        _reject("ledger.retired_turns", "must be a list")
+    if len(value) > 256:
+        _reject("ledger.retired_turns", "must contain at most 256 entries")
+    for index, raw_entry in enumerate(value):
+        field = f"ledger.retired_turns[{index}]"
+        entry = _object(raw_entry, field)
+        _string(_required(entry, "agent_key", field), f"{field}.agent_key")
+        _string(_required(entry, "turn_id", field), f"{field}.turn_id")
+        _nonnegative_integer(
+            _required(entry, "retired_seq", field),
+            f"{field}.retired_seq",
+        )
+        _string(_required(entry, "resolution", field), f"{field}.resolution")
+        _string(_required(entry, "archive_digest", field), f"{field}.archive_digest")
 
 
 def _validate_coordination_outbox(value: JsonValue) -> None:
