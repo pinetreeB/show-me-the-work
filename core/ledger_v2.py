@@ -188,6 +188,17 @@ def apply_v2_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
     requested_turn_id = payload.get("turn_id")
     raw_before_gc = active.get(key)
     if (
+        isinstance(requested_turn_id, str)
+        and requested_turn_id
+        and turn_is_retired(ledger, key, requested_turn_id)
+    ):
+        # W5: 퇴역 턴은 **이벤트 종류와 무관하게** 되살아나면 안 된다. 아래 가드들은
+        # `event != "prompt"` 조건을 달고 있어서, 퇴역한 turn id로 UserPromptSubmit이
+        # 재생되면 prompt 분기가 그 턴을 active_turns에 다시 만들었다(retired 항목은
+        # 남은 채로). prompt 어댑터는 record_event를 직접 부르므로 상위 가드도 못 거친다.
+        # 운영자가 증거 부족으로 내린 퇴역 판단은 재생으로 뒤집히지 않아야 한다.
+        return ledger
+    if (
         event != "prompt"
         and isinstance(raw_before_gc, dict)
         and isinstance(requested_turn_id, str)

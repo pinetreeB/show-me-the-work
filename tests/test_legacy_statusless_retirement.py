@@ -251,6 +251,84 @@ def test_retired_turn_blocks_same_turn_replay(tmp_path: Path) -> None:
     assert key not in replayed.get("active_turns", {}), "퇴역 턴이 replay로 되살아났다"
 
 
+def test_prompt_event_cannot_revive_retired_turn(tmp_path: Path) -> None:
+    """PR #56 리뷰 지적 P1: prompt는 terminal 검사를 우회한다.
+
+    `event != "prompt"` 가드 때문에 UserPromptSubmit이 퇴역한 turn id로 재생되면
+    prompt 분기가 그 턴을 active_turns에 다시 만든다. retired_turns 항목은 그대로
+    남으므로 **같은 턴이 퇴역과 활성 양쪽에 존재**하게 된다. Codex·Claude prompt
+    어댑터는 record_event를 직접 부르므로 상위 가드도 거치지 않는다.
+    """
+    root, keys = _fixture(tmp_path)
+    plan = plan_maintenance(str(root))
+    _ = apply_maintenance_plan(
+        str(root), plan, retire_legacy_statusless=True, ack_unverified=6
+    )
+    after = _read(root)
+    key = keys["unsettled"]
+    assert key not in after["active_turns"]
+
+    revived = apply_v2_event(
+        after,
+        {
+            "event": "prompt",
+            "seq": 950,
+            "host": "host",
+            "session_id": "session-unsettled",
+            "agent": "unsettled",
+            "turn_id": "turn-unsettled",
+            "prompt": "replayed prompt",
+            "baseline_snapshot_id": "snapshot:base",
+            "current_snapshot_id": "snapshot:base",
+        },
+    )
+
+    assert key not in revived.get("active_turns", {}), (
+        "퇴역 턴이 prompt 재생으로 되살아났다 — 운영자가 퇴역시킨 판단이 무효화된다"
+    )
+    assert turn_is_retired(revived, key, "turn-unsettled") is True
+
+
+def test_retired_turn_found_across_synthetic_session_keys(tmp_path: Path) -> None:
+    """PR #56 리뷰 지적 P2: host/agent 교차 조회가 closed_turns만 본다.
+
+    퇴역 턴이 옛 세션 키로 기록돼 있으면, 새 세션 키로 turn_is_terminal을 물어봐도
+    찾지 못한다. closed 턴에는 이를 메우는 fallback이 있으나 retired에는 없어서
+    stale invocation이 조용히 새 턴에 바인딩된다.
+    """
+    from core.adapter_observation import CanonicalInvocation, _turn_terminal_for_host_agent
+
+    ledger = default_v2_ledger()
+    ledger["retired_turns"] = [
+        {
+            "agent_key": "host:old-session:agentx",
+            "turn_id": "turn-legacy",
+            "retired_seq": 5,
+            "resolution": "unverified_legacy",
+            "archive_digest": "digest:x",
+        }
+    ]
+
+    invocation = CanonicalInvocation(
+        host="host",
+        agent="agentx",
+        session_id="new-session",
+        turn_id="turn-legacy",
+        invocation_id="inv-1",
+        phase="pre",
+        tool_family_hint="edit",
+        candidate_paths=(),
+        command_hint="",
+        success=True,
+        evidence="",
+        identity_synthetic=True,
+    )
+
+    assert _turn_terminal_for_host_agent(ledger, invocation) is True, (
+        "옛 세션 키로 퇴역된 턴을 새 세션 키에서 찾지 못한다"
+    )
+
+
 def test_repeated_retire_is_idempotent(tmp_path: Path) -> None:
     root, _ = _fixture(tmp_path)
     plan = plan_maintenance(str(root))
