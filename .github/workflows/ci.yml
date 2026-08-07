@@ -7,6 +7,11 @@ on:
 
 jobs:
   test:
+    # CI-03: the check name must stay well under GitHub's 100-character status
+    # context limit. Without an explicit name GitHub derives one from every
+    # matrix value, which produced a 122-character context for the Windows
+    # rows — permanently unmatchable by branch protection.
+    name: "test (${{ matrix.label }})"
     strategy:
       fail-fast: false
       matrix:
@@ -15,26 +20,31 @@ jobs:
           # Ubuntu 3.12–3.14 plus the Windows floor and ceiling.
           - os: ubuntu-latest
             python: "3.12"
+            label: ubuntu-3.12
             venv_python: ./.ci-venv/bin/python
             venv_smtw: ./.ci-venv/bin/smtw
             venv_fable_lite: ./.ci-venv/bin/fable-lite
           - os: ubuntu-latest
             python: "3.13"
+            label: ubuntu-3.13
             venv_python: ./.ci-venv/bin/python
             venv_smtw: ./.ci-venv/bin/smtw
             venv_fable_lite: ./.ci-venv/bin/fable-lite
           - os: ubuntu-latest
             python: "3.14"
+            label: ubuntu-3.14
             venv_python: ./.ci-venv/bin/python
             venv_smtw: ./.ci-venv/bin/smtw
             venv_fable_lite: ./.ci-venv/bin/fable-lite
           - os: windows-latest
             python: "3.12"
+            label: windows-3.12
             venv_python: ./.ci-venv/Scripts/python.exe
             venv_smtw: ./.ci-venv/Scripts/smtw.exe
             venv_fable_lite: ./.ci-venv/Scripts/fable-lite.exe
           - os: windows-latest
             python: "3.14"
+            label: windows-3.14
             venv_python: ./.ci-venv/Scripts/python.exe
             venv_smtw: ./.ci-venv/Scripts/smtw.exe
             venv_fable_lite: ./.ci-venv/Scripts/fable-lite.exe
