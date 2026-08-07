@@ -20,7 +20,7 @@ from .ledger import (
 )
 from .ledger_storage import ledger_path
 from .ledger_v1 import apply_v1_event, sequence_value
-from .ledger_v2 import apply_v2_event, default_v2_ledger, turn_is_closed
+from .ledger_v2 import apply_v2_event, default_v2_ledger, turn_is_terminal
 from .provenance_store import (
     BaselineAdvance,
     BaselineInitialization,
@@ -259,7 +259,7 @@ def ensure_turn_bootstrap(
             if isinstance(raw_turn, dict) and raw_turn.get("turn_id") != turn_id:
                 result = TurnBootstrap(TurnBootstrapStatus.STALE_TURN, None)
                 return result
-            if turn is None and turn_is_closed(ledger, owner, turn_id):
+            if turn is None and turn_is_terminal(ledger, owner, turn_id):
                 result = TurnBootstrap(TurnBootstrapStatus.STALE_TURN, None)
                 return result
             if require_existing_turn and turn is None:

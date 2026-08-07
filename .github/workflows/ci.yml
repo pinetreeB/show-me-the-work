@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
 
+# CI-04: a new push to the same PR supersedes the previous run. Without this,
+# both runs stay queued and compete for the same Windows runners, which roughly
+# doubles the wait. Pushes to main are never cancelled — those runs are the
+# record for a merged commit and must finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     # CI-03: the check name must stay well under GitHub's 100-character status

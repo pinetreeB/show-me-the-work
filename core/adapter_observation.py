@@ -31,7 +31,7 @@ from .provenance_policy import (
 from .provenance_lifecycle import ProvenanceLifecycle
 from .provenance_progress import scan_progress
 from .provenance_lifecycle_types import ObservationResult, ObservedChange
-from .ledger_v2 import turn_is_closed
+from .ledger_v2 import turn_is_terminal
 from .project_root import is_user_home_root
 from .provenance_store import SnapshotStoreError
 from .provenance_turn_resume import MissingTurnBaselineError, TurnBootstrapError
@@ -836,11 +836,11 @@ def _active_invocation(root: Path, invocation: CanonicalInvocation) -> Canonical
         if (
             isinstance(turn_id, str)
             and turn_id
-            and not turn_is_closed(ledger, invocation.agent_key, invocation.turn_id)
+            and not turn_is_terminal(ledger, invocation.agent_key, invocation.turn_id)
         ):
             return replace(invocation, turn_id=turn_id, turn_synthetic=False)
         return replace(invocation, identity_conflict=True)
-    if turn_is_closed(ledger, invocation.agent_key, invocation.turn_id):
+    if turn_is_terminal(ledger, invocation.agent_key, invocation.turn_id):
         return replace(invocation, identity_conflict=True)
     if not invocation.identity_synthetic:
         return invocation
@@ -863,8 +863,8 @@ def _active_invocation(root: Path, invocation: CanonicalInvocation) -> Canonical
         turn_id != invocation.turn_id
         and not invocation.turn_synthetic
         and (
-            turn_is_closed(ledger, key, invocation.turn_id)
-            or _turn_closed_for_host_agent(ledger, invocation)
+            turn_is_terminal(ledger, key, invocation.turn_id)
+            or _turn_terminal_for_host_agent(ledger, invocation)
         )
     ):
         return replace(invocation, identity_conflict=True)
@@ -877,26 +877,33 @@ def _active_invocation(root: Path, invocation: CanonicalInvocation) -> Canonical
     )
 
 
-def _turn_closed_for_host_agent(
+def _turn_terminal_for_host_agent(
     ledger: JsonObject,
     invocation: CanonicalInvocation,
 ) -> bool:
-    closed = ledger.get("closed_turns")
-    if not isinstance(closed, list):
-        return False
-    for item in closed:
-        if not isinstance(item, dict) or item.get("turn_id") != invocation.turn_id:
+    """host/agent가 같은 다른 세션 키에서 종료된 턴을 찾는다.
+
+    W5: closed와 retired를 **함께** 본다. retired를 빼면, 옛 세션 키로 퇴역한 턴을
+    새 세션 키로 조회할 때 찾지 못해 stale invocation이 조용히 새 턴에 바인딩된다
+    (closed 턴에서는 거부되는 것과 동작이 갈린다).
+    """
+    for field in ("closed_turns", "retired_turns"):
+        entries = ledger.get(field)
+        if not isinstance(entries, list):
             continue
-        key = item.get("agent_key")
-        if not isinstance(key, str):
-            continue
-        parts = key.split(":", 2)
-        if (
-            len(parts) == 3
-            and parts[0] == invocation.host
-            and parts[2] == invocation.agent
-        ):
-            return True
+        for item in entries:
+            if not isinstance(item, dict) or item.get("turn_id") != invocation.turn_id:
+                continue
+            key = item.get("agent_key")
+            if not isinstance(key, str):
+                continue
+            parts = key.split(":", 2)
+            if (
+                len(parts) == 3
+                and parts[0] == invocation.host
+                and parts[2] == invocation.agent
+            ):
+                return True
     return False
 
 

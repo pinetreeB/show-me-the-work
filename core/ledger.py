@@ -40,7 +40,7 @@ from .ledger_schema import (
 )
 from .ledger_storage import atomic_write_text, ledger_path as ledger_path, state_dir as state_dir
 from .ledger_v1 import apply_v1_event, classify_change_kind as classify_change_kind, default_ledger, sequence_value
-from .ledger_v2 import apply_v2_event, default_v2_ledger, turn_is_closed
+from .ledger_v2 import apply_v2_event, default_v2_ledger, turn_is_terminal
 from .release_gate import auto_migration_enabled, status_backfill_enabled
 from .state_layout import StateLayoutError, state_write_scope
 from .verification_covers import active_turn, agent_key, capture_covers
@@ -351,7 +351,7 @@ def record_event_if_current_turn(
                 return False
             if requested_turn_id is not None and not isinstance(requested_turn_id, str):
                 return False
-            if isinstance(requested_turn_id, str) and turn_is_closed(
+            if isinstance(requested_turn_id, str) and turn_is_terminal(
                 ledger, agent_key(payload), requested_turn_id
             ):
                 return False

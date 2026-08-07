@@ -30,6 +30,8 @@ NO_TOOL_OUTPUT: Final = "(no tool output)"
 MAX_ATTRIBUTION_PATHS: Final = 10_000
 MAX_PATH_OWNERS: Final = 8
 MAX_CLOSED_TURNS: Final = 256
+MAX_RETIRED_TURNS: Final = 256
+RETIRED_UNVERIFIED: Final = "unverified_legacy"
 INVOCATION_LEASE: Final = timedelta(minutes=30)
 TURN_STALE_AFTER: Final = timedelta(hours=24)
 
@@ -186,6 +188,17 @@ def apply_v2_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
     requested_turn_id = payload.get("turn_id")
     raw_before_gc = active.get(key)
     if (
+        isinstance(requested_turn_id, str)
+        and requested_turn_id
+        and turn_is_retired(ledger, key, requested_turn_id)
+    ):
+        # W5: 퇴역 턴은 **이벤트 종류와 무관하게** 되살아나면 안 된다. 아래 가드들은
+        # `event != "prompt"` 조건을 달고 있어서, 퇴역한 turn id로 UserPromptSubmit이
+        # 재생되면 prompt 분기가 그 턴을 active_turns에 다시 만들었다(retired 항목은
+        # 남은 채로). prompt 어댑터는 record_event를 직접 부르므로 상위 가드도 못 거친다.
+        # 운영자가 증거 부족으로 내린 퇴역 판단은 재생으로 뒤집히지 않아야 한다.
+        return ledger
+    if (
         event != "prompt"
         and isinstance(raw_before_gc, dict)
         and isinstance(requested_turn_id, str)
@@ -197,7 +210,7 @@ def apply_v2_event(ledger: JsonObject, payload: Mapping[str, JsonValue]) -> Json
         event != "prompt"
         and not isinstance(raw_before_gc, dict)
         and isinstance(requested_turn_id, str)
-        and turn_is_closed(ledger, key, requested_turn_id)
+        and turn_is_terminal(ledger, key, requested_turn_id)
     ):
         return ledger
     preserve_key = (
@@ -807,14 +820,37 @@ def _gc_stale_turns(
 
 
 def turn_is_closed(ledger: Mapping[str, JsonValue], agent: str, turn_id: str) -> bool:
-    closed = ledger.get("closed_turns")
-    if not isinstance(closed, list):
+    return _turn_in_terminal_list(ledger, "closed_turns", agent, turn_id)
+
+
+def turn_is_retired(ledger: Mapping[str, JsonValue], agent: str, turn_id: str) -> bool:
+    """W5: 증거 부족으로 퇴역한 턴인지. 완료(closed)와 구분해 기록·조회한다."""
+    return _turn_in_terminal_list(ledger, "retired_turns", agent, turn_id)
+
+
+def turn_is_terminal(ledger: Mapping[str, JsonValue], agent: str, turn_id: str) -> bool:
+    """W5: replay 차단용 단일 terminal 판정 — closed와 retired를 함께 본다.
+
+    퇴역 턴을 이 판정에 연결하지 않으면 같은 turn id의 이벤트가 다시 수용되어
+    active_turns에 되살아난다(codex-verify.md §3 실측).
+    """
+    return turn_is_closed(ledger, agent, turn_id) or turn_is_retired(ledger, agent, turn_id)
+
+
+def _turn_in_terminal_list(
+    ledger: Mapping[str, JsonValue],
+    field: str,
+    agent: str,
+    turn_id: str,
+) -> bool:
+    entries = ledger.get(field)
+    if not isinstance(entries, list):
         return False
     return any(
         isinstance(item, dict)
         and item.get("agent_key") == agent
         and item.get("turn_id") == turn_id
-        for item in closed
+        for item in entries
     )
 
 
@@ -859,6 +895,59 @@ def closed_turn_capacity_available(
     closed = ledger.get("closed_turns")
     entries = [item for item in closed if isinstance(item, dict)] if isinstance(closed, list) else []
     return len(entries) + additional <= MAX_CLOSED_TURNS
+
+
+def remember_retired_turn(
+    ledger: JsonObject,
+    agent: str,
+    turn: Mapping[str, JsonValue],
+    event_seq: int,
+    *,
+    archive_digest: str,
+    resolution: str = RETIRED_UNVERIFIED,
+) -> None:
+    """W5: 턴을 완료가 아니라 '증거 부족 퇴역'으로 기록한다.
+
+    ``closed_turns``와 달리 cap을 밀어내지 않는다. 밀려난 퇴역 기록은 원문 archive를
+    가리키는 유일한 참조를 잃기 때문이다. cap 초과는 호출 전에 막아야 한다
+    (:func:`retired_turn_capacity_available`).
+    """
+    turn_id = turn.get("turn_id")
+    if not isinstance(turn_id, str) or not turn_id:
+        return
+    entries = _terminal_entries(ledger, "retired_turns")
+    entries = [
+        item
+        for item in entries
+        if item.get("agent_key") != agent or item.get("turn_id") != turn_id
+    ]
+    entries.append(
+        {
+            "agent_key": agent,
+            "turn_id": turn_id,
+            "retired_seq": max(0, event_seq),
+            "resolution": resolution,
+            "archive_digest": archive_digest,
+        }
+    )
+    if len(entries) > MAX_RETIRED_TURNS:
+        raise ValueError("retired_turns capacity exceeded")
+    ledger["retired_turns"] = entries
+
+
+def retired_turn_capacity_available(
+    ledger: Mapping[str, JsonValue],
+    additional: int = 1,
+) -> bool:
+    """W5: 퇴역 기록을 추가해도 cap 이내인지 사전 판단한다."""
+    if additional < 0:
+        return False
+    return len(_terminal_entries(ledger, "retired_turns")) + additional <= MAX_RETIRED_TURNS
+
+
+def _terminal_entries(ledger: Mapping[str, JsonValue], field: str) -> list[JsonObject]:
+    entries = ledger.get(field)
+    return [item for item in entries if isinstance(item, dict)] if isinstance(entries, list) else []
 
 
 def _forget_closed_turn(

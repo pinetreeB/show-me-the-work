@@ -149,9 +149,15 @@ def test_doctor_reports_statusless_invocation_as_invalid_with_needs_migration(
     assert "invocations" in snapshot["ledger_error_field"]
     assert "status" in snapshot["ledger_error_field"]
     assert snapshot["needs_migration"] is True
-    assert snapshot["next_safe_command"] == [
-        "smtw migrate --invocation-statuses --check"
-    ]
+    # W5(2026-08-07): 구 안내였던 `smtw migrate --invocation-statuses --check`는
+    # status-less row에 started_at이 없으면 언제나 unsafe로 판정되어 **실행해도 아무것도
+    # 풀 수 없는 막다른 명령**이었다(실측: required=209, safe=0, unsafe=209). 진단이
+    # 막다른 길을 권하지 않도록 실제 복구 경로인 maintenance plan을 안내한다. plan은
+    # status-less 수·영향 턴·제외 사유를 모두 보고하므로 구 명령의 진단 정보를 포함한다.
+    assert snapshot["next_safe_command"] == ["smtw maintenance plan"]
+    # 진단은 실제 개수를 정직하게 보고해야 한다. 형식 오류에서 0을 반환하면
+    # "활성 턴 없음"으로 오독되어 진단이 스스로를 오진한다.
+    assert snapshot["active_turns"] >= 1
 
 
 def test_doctor_healthy_v2_ledger_needs_no_migration(tmp_path: Path) -> None:
