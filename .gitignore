@@ -19,3 +19,8 @@ eval/ab*/**/ledger.json
 eval/ab*/**/*.png
 eval/results/
 uv.lock
+/.smtw/
+/.fable-lite/
+/.smtw.migrating-*
+/.smtw-migration.lock
+/.smtw-migration-receipt.json

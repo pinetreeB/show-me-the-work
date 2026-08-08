@@ -260,3 +260,53 @@ def test_stale_statusless_invocation_with_lease_evidence_backfills_closed(
     assert invocations["tool:statusless"]["status"] == "closed"
     assert _archive_path(destination, source).read_bytes() == source
     assert validate_v2_ledger(persisted) is persisted
+
+# ---------------------------------------------------------------------------
+# MIGRATION-04: post-migration activation guidance
+# ---------------------------------------------------------------------------
+
+
+def _seed_legacy_activation(root: Path) -> None:
+    legacy = root / ".fable-lite"
+    legacy.mkdir(parents=True, exist_ok=True)
+    (legacy / "config.json").write_text(
+        json.dumps({"schema_version": 1, "supervision": True}),
+        encoding="utf-8",
+    )
+
+
+def test_migrate_warns_while_activation_still_depends_on_legacy(tmp_path: Path) -> None:
+    """`config.json`은 transient라 이전되지 않는다.
+
+    그래서 마이그레이션 뒤에도 활성화는 legacy 디렉터리에 매달려 있고, 그 상태로
+    legacy를 지우면 **감독이 조용히 꺼진다**(상태는 healthy로 보이고 게이트만 사라진다).
+    2026-08-08 실측으로 확인된 함정 — 도구가 먼저 알려야 한다.
+    """
+    from smtw.migrate import _post_migration_next_step
+
+    _seed_legacy_activation(tmp_path)
+    (tmp_path / ".smtw").mkdir()
+
+    for result in ("MIGRATED", "ALREADY_MIGRATED"):
+        guidance = _post_migration_next_step(tmp_path, {"result": result})
+        assert "smtw init" in guidance, f"{result}에서 안내가 없다"
+
+
+def test_migrate_stays_silent_once_canonical_config_exists(tmp_path: Path) -> None:
+    from smtw.migrate import _post_migration_next_step
+
+    (tmp_path / ".smtw").mkdir()
+    (tmp_path / ".smtw.toml").write_text(
+        "schema_version = 1\nsupervision = true\n", encoding="utf-8"
+    )
+
+    assert _post_migration_next_step(tmp_path, {"result": "MIGRATED"}) == ""
+
+
+def test_migrate_does_not_warn_before_migrating(tmp_path: Path) -> None:
+    """아직 이전 전이면 legacy config에 의존하는 것이 정상이므로 경고하지 않는다."""
+    from smtw.migrate import _post_migration_next_step
+
+    _seed_legacy_activation(tmp_path)
+
+    assert _post_migration_next_step(tmp_path, {"result": "READY"}) == ""
