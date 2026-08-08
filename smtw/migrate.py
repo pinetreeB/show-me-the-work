@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from adapters.claude_code.project_config import load_project_config
 from core.ledger_migration import (
     LedgerMigrationError,
     inspect_v2_invocation_statuses,
@@ -75,6 +76,7 @@ def run_migrate(args: argparse.Namespace) -> int:
         ),
         "check": bool(args.check),
     }
+    payload["next_step"] = _post_migration_next_step(root, payload)
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     else:
@@ -85,7 +87,31 @@ def run_migrate(args: argparse.Namespace) -> int:
         print(f"Result: {payload['result']}")
         print(f"Authority: {payload['authority']}")
         print(f"Legacy retained: {payload['legacy_retained']}")
+        if payload["next_step"]:
+            print(f"Next step: {payload['next_step']}")
     return result.exit_code
+
+
+def _post_migration_next_step(root: Path, payload: dict[str, object]) -> str:
+    """MIGRATION-04: 활성화가 아직 legacy config에 매달려 있으면 알린다.
+
+    `config.json`은 transient로 분류돼 이전되지 않는다(state_layout.py). 그래서
+    마이그레이션 뒤에도 활성화는 legacy 디렉터리에 남은 파일에 의존한다. 이 상태로
+    legacy를 지우면 **감독이 조용히 꺼진다** — 상태는 healthy로 보이고 게이트만
+    사라지므로 알아채기 어렵다. 2026-08-08 실측으로 확인된 함정이다.
+    """
+    if payload.get("result") not in {"MIGRATED", "ALREADY_MIGRATED"}:
+        return ""
+    try:
+        config = load_project_config(root)
+    except Exception:  # noqa: BLE001 — 진단 보조이므로 실패해도 마이그레이션을 막지 않는다
+        return ""
+    if config.source is not None and config.source.value != "legacy":
+        return ""
+    return (
+        "smtw init  (activation still resolves from the legacy config; "
+        "deleting the legacy directory before this turns supervision off)"
+    )
 
 
 def _active_turn_count(inspection: LayoutInspection) -> str:
