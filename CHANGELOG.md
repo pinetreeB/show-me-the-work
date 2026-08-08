@@ -46,6 +46,18 @@
   퇴역한 턴이 새 세션 키 조회에서 누락되고 오래된 invocation이 조용히 새 턴에 붙었습니다.
   완료 턴에서는 거부되던 것이 퇴역 턴에서만 뚫려 있었습니다.
 
+- **마이그레이션 뒤 legacy 디렉터리를 지우면 감독이 조용히 꺼졌습니다.** `config.json`은
+  transient로 분류돼 이전되지 않으므로, 이전 후에도 활성화는 legacy 디렉터리에 남은 파일에
+  매달려 있습니다. 그 상태로 `.fable-lite`를 지우면 `Activation`이 `inactive`가 되는데,
+  **장부는 여전히 `healthy`로 보이고 게이트만 사라집니다.** 알아채기 어려운 실패입니다.
+  이제 `smtw migrate`가 이 상태를 감지해 `smtw init`을 안내합니다.
+
+  이미 이전을 마친 프로젝트라면 지금 확인하세요:
+
+  ```
+  smtw doctor    # Activation: inactive 이면 -> smtw init
+  ```
+
 ### Changed
 
 - `turn_is_terminal`이 replay 판정의 단일 진입점입니다. 완료와 퇴역을 함께 봅니다.
