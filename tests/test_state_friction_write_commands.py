@@ -7,10 +7,12 @@ relative paths written after `cd .smtw`.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
+from claude_hook_support import HookHarness, write_config
 from core.contract import evaluate_state_file_friction
 from core.shell_hints import shell_candidate_paths
 
@@ -250,3 +252,123 @@ def test_relative_write_after_a_backtick_cd_is_blocked(
 
 def test_backtick_cd_still_allows_reads(tmp_path: Path) -> None:
     assert _friction(tmp_path, "cd `pwd`/src && ls")["decision"] == "allow"
+
+
+# --- Codex review r4 follow-up ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("< /dev/null install file .smtw/ledger.json", ".smtw/ledger.json"),
+        ("</dev/null install file .smtw/ledger.json", ".smtw/ledger.json"),
+        ("0< /dev/null install file .smtw/ledger.json", ".smtw/ledger.json"),
+        ("0</dev/null install file .smtw/ledger.json", ".smtw/ledger.json"),
+        ("<<<x install file .smtw/ledger.json", ".smtw/ledger.json"),
+        ("> own.log install file .smtw/ledger.json", ".smtw/ledger.json"),
+        ("2>/dev/null install file .smtw/ledger.json", ".smtw/ledger.json"),
+        (">>own.log install -t .smtw/bin file", ".smtw/bin"),
+        ("< in.txt tee .smtw/ledger.json", ".smtw/ledger.json"),
+        ("< fix.diff patch .smtw/ledger.json", ".smtw/ledger.json"),
+        ("cd src && < /dev/null install file ../.smtw/ledger.json", "../.smtw/ledger.json"),
+        ("LC_ALL=C install file .smtw/ledger.json", ".smtw/ledger.json"),
+        ("A=1 B=2 < /dev/null install file .smtw/ledger.json", ".smtw/ledger.json"),
+        ("install file .smtw/ledger.json <> rw.txt", ".smtw/ledger.json"),
+        ("install file .smtw/ledger.json 3<>rw.txt", ".smtw/ledger.json"),
+        ("install file .smtw/ledger.json <&0", ".smtw/ledger.json"),
+        ("install file .smtw/ledger.json 0<&-", ".smtw/ledger.json"),
+    ],
+)
+def test_redirections_and_assignments_before_the_command_name_are_skipped(
+    tmp_path: Path, command: str, expected: str
+) -> None:
+    # A leading redirection or assignment is not the command name.
+    assert expected in shell_candidate_paths(command), command
+    assert _friction(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("< /dev/null install -m 755 build/tool bin/tool", ("bin/tool",)),
+        ("LC_ALL=C install build/tool bin/tool", ("bin/tool",)),
+        ("install build/tool bin/tool <&0", ("bin/tool",)),
+        ("install build/tool bin/tool <> rw.txt", ("rw.txt", "bin/tool")),
+    ],
+)
+def test_leading_redirections_keep_project_writes_allowed(
+    tmp_path: Path, command: str, expected: tuple[str, ...]
+) -> None:
+    assert shell_candidate_paths(command) == expected
+    assert _friction(tmp_path, command)["decision"] == "allow", command
+
+
+def test_claude_hook_blocks_install_after_a_leading_input_redirection(
+    tmp_path: Path,
+) -> None:
+    # Given: a real project whose state directory exists.
+    root = tmp_path / "project"
+    root.mkdir()
+    config = write_config(root)
+    ledger = config.parent / "ledger.json"
+    payload = {
+        "session_id": "followup-r4-redirect",
+        "cwd": str(root),
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": f"< /dev/null install file {config.parent.name}/ledger.json"
+        },
+    }
+
+    # When: the real PreTool adapter evaluates the command.
+    result = HookHarness(root, root, tmp_path / "plugin-data").run(
+        "pre_tool_use.py", payload
+    )
+
+    # Then: the state-file friction denies it.
+    decision = result.output.get("hookSpecificOutput")
+    assert isinstance(decision, dict), result.output
+    assert decision.get("permissionDecision") == "deny"
+    assert "R2-friction" in str(decision.get("permissionDecisionReason"))
+    assert not ledger.exists()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd .smtw && echo x >> ~/notes.txt",
+        "cd .fable-lite && echo x >> ~/notes.txt",
+        "cd .smtw && echo x >> $HOME/notes.txt",
+        "cd .smtw && curl -o ~/x https://example.invalid/x",
+        "cd .smtw; install file ~/bin/tool",
+    ],
+)
+def test_home_anchored_writes_after_cd_into_state_are_allowed(
+    tmp_path: Path, command: str
+) -> None:
+    # `~` and `$HOME` do not move with `cd`, so the write stays outside `.smtw`.
+    assert _friction(tmp_path, command)["decision"] == "allow", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd .smtw && echo x >> ./ledger.json",
+        "cd .smtw && echo x >> ledger.json",
+        "cd .smtw && install file ledger.json",
+    ],
+)
+def test_relative_writes_after_cd_into_state_stay_blocked(
+    tmp_path: Path, command: str
+) -> None:
+    assert _friction(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Git Bash drive paths exist only on Windows")
+def test_git_bash_drive_path_into_state_stays_blocked_after_cd(tmp_path: Path) -> None:
+    drive, rest = str(tmp_path).replace("\\", "/").split(":", 1)
+    target = f"/{drive.lower()}{rest}/.smtw/ledger.json"
+
+    result = _friction(tmp_path, f"cd src && echo x >> {target}")
+
+    assert result["decision"] == "block", target
