@@ -226,3 +226,33 @@ def test_claude_adapter_checks_relative_target_in_host_shell_cwd(tmp_path: Path)
     assert decision.get("permissionDecision") == "deny"
     assert "state_dir_protected" in str(decision.get("permissionDecisionReason"))
     assert config.exists()
+
+
+# --- Codex review r2 follow-up: input redirection on cd ---------------------
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("cd .smtw < /dev/null && echo x", ((".smtw",), False)),
+        ("cd src </dev/null && rm peer.py", (("src",), False)),
+        ("< /dev/null cd src && rm peer.py", (("src",), False)),
+    ],
+)
+def test_input_redirection_is_not_a_cd_operand(
+    command: str, expected: tuple[tuple[str, ...], bool]
+) -> None:
+    assert command_working_directories(command) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cd src < /dev/null && rm peer.py", "< /dev/null cd src && rm peer.py"],
+)
+def test_cd_with_input_redirection_checks_the_new_directory(
+    tmp_path: Path, command: str
+) -> None:
+    result = r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "peer_unsettled"

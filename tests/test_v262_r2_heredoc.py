@@ -149,7 +149,6 @@ def test_r2_07b_shell_options_do_not_hide_heredoc_stdin_script(
     (
         'bash -c "printf safe" <<EOF\nrm peer.py\nEOF',
         'bash --command "printf safe" <<EOF\nrm peer.py\nEOF',
-        "bash script.sh <<EOF\nrm peer.py\nEOF",
     ),
 )
 def test_r2_07b_separate_shell_payload_leaves_heredoc_as_data(
@@ -158,6 +157,20 @@ def test_r2_07b_separate_shell_payload_leaves_heredoc_as_data(
 ) -> None:
     assert parse_destructive_commands(command) == ()
     assert _decision(tmp_path, command) == "allow"
+
+
+def test_r2_07b_script_file_with_heredoc_is_judged_like_the_script_alone(
+    tmp_path: Path,
+) -> None:
+    # The heredoc is data for script.sh, so `rm peer.py` is not reported; the
+    # unreadable script itself is judged exactly as `bash script.sh` is.  A
+    # heredoc used to skip that check, which also skipped `bash -c 'rm …' <<EOF`.
+    command = "bash script.sh <<EOF\nrm peer.py\nEOF"
+
+    assert parse_destructive_commands(command) == parse_destructive_commands(
+        "bash script.sh"
+    )
+    assert all(not item.targets for item in parse_destructive_commands(command))
 
 
 @pytest.mark.parametrize(

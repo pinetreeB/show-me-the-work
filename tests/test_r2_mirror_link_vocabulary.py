@@ -122,3 +122,62 @@ def test_rsync_remote_source_name_is_placed_under_the_destination() -> None:
     parsed = parse_destructive_commands("rsync host:dir/a.txt dest/")
 
     assert [item.targets for item in parsed] == [("dest/", "dest/a.txt")]
+
+
+# --- Codex review r2 follow-up: value-taking rsync options ------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rsync -a --out-format --dry-run --delete tmp/ src/",
+        "rsync -a --log-format --dry-run --delete tmp/ src/",
+        "rsync -a --info --dry-run --delete tmp/ src/",
+        "rsync -a --bwlimit --dry-run --delete tmp/ src/",
+        "rsync -a --log-file-format --list-only --delete tmp/ src/",
+        "rsync -a --iconv --version --delete tmp/ src/",
+        "rsync -a -T -n --delete tmp/ src/",
+    ],
+)
+def test_rsync_option_value_spelled_like_dry_run_is_not_a_dry_run(
+    tmp_path: Path, command: str
+) -> None:
+    # popt hands the next word to a value-taking option even when it looks like
+    # an option, so `--out-format --dry-run` prints "--dry-run" and deletes.
+    result = r2_gate(tmp_path, command)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "peer_unsettled"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rsync -a --out-format=%n --dry-run --delete tmp/ src/",
+        "rsync -a --out-format %n --dry-run --delete tmp/ src/",
+        "rsync -a --info=progress2 --dry-run --delete tmp/ src/",
+        "rsync -a --info progress2 -n --delete tmp/ src/",
+    ],
+)
+def test_rsync_real_dry_run_after_a_valued_option_is_allowed(
+    tmp_path: Path, command: str
+) -> None:
+    assert r2_gate(tmp_path, command)["decision"] == "allow", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ln -sf other.py peer.py < /dev/null",
+        "ln -sf other.py peer.py </dev/null",
+        "rsync -a --delete tmp/ src/ < /dev/null",
+        "rsync -a tmp/ src/ </dev/null",
+    ],
+)
+def test_input_redirection_does_not_replace_the_mirror_or_link_destination(
+    tmp_path: Path, command: str
+) -> None:
+    result = r2_gate(tmp_path, command)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "peer_unsettled"
