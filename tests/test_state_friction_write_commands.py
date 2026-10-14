@@ -230,3 +230,23 @@ def test_bundled_options_keep_project_writes_allowed(
 ) -> None:
     assert shell_candidate_paths(command) == expected
     assert _friction(tmp_path, command)["decision"] == "allow", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd `pwd`/.smtw && echo x > ledger.json",
+        'cd "`pwd`/.smtw" && echo x >> ledger.json',
+    ],
+)
+def test_relative_write_after_a_backtick_cd_is_blocked(
+    tmp_path: Path, command: str
+) -> None:
+    result = _friction(tmp_path, command)
+
+    assert result["decision"] == "block", command
+    assert "절대경로" in str(result["reason"])
+
+
+def test_backtick_cd_still_allows_reads(tmp_path: Path) -> None:
+    assert _friction(tmp_path, "cd `pwd`/src && ls")["decision"] == "allow"
