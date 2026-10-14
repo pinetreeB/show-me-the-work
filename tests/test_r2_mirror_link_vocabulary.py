@@ -61,3 +61,11 @@ def test_single_operand_forced_link_targets_the_basename() -> None:
     parsed = parse_destructive_commands("ln -sf ../shared/peer.py")
 
     assert [item.targets for item in parsed] == [("peer.py",)]
+
+
+@pytest.mark.parametrize(
+    "command",
+    ['rsync -e"nc relay" --delete tmp/ src/', "rsync -ae nc --delete tmp/ src/"],
+)
+def test_rsync_value_letters_are_not_read_as_dry_run(tmp_path: Path, command: str) -> None:
+    assert r2_gate(tmp_path, command)["decision"] == "block", command
