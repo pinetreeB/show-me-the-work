@@ -135,3 +135,98 @@ def test_output_redirection_is_not_read_as_the_write_destination(
 
 def test_install_hints_drop_redirect_operators_and_descriptors() -> None:
     assert shell_candidate_paths("install a b 2> err.log") == ("err.log", "b")
+
+
+# --- Codex review r2 follow-up ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd .smtw < /dev/null && echo x >> ledger.json",
+        "cd .smtw </dev/null && echo x >> ledger.json",
+        "< /dev/null cd .smtw && echo x >> ledger.json",
+    ],
+)
+def test_cd_with_input_redirection_still_protects_state_files(
+    tmp_path: Path, command: str
+) -> None:
+    assert _friction(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cd "$DIR" && echo x >> ledger.json',
+        "cd - && echo x > ledger.json",
+        "popd && echo x >> ledger.json",
+        'cd "$DIR" && install build/a ledger.json',
+        'cd "$(git rev-parse --show-toplevel)" && echo x > out.txt',
+    ],
+)
+def test_relative_write_after_an_unresolved_cd_is_blocked(
+    tmp_path: Path, command: str
+) -> None:
+    # The unknown directory may be `.smtw`, so a relative write cannot be judged.
+    result = _friction(tmp_path, command)
+
+    assert result["decision"] == "block", command
+    assert "절대경로" in str(result["reason"])
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cd "$DIR" && ls',
+        'cd "$DIR" && cat ledger.json',
+        'cd "$DIR" && echo x >> /tmp/smtw-followup.log',
+        'cd "$DIR" && echo x > C:/logs/out.txt',
+        'cd "$DIR" && make 2>/dev/null',
+        'cd "$DIR" && echo x > "$OUT"',
+        'cd "$DIR" && echo x > ~/notes.txt',
+    ],
+)
+def test_unresolved_cd_still_allows_reads_and_anchored_writes(
+    tmp_path: Path, command: str
+) -> None:
+    assert _friction(tmp_path, command)["decision"] == "allow", command
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("install -Dt .smtw file", ".smtw"),
+        ("install -Dt.smtw file", ".smtw"),
+        ("install -Dvt .smtw file", ".smtw"),
+        ("install -Dm644 file -t .smtw", ".smtw"),
+        ("install --target=.smtw file", ".smtw"),
+        ("install --targ .smtw file", ".smtw"),
+        ("install -Dd .smtw/new", ".smtw/new"),
+        ("install --dir .smtw/new", ".smtw/new"),
+        ("patch -Ed.smtw -p0 < fix.diff", ".smtw"),
+        ("patch --dir=.smtw -p0 < fix.diff", ".smtw"),
+        ("patch -No .smtw/out.json in.json fix.diff", ".smtw/out.json"),
+        ("patch --out .smtw/out.json in.json fix.diff", ".smtw/out.json"),
+    ],
+)
+def test_bundled_and_abbreviated_destination_options_are_decoded(
+    tmp_path: Path, command: str, expected: str
+) -> None:
+    assert expected in shell_candidate_paths(command), command
+    assert _friction(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("install -Dm644 build/tool bin/tool", ("bin/tool",)),
+        ("install -Dm 644 build/tool bin/tool", ("bin/tool",)),
+        ("install -Dt bin build/tool", ("bin",)),
+        ("patch -p1 -i fix.diff", ()),
+    ],
+)
+def test_bundled_options_keep_project_writes_allowed(
+    tmp_path: Path, command: str, expected: tuple[str, ...]
+) -> None:
+    assert shell_candidate_paths(command) == expected
+    assert _friction(tmp_path, command)["decision"] == "allow", command
