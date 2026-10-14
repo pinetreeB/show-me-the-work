@@ -1326,6 +1326,190 @@ def _detect_transfer(tokens: list[str]) -> ParsedDestructiveCommand | None:
     )
 
 
+_RSYNC_SHORT_VALUE_LETTERS: Final[frozenset[str]] = frozenset("efBTM@")
+_RSYNC_LONG_VALUE_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "--backup-dir",
+        "--chmod",
+        "--chown",
+        "--compare-dest",
+        "--copy-dest",
+        "--exclude",
+        "--exclude-from",
+        "--files-from",
+        "--filter",
+        "--include",
+        "--include-from",
+        "--link-dest",
+        "--log-file",
+        "--max-delete",
+        "--max-size",
+        "--min-size",
+        "--partial-dir",
+        "--password-file",
+        "--rsh",
+        "--rsync-path",
+        "--suffix",
+        "--temp-dir",
+        "--timeout",
+    }
+)
+
+
+def _is_remote_transfer_operand(operand: str) -> bool:
+    text = _unquote(operand)
+    if text.casefold().startswith("rsync://"):
+        return True
+    head, separator, _rest = text.partition(":")
+    if not separator or (len(head) == 1 and head.isalpha()):
+        return False
+    return "/" not in head and "\\" not in head
+
+
+def _detect_rsync(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    """rsync overwrites like cp; ``--delete*`` also empties the destination tree."""
+    if _command_name(tokens[0]) != "rsync":
+        return None
+    positionals: list[str] = []
+    deletes = False
+    remove_sources = False
+    recursive = False
+    after_double_dash = False
+    index = 1
+    while index < len(tokens):
+        token = _unquote(tokens[index])
+        if not after_double_dash and token == "--":
+            after_double_dash = True
+            index += 1
+            continue
+        if not after_double_dash and token.startswith("--"):
+            name, separator, _value = token.partition("=")
+            if name in {"--help", "--version", "--dry-run", "--list-only"}:
+                return None
+            if name == "--del" or name.startswith("--delete"):
+                deletes = True
+            elif name == "--remove-source-files":
+                remove_sources = True
+            elif name in {"--archive", "--recursive"}:
+                recursive = True
+            elif not separator and name in _RSYNC_LONG_VALUE_OPTIONS:
+                index += 1
+            index += 1
+            continue
+        if not after_double_dash and token.startswith("-") and token != "-":
+            cluster = token[1:]
+            if "n" in cluster:
+                return None  # -n is --dry-run
+            recursive = recursive or "a" in cluster or "r" in cluster
+            for position, letter in enumerate(cluster):
+                if letter in _RSYNC_SHORT_VALUE_LETTERS:
+                    if position == len(cluster) - 1:
+                        index += 1
+                    break
+            index += 1
+            continue
+        positionals.append(tokens[index])
+        index += 1
+    if len(positionals) < 2:
+        return None
+    destination = positionals[-1]
+    local_sources = [
+        source for source in positionals[:-1] if not _is_remote_transfer_operand(source)
+    ]
+    targets: list[str] = []
+    containers: list[str] = []
+    if not _is_remote_transfer_operand(destination):
+        candidates = _transfer_destination_candidates(
+            local_sources, destination, preserve_parents=False
+        )
+        targets.extend(candidates)
+        if deletes or (
+            recursive
+            and any(_unquote(source).endswith(("/", "\\")) for source in local_sources)
+        ):
+            # `--delete*` empties the tree; `src/` copies *contents* into it.
+            containers.append(destination)
+        elif recursive:
+            containers.extend(candidates[1:])
+    if remove_sources:
+        targets.extend(local_sources)
+        if recursive:
+            containers.extend(local_sources)
+    if not targets:
+        return None
+    return _resolved_static_targets(
+        CATEGORY_REMOVE if deletes or remove_sources else CATEGORY_TRUNCATE,
+        targets,
+        container_targets=containers,
+    )
+
+
+def _detect_robocopy(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    """robocopy overwrites the destination tree; /MIR and /PURGE delete in it."""
+    if _command_name(tokens[0]) != "robocopy":
+        return None
+    positionals: list[str] = []
+    options: set[str] = set()
+    for raw in tokens[1:]:
+        token = _unquote(raw)
+        if token.startswith("/"):
+            options.add(token.casefold().split(":", 1)[0])
+        else:
+            positionals.append(raw)
+    if "/l" in options or "/?" in options or len(positionals) < 2:
+        return None
+    source, destination = positionals[0], positionals[1]
+    containers = [destination]
+    targets = [destination]
+    if options & {"/mov", "/move"}:
+        containers.append(source)
+        targets.append(source)
+    deletes = bool(options & {"/mir", "/purge", "/mov", "/move"})
+    return _resolved_static_targets(
+        CATEGORY_REMOVE if deletes else CATEGORY_TRUNCATE,
+        targets,
+        container_targets=containers,
+    )
+
+
+def _detect_forced_link(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    """``ln -f``/``ln -sf`` replaces an existing file at the link name."""
+    if _command_name(tokens[0]) != "ln":
+        return None
+    force = False
+    for raw in tokens[1:]:
+        token = _unquote(raw)
+        if token == "--":
+            break
+        if token in {"--help", "--version"}:
+            return None
+        if token == "--force" or (
+            token.startswith("-") and not token.startswith("--") and "f" in token[1:]
+        ):
+            force = True
+    if not force:
+        return None
+    operands = _transfer_operands(tokens)
+    if operands is not None:
+        sources, destination, _recursive, _parents = operands
+        return _resolved_static_targets(
+            CATEGORY_TRUNCATE,
+            _transfer_destination_candidates(
+                sources, destination, preserve_parents=False
+            ),
+        )
+    positionals = [
+        raw
+        for raw in tokens[1:]
+        if not _unquote(raw).startswith("-") or _unquote(raw) == "-"
+    ]
+    if len(positionals) != 1:
+        return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_target")
+    # `ln -sf ../x` creates ./x in the working directory.
+    link_name = _unquote(positionals[0]).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    return _resolved_static_targets(CATEGORY_TRUNCATE, [link_name])
+
+
 def _detect_dotnet_file(tokens: list[str]) -> ParsedDestructiveCommand | None:
     match = _DOTNET_FILE_CALL_RE.match(" ".join(tokens))
     if match is None:
@@ -2605,6 +2789,9 @@ _DETECTORS: Final[
     _detect_truncate_file,
     _detect_dd_output,
     _detect_transfer,
+    _detect_rsync,
+    _detect_robocopy,
+    _detect_forced_link,
     _detect_sed_in_place,
     _detect_perl_in_place,
     _detect_forced_new_item,

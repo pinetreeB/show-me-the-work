@@ -171,6 +171,9 @@ MUST_BLOCK: list[tuple[str, str]] = [
     ("F1-glued", f"echo x>{PEER_FILE}"),
     # ★F2 — 셸이 서 있는 폴더 기준 상대경로(cd 뒤). 픽스처는 루트의 peer.py
     ("F2-cd", f"cd shared-dir && rm ../{PEER_FILE}"),
+    # ★KL5 후속 — 어휘 롱테일 일부 편입
+    ("KL5-link", f"ln -sf other.py {PEER_FILE}"),
+    ("KL5-link", f"ln --force -s other.py {PEER_FILE}"),
 ]
 
 # ── 남의 것이 아닌 정상 작업 → 반드시 ALLOW (마찰 회귀 감시) ────────────────
@@ -243,6 +246,9 @@ MUST_ALLOW: list[tuple[str, str]] = [
     # F2 수리가 내 폴더 작업까지 막으면 안 된다
     ("F2-own", "cd build && rm -rf out"),
     ("F2-own", "cd build && ls -la > listing.txt"),
+    # 링크 강제 교체도 내 파일이면 통과
+    ("KL5-own", "ln -sf other.py my_link.py"),
+    ("KL5-own", "ln -s other.py peer_link.py"),
 ]
 
 # ── G1 전용: peer가 shared-dir/peer.py를 점유. 상위 디렉터리를 대는 명령들 ──
@@ -264,6 +270,10 @@ DIR_MUST_BLOCK: list[tuple[str, str]] = [
     ("F2-cd", "pushd shared-dir && rm peer.py && popd"),
     ("F2-cd", "Set-Location shared-dir; Remove-Item peer.py"),
     ("F2-cd-dynamic", "cd $TARGET_DIR && rm peer.py"),  # 해석 불가 cd + 상대 대상 → fail-closed
+    # ★KL5 후속 — 대상 폴더를 비우거나 덮어쓰는 미러링
+    ("KL5-mirror", "rsync -a --delete src/ shared-dir/"),
+    ("KL5-mirror", "rsync -a src/ shared-dir/"),
+    ("KL5-mirror", "robocopy src shared-dir /MIR"),
     # ★M1 — cmd 재귀 플래그 /s. G1 컨테이너 보호가 Windows 표준 문법에서 무력화됐다
     ("M1-cmdrec", "rd /s shared-dir"),
     ("M1-cmdrec", "rd /S /Q shared-dir"),
@@ -295,6 +305,9 @@ DIR_MUST_ALLOW: list[tuple[str, str]] = [
     ("F2-own", "cd my_own_dir && rm scratch.py"),
     ("F2-read", "cd shared-dir && ls -la"),
     ("F2-read", "cd shared-dir && cat peer.py > ../copy.txt"),
+    # 미러링도 내 폴더면 통과
+    ("KL5-own", "rsync -a --delete src/ my_own_dir/"),
+    ("KL5-own", "robocopy src my_own_dir /MIR"),
 ]
 
 # ── P2-1 전용: peer가 공백 포함 경로 `peer dir/file.py`를 점유 ──────────────
@@ -323,9 +336,6 @@ KNOWN_LIMITATION: list[tuple[str, str]] = [
     ("KL3-interp", "cat payload.py | python"),
     ("KL4-arbitrary", 'python -c "import os; os.remove(1)"'),
     # 좌상 2차 훑기 — 이번 범위 제외분(어휘 롱테일). 기록해 두고 후속 판단
-    ("KL5-mirror", "robocopy src dst /MIR"),
-    ("KL5-mirror", "rsync -a --delete src/ dst/"),
-    ("KL5-misc", f"ln -sf other.py {PEER_FILE}"),
     ("KL5-misc", "tar -xf archive.tar"),
     ("KL5-misc", f"Add-Content {PEER_FILE} x"),
 ]
