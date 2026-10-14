@@ -329,16 +329,100 @@ def _token_paths(tokens: tuple[str, ...]) -> Iterable[str]:
 
 # Write destinations of commands that R2 does not model.  Friction only needs the
 # paths they may create or overwrite; reads (sources, patch input) are ignored.
-_INSTALL_VALUE_OPTIONS = frozenset({"-m", "-o", "-g", "-S", "-t"})
+# Short options may be bundled (`-Dt DIR`, `-Dtdir`) and GNU long options may be
+# abbreviated to any unambiguous prefix (`--target=DIR`), so both are decoded.
+_INSTALL_SHORT_VALUE_LETTERS = frozenset("gmoSt")
+_INSTALL_LONG_OPTIONS = frozenset(
+    {
+        "--backup",
+        "--compare",
+        "--context",
+        "--debug",
+        "--directory",
+        "--group",
+        "--help",
+        "--mode",
+        "--no-target-directory",
+        "--owner",
+        "--preserve-context",
+        "--preserve-timestamps",
+        "--strip",
+        "--strip-program",
+        "--suffix",
+        "--target-directory",
+        "--verbose",
+        "--version",
+    }
+)
 _INSTALL_LONG_VALUE_OPTIONS = frozenset(
-    {"--mode", "--owner", "--group", "--suffix", "--target-directory", "--strip-program"}
+    {"--group", "--mode", "--owner", "--strip-program", "--suffix", "--target-directory"}
 )
-_PATCH_VALUE_OPTIONS = frozenset(
-    {"-B", "-D", "-F", "-V", "-Y", "-d", "-g", "-i", "-o", "-p", "-r", "-z"}
+_PATCH_SHORT_VALUE_LETTERS = frozenset("BDFVYdgioprz")
+_PATCH_SHORT_WRITE_LETTERS = frozenset("dor")
+_PATCH_LONG_OPTIONS = frozenset(
+    {
+        "--backup",
+        "--backup-if-mismatch",
+        "--basename-prefix",
+        "--batch",
+        "--binary",
+        "--context",
+        "--directory",
+        "--dry-run",
+        "--ed",
+        "--follow-symlinks",
+        "--force",
+        "--forward",
+        "--fuzz",
+        "--get",
+        "--help",
+        "--ifdef",
+        "--ignore-whitespace",
+        "--input",
+        "--merge",
+        "--no-backup-if-mismatch",
+        "--normal",
+        "--output",
+        "--posix",
+        "--prefix",
+        "--quiet",
+        "--quoting-style",
+        "--read-only",
+        "--reject-file",
+        "--reject-format",
+        "--remove-empty-files",
+        "--reverse",
+        "--set-time",
+        "--set-utc",
+        "--silent",
+        "--strip",
+        "--suffix",
+        "--unified",
+        "--verbose",
+        "--version",
+        "--version-control",
+    }
 )
-_PATCH_WRITE_OPTIONS = frozenset(
-    {"-o", "-r", "-d", "--output", "--reject-file", "--directory"}
+_PATCH_LONG_VALUE_OPTIONS = frozenset(
+    {
+        "--basename-prefix",
+        "--directory",
+        "--fuzz",
+        "--get",
+        "--ifdef",
+        "--input",
+        "--output",
+        "--prefix",
+        "--quoting-style",
+        "--read-only",
+        "--reject-file",
+        "--reject-format",
+        "--strip",
+        "--suffix",
+        "--version-control",
+    }
 )
+_PATCH_LONG_WRITE_OPTIONS = frozenset({"--directory", "--output", "--reject-file"})
 
 
 @dataclass(frozen=True)
@@ -409,32 +493,76 @@ def _without_redirections(args: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(kept)
 
 
+@dataclass(frozen=True)
+class _ParsedOption:
+    """One option word (or word pair) of a GNU-style command line."""
+
+    flags: str  # short flag letters before any value-taking letter
+    name: str  # long option name, or the value-taking short letter
+    value: str | None
+    next_index: int
+
+
+def _gnu_option(
+    args: tuple[str, ...],
+    index: int,
+    *,
+    short_values: frozenset[str],
+    long_options: frozenset[str],
+    long_values: frozenset[str],
+) -> _ParsedOption:
+    """Decode the option at ``args[index]`` the way getopt_long does.
+
+    A bundle stops at its first value-taking letter, whose value is the rest of
+    the word or the next word (`-Dt DIR`, `-DtDIR`).  A long option may be any
+    unambiguous prefix of its name (`--target=DIR`, `--targ DIR`).
+    """
+    arg = args[index]
+    following = args[index + 1] if index + 1 < len(args) else ""
+    if arg.startswith("--"):
+        prefix, separator, attached = arg.partition("=")
+        matches = [option for option in long_options if option.startswith(prefix)]
+        name = prefix if prefix in long_options or len(matches) != 1 else matches[0]
+        if name not in long_values:
+            return _ParsedOption("", name, None, index + 1)
+        if separator:
+            return _ParsedOption("", name, attached, index + 1)
+        return _ParsedOption("", name, following, index + 2)
+    for position, letter in enumerate(arg[1:], start=1):
+        if letter in short_values:
+            attached = arg[position + 1 :]
+            if attached:
+                return _ParsedOption(arg[1:position], letter, attached, index + 1)
+            return _ParsedOption(arg[1:position], letter, following, index + 2)
+    return _ParsedOption(arg[1:], "", None, index + 1)
+
+
 def _install_paths(args: tuple[str, ...]) -> Iterable[str]:
     positionals: list[str] = []
     target_directories: list[str] = []
     directories_mode = False
-    values = args
     index = 0
-    while index < len(values):
-        arg = values[index]
-        name, separator, value = arg.partition("=")
-        if separator and name in _INSTALL_LONG_VALUE_OPTIONS:
-            if name == "--target-directory":
-                target_directories.append(value)
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            positionals.extend(args[index + 1 :])
+            break
+        if not arg.startswith("-") or arg == "-":
+            positionals.append(arg)
             index += 1
             continue
-        if arg in _INSTALL_VALUE_OPTIONS or arg in _INSTALL_LONG_VALUE_OPTIONS:
-            if arg in {"-t", "--target-directory"} and index + 1 < len(values):
-                target_directories.append(values[index + 1])
-            index += 2
-            continue
-        if arg in {"-d", "--directory"}:
+        option = _gnu_option(
+            args,
+            index,
+            short_values=_INSTALL_SHORT_VALUE_LETTERS,
+            long_options=_INSTALL_LONG_OPTIONS,
+            long_values=_INSTALL_LONG_VALUE_OPTIONS,
+        )
+        if "d" in option.flags or option.name == "--directory":
             directories_mode = True
-        elif arg.startswith("-t") and len(arg) > 2:
-            target_directories.append(arg[2:])
-        elif not arg.startswith("-"):
-            positionals.append(arg)
-        index += 1
+        if option.name in {"t", "--target-directory"} and option.value is not None:
+            target_directories.append(option.value)
+        index = option.next_index
     if directories_mode:
         yield from positionals
     elif target_directories:
@@ -445,25 +573,29 @@ def _install_paths(args: tuple[str, ...]) -> Iterable[str]:
 
 def _patch_paths(args: tuple[str, ...]) -> Iterable[str]:
     positionals: list[str] = []
-    values = args
     index = 0
-    while index < len(values):
-        arg = values[index]
-        name, separator, value = arg.partition("=")
-        if separator and name in _PATCH_WRITE_OPTIONS:
-            yield value
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            positionals.extend(args[index + 1 :])
+            break
+        if not arg.startswith("-") or arg == "-":
+            positionals.append(arg)
             index += 1
             continue
-        if arg in _PATCH_VALUE_OPTIONS or arg in _PATCH_WRITE_OPTIONS:
-            if arg in _PATCH_WRITE_OPTIONS and index + 1 < len(values):
-                yield values[index + 1]
-            index += 2
-            continue
-        if len(arg) > 2 and arg[:2] in {"-o", "-r", "-d"}:
-            yield arg[2:]
-        elif not arg.startswith("-"):
-            positionals.append(arg)
-        index += 1
+        option = _gnu_option(
+            args,
+            index,
+            short_values=_PATCH_SHORT_VALUE_LETTERS,
+            long_options=_PATCH_LONG_OPTIONS,
+            long_values=_PATCH_LONG_VALUE_OPTIONS,
+        )
+        if option.value and (
+            option.name in _PATCH_SHORT_WRITE_LETTERS
+            or option.name in _PATCH_LONG_WRITE_OPTIONS
+        ):
+            yield option.value
+        index = option.next_index
     if positionals:
         # `patch FILE [PATCHFILE]`: the first operand is modified in place.
         yield positionals[0]
