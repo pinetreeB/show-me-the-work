@@ -169,6 +169,8 @@ MUST_BLOCK: list[tuple[str, str]] = [
     ("F1-redirmask", f"Remove-Item {PEER_FILE} 2>$null"),
     # ★F1 — 띄어쓰기 없이 단어에 붙은 리디렉션
     ("F1-glued", f"echo x>{PEER_FILE}"),
+    # ★F2 — 셸이 서 있는 폴더 기준 상대경로(cd 뒤). 픽스처는 루트의 peer.py
+    ("F2-cd", f"cd shared-dir && rm ../{PEER_FILE}"),
 ]
 
 # ── 남의 것이 아닌 정상 작업 → 반드시 ALLOW (마찰 회귀 감시) ────────────────
@@ -238,6 +240,9 @@ MUST_ALLOW: list[tuple[str, str]] = [
     ("F1-own", "git status 2>&1"),
     ("F1-ps-sink", "Get-ChildItem 2>$null"),
     ("F1-ps-sink", "Remove-Item my_own_scratch.py *>$null"),
+    # F2 수리가 내 폴더 작업까지 막으면 안 된다
+    ("F2-own", "cd build && rm -rf out"),
+    ("F2-own", "cd build && ls -la > listing.txt"),
 ]
 
 # ── G1 전용: peer가 shared-dir/peer.py를 점유. 상위 디렉터리를 대는 명령들 ──
@@ -253,6 +258,12 @@ DIR_MUST_BLOCK: list[tuple[str, str]] = [
     ("G1-dir", "git restore -- shared-dir"),
     ("G1-dir", "git rm -r shared-dir"),
     ("G1-dir-ctrl", "rm shared-dir/peer.py"),  # 대조: 직접 대면 이미 막힘
+    # ★F2 — cd 뒤 상대경로가 프로젝트 루트 기준으로 잘못 풀리던 구멍
+    ("F2-cd", "cd shared-dir && rm peer.py"),
+    ("F2-cd", "cd shared-dir; rm -f peer.py 2>/dev/null"),
+    ("F2-cd", "pushd shared-dir && rm peer.py && popd"),
+    ("F2-cd", "Set-Location shared-dir; Remove-Item peer.py"),
+    ("F2-cd-dynamic", "cd $TARGET_DIR && rm peer.py"),  # 해석 불가 cd + 상대 대상 → fail-closed
     # ★M1 — cmd 재귀 플래그 /s. G1 컨테이너 보호가 Windows 표준 문법에서 무력화됐다
     ("M1-cmdrec", "rd /s shared-dir"),
     ("M1-cmdrec", "rd /S /Q shared-dir"),
@@ -280,6 +291,10 @@ DIR_MUST_ALLOW: list[tuple[str, str]] = [
     ("M1-own", "rmdir /s /q my_own_dir"),
     # 비재귀 rd는 비어있지 않으면 실패하는 명령이라 컨테이너 취급 대상 아님
     ("M1-nonrec", "rd shared-dir"),
+    # cd 수리: 내 폴더·읽기는 통과
+    ("F2-own", "cd my_own_dir && rm scratch.py"),
+    ("F2-read", "cd shared-dir && ls -la"),
+    ("F2-read", "cd shared-dir && cat peer.py > ../copy.txt"),
 ]
 
 # ── P2-1 전용: peer가 공백 포함 경로 `peer dir/file.py`를 점유 ──────────────

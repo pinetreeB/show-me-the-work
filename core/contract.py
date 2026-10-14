@@ -210,6 +210,39 @@ def _shell_state_dir_hints(command: str) -> list[str]:
     return list(shell_candidate_paths(command))
 
 
+def _shell_state_dir_hint_interpretations(
+    root: str,
+    payload: Mapping[str, JsonValue],
+) -> list[str]:
+    """Shell write hints read under the root and every possible working directory.
+
+    `cd .smtw && echo x >> ledger.json` writes `.smtw/ledger.json`; the hint
+    alone (`ledger.json`) only looks safe when resolved against the root.
+    """
+    command = _command(payload)
+    hints = _shell_state_dir_hints(command)
+    if not hints:
+        return []
+    from .destructive_guard import path_interpretations, working_directory_bases
+
+    shell_cwd = payload.get("shell_cwd")
+    try:
+        bases, _unknown = working_directory_bases(
+            root,
+            command,
+            shell_cwd if isinstance(shell_cwd, str) else None,
+        )
+    except (OSError, ValueError):
+        return hints
+    return list(
+        dict.fromkeys(
+            candidate
+            for hint in hints
+            for candidate in path_interpretations(hint, bases)
+        )
+    )
+
+
 def _contract_authoring_barrier(
     root: str,
     authoring_targets: list[str],
@@ -277,7 +310,7 @@ def evaluate_state_file_friction(payload: Mapping[str, JsonValue]) -> Decision:
     root = _project_root(payload)
     targets = list(_string_list(payload.get("file_paths")))
     if tool in SHELL_TOOLS:
-        targets.extend(_shell_state_dir_hints(_command(payload)))
+        targets.extend(_shell_state_dir_hint_interpretations(root, payload))
     authoring_targets = [
         target
         for target in targets
