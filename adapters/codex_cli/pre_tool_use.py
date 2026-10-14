@@ -63,7 +63,9 @@ def main() -> int:
             r2_result = evaluate_r2_destructive_gate(
                 {
                     "project_root": root,
-                    "tool_name": "Bash"
+                    # PowerShell stays PowerShell so R2 may honour `2>$null`; any
+                    # other shell tool is judged with POSIX rules.
+                    "tool_name": ("PowerShell" if tool_name == "PowerShell" else "Bash")
                     if family == "shell"
                     else str(payload.get("tool_name", "")),
                     "command": tool_command(payload),
