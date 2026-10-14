@@ -50,6 +50,7 @@ MOVE_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
     {"move-item", "mv", "rename-item"}
 )
 SINK_PATHS: Final[frozenset[str]] = frozenset({"/dev/null", "nul"})
+REDIRECT_SINK_TARGETS: Final[frozenset[str]] = frozenset({"$null"})
 SHELL_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
     {
         "ash",
@@ -365,8 +366,6 @@ R2_COORDINATION_REASON_MAP: Final[dict[str, CoordinationReason]] = {
 
 _STRIP_RE = re.compile(r"[^A-Za-z0-9.-]+")
 _NOISE_RE = re.compile(r"['\"\\()&$\[\]]")
-_REDIRECT_RE = re.compile(r"^(?P<operator>(?:\d*)>(?:[|&])?|&>\|?)(?P<target>.*)$")
-_APPEND_REDIRECT_RE = re.compile(r"^(?:\d*|&)>>")
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _ATTACHED_HERE_STRING_RE = re.compile(
     rf"(?m)(?P<prefix>^|[;&|][ \t]*)(?P<shell>(?:[^\s;&|]+/)?"
@@ -1518,34 +1517,230 @@ def _detect_forced_new_item(tokens: list[str]) -> ParsedDestructiveCommand | Non
     return _resolved_static_targets(CATEGORY_TRUNCATE, targets)
 
 
-def _detect_truncate_redirect(tokens: list[str]) -> ParsedDestructiveCommand | None:
-    for index, raw_token in enumerate(tokens):
-        if _unquote(raw_token) != raw_token:
+@dataclass(frozen=True, slots=True)
+class _OutputRedirection:
+    operator: str
+    target: str | None
+    append: bool
+
+
+def _skip_balanced(token: str, index: int, opening: str, closing: str) -> int:
+    depth = 0
+    while index < len(token):
+        if token[index] == opening:
+            depth += 1
+        elif token[index] == closing:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return len(token)
+
+
+def _unquoted_redirect_index(token: str, start: int = 0) -> int | None:
+    """Return the first ``>`` that the shell would treat as a redirection.
+
+    Quoted text, command/arithmetic substitutions, parameter expansions and
+    backtick spans are skipped: their own commands are evaluated as separate
+    segments by :func:`_command_segments`.
+    """
+    quote: str | None = None
+    index = start
+    while index < len(token):
+        character = token[index]
+        if quote is not None:
+            if character == quote:
+                quote = None
+            index += 1
             continue
-        token = _unquote(raw_token)
-        if token.startswith(("<(", ">(")):
+        if character in "'\"":
+            quote = character
+            index += 1
             continue
-        if _APPEND_REDIRECT_RE.match(token):
+        if token.startswith(("$(", "${"), index):
+            closing = ")" if token[index + 1] == "(" else "}"
+            index = _skip_balanced(token, index + 1, token[index + 1], closing)
             continue
-        match = _REDIRECT_RE.match(token)
-        if match is None:
+        if character == "`":
+            closing_index = token.find("`", index + 1)
+            index = len(token) if closing_index < 0 else closing_index + 1
             continue
-        target = match.group("target")
+        if character == ">":
+            return index
+        index += 1
+    return None
+
+
+def _paren_balance(token: str) -> int:
+    balance = 0
+    quote: str | None = None
+    for character in token:
+        if quote is not None:
+            if character == quote:
+                quote = None
+        elif character in "'\"":
+            quote = character
+        elif character == "(":
+            balance += 1
+        elif character == ")":
+            balance -= 1
+    return balance
+
+
+def _split_glued_subshell_parens(tokens: list[str]) -> list[str]:
+    """Detach a subshell's `(`/`)` glued to the first/last word of a segment.
+
+    `(cd src && rm peer.py)` tokenizes as `(cd` … `peer.py)`; without this the
+    command name is `(cd` and the delete target is the non-existent `peer.py)`.
+    Arithmetic `((…))` and balanced groups such as `$(…)` are left alone.
+    """
+    if not tokens:
+        return tokens
+    result = list(tokens)
+    first = result[0]
+    if len(first) > 1 and first.startswith("(") and not first.startswith("(("):
+        result[0:1] = ["(", first[1:]]
+    last = result[-1]
+    if len(last) > 1 and last.endswith(")") and _paren_balance(last) < 0:
+        result[-1:] = [last[:-1], ")"]
+    return result
+
+
+def _split_token_redirections(
+    token: str,
+) -> tuple[str | None, list[_OutputRedirection]]:
+    """Split one word into its argv part and the output redirections inside it.
+
+    ``rm peer.txt>own.log`` and ``echo x>>.smtw/ledger.json`` carry the
+    redirection inside the word; bash still applies it.  A redirection whose
+    target is the next word is returned with ``target=None``.
+    """
+    if token.startswith(("<(", ">(")):
+        return token, []
+    redirect_index = _unquoted_redirect_index(token)
+    if redirect_index is None:
+        return token, []
+    prefix = token[:redirect_index]
+    operator_start = redirect_index
+    word: str | None = prefix or None
+    if prefix.isdigit() or prefix in {"&", "*"}:
+        operator_start = 0
+        word = None
+    elif prefix.endswith("<"):
+        # `<>file` opens read/write without truncation; it is not an argument.
+        word = prefix[:-1] or None
+        operator_start = redirect_index - 1
+    end = redirect_index + 1
+    append = token[end : end + 1] == ">"
+    if append or token[end : end + 1] in {"|", "&"}:
+        end += 1
+    operator = token[operator_start:end]
+    if token[end : end + 1] == "(":
+        # Process substitution attached to a word: keep it as an argument.
+        return token, []
+    non_truncating = append or operator.startswith("<")
+    remainder = token[end:]
+    next_index = _unquoted_redirect_index(remainder)
+    if next_index is None:
+        # An empty remainder means the target is the next word.
+        return word, [_OutputRedirection(operator, remainder or None, non_truncating)]
+    # `a>b>c`: every further redirection inside the same word also applies.
+    _nested_word, nested = _split_token_redirections(remainder[next_index:])
+    return word, [
+        _OutputRedirection(operator, remainder[:next_index], non_truncating),
+        *nested,
+    ]
+
+
+def _split_output_redirections(
+    tokens: list[str],
+) -> tuple[list[str], list[_OutputRedirection]]:
+    """Separate shell output redirections from the argv a command really sees."""
+    argv: list[str] = []
+    redirections: list[_OutputRedirection] = []
+    index = 0
+    while index < len(tokens):
+        raw_token = tokens[index]
+        word, found = _split_token_redirections(raw_token)
+        if word is not None:
+            argv.append(word)
+        index += 1
+        for redirection in found:
+            if redirection.target is None:
+                if index < len(tokens):
+                    redirection = _OutputRedirection(
+                        redirection.operator,
+                        _unquote(tokens[index]),
+                        redirection.append,
+                    )
+                    index += 1
+                else:
+                    redirection = _OutputRedirection(
+                        redirection.operator, "", redirection.append
+                    )
+            else:
+                redirection = _OutputRedirection(
+                    redirection.operator,
+                    _unquote(redirection.target),
+                    redirection.append,
+                )
+            redirections.append(redirection)
+    return argv, redirections
+
+
+def _is_descriptor_duplication(redirection: _OutputRedirection) -> bool:
+    return redirection.operator.endswith(">&") and (
+        redirection.target == "-" or (redirection.target or "").isdigit()
+    )
+
+
+def _truncating_redirect_result(
+    redirections: list[_OutputRedirection],
+) -> ParsedDestructiveCommand | None:
+    targets: list[str] = []
+    for redirection in redirections:
+        if redirection.append or _is_descriptor_duplication(redirection):
+            continue
+        target = redirection.target or ""
+        if target.casefold() in REDIRECT_SINK_TARGETS:
+            # PowerShell's discard idiom (`2>$null`, `*>$null`) writes no file.
+            continue
         if not target:
-            if index + 1 >= len(tokens):
-                return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_target")
-            target = _unquote(tokens[index + 1])
-        if match.group("operator").endswith(">&") and (
-            target == "-" or target.isdigit()
-        ):
-            continue
+            return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_target")
         validity = _validate_target(target)
-        if validity == "ok":
-            return ParsedDestructiveCommand(CATEGORY_TRUNCATE, True, (target,), "")
         if validity == "implicit_scope":
             return _blocked(CATEGORY_TRUNCATE, "implicit_scope")
-        return _blocked(CATEGORY_TRUNCATE, "parse_unable_target")
-    return None
+        if validity != "ok":
+            return _blocked(CATEGORY_TRUNCATE, "parse_unable_target")
+        if target not in targets:
+            targets.append(target)
+    if not targets:
+        return None
+    return ParsedDestructiveCommand(CATEGORY_TRUNCATE, True, tuple(targets), "")
+
+
+def _detect_truncate_redirect(tokens: list[str]) -> ParsedDestructiveCommand | None:
+    """Every truncating output redirection of one segment (``>``, ``2>``, ``>|``)."""
+    _argv, redirections = _split_output_redirections(tokens)
+    return _truncating_redirect_result(redirections)
+
+
+def output_redirection_targets(command: str) -> tuple[str, ...]:
+    """Expose every static output-redirection target, appends included.
+
+    Advisory consumers (state-file friction) reuse R2's quote-aware redirect
+    parser so ``x>>.smtw/ledger.json`` is seen even without surrounding spaces.
+    """
+    targets: list[str] = []
+    segments, _malformed = _r2_command_segments(command)
+    for segment in segments:
+        _argv, redirections = _split_output_redirections(_tokenize(segment.text))
+        for redirection in redirections:
+            if _is_descriptor_duplication(redirection) or not redirection.target:
+                continue
+            if redirection.target not in targets:
+                targets.append(redirection.target)
+    return tuple(targets)
 
 
 def _detect_tee(tokens: list[str]) -> ParsedDestructiveCommand | None:
@@ -2396,7 +2591,6 @@ _DETECTORS: Final[
     tuple[Callable[[list[str]], ParsedDestructiveCommand | None], ...]
 ] = (
     _detect_tee,
-    _detect_truncate_redirect,
     _detect_git,
     _detect_remove,
     _detect_truncate_cmdlet,
@@ -2607,15 +2801,34 @@ def _powershell_parse_failure_category(command: str) -> str:
 def _parse_destructive_segment(
     command: str,
     pipeline_literal: str | None = None,
-) -> ParsedDestructiveCommand | None:
-    """연산자 경계가 제거된 단일 shell segment를 분류한다."""
-    raw_tokens = _tokenize(command)
+) -> tuple[ParsedDestructiveCommand, ...]:
+    """연산자 경계가 제거된 단일 shell segment를 분류한다.
+
+    출력 리디렉션은 명령 인자가 아니다. 리디렉션 대상과 명령 자체의 파괴 대상을
+    따로 모두 돌려준다 — `rm peer.txt > own.log`·`rm peer.txt 2>/dev/null`에서
+    리디렉션만 보고 삭제 대상을 놓치지 않기 위해서다.
+    """
+    raw_tokens = _split_glued_subshell_parens(_tokenize(command))
     coproc = _detect_coproc(raw_tokens)
     if coproc is not None:
-        return coproc
+        return (coproc,)
     tokens = _command_position_tokens(raw_tokens)
     if not tokens:
-        return None
+        return ()
+    tokens, redirections = _split_output_redirections(tokens)
+    redirect = _truncating_redirect_result(redirections)
+    command_result = (
+        _parse_command_tokens(tokens, pipeline_literal) if tokens else None
+    )
+    return tuple(
+        result for result in (command_result, redirect) if result is not None
+    )
+
+
+def _parse_command_tokens(
+    tokens: list[str],
+    pipeline_literal: str | None,
+) -> ParsedDestructiveCommand | None:
     if _is_bare_sc_service_command(tokens):
         return None
     tokens, normalization_error = _normalize_powershell_parameters(tokens)
@@ -2655,11 +2868,15 @@ def parse_destructive_commands(command: str) -> tuple[ParsedDestructiveCommand, 
             if index > 0 and segment.incoming_separator in {"|", "|&"}
             else None
         )
-        result = _detect_pipeline_shell_receiver(segment, pipeline_literal)
-        if result is None:
-            result = _parse_destructive_segment(segment.text, pipeline_literal)
-        if result is not None and result not in parsed:
-            parsed.append(result)
+        receiver = _detect_pipeline_shell_receiver(segment, pipeline_literal)
+        results = (
+            (receiver,)
+            if receiver is not None
+            else _parse_destructive_segment(segment.text, pipeline_literal)
+        )
+        for result in results:
+            if result not in parsed:
+                parsed.append(result)
     return tuple(parsed)
 
 
