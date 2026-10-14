@@ -300,7 +300,9 @@ def _token_paths(tokens: tuple[str, ...]) -> Iterable[str]:
     while index < len(tokens):
         command = tokens[index].lower()
         end = _command_end(tokens, index + 1)
-        args = tokens[index + 1 : end]
+        # Redirections are not arguments: `install a .smtw/x > own.log` installs
+        # to `.smtw/x`, not `own.log`.  Their targets come from _redirect_paths.
+        args = _without_redirections(tokens[index + 1 : end])
         if command == "tee":
             yield from (arg for arg in args if not arg.startswith("-"))
         elif command in {"cp", "mv"}:
@@ -381,27 +383,37 @@ _WGET_OPTIONS = _DownloadOptions(
 )
 
 
-def _without_input_redirections(args: tuple[str, ...]) -> list[str]:
+def _is_output_redirect_operator(token: str) -> bool:
+    # `_tokens` emits `>`, `>>`, `>|`, `>&`, `&>` as punctuation tokens.
+    return ">" in token and not token.strip(">&|")
+
+
+def _without_redirections(args: tuple[str, ...]) -> tuple[str, ...]:
+    """Drop input/output redirections (operator and target) from an argv."""
     kept: list[str] = []
-    skip_next = False
-    for arg in args:
-        if skip_next:
-            skip_next = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if _is_output_redirect_operator(arg):
+            if kept and (kept[-1].isdigit() or kept[-1] == "*"):
+                # `2>err`/`*>log` lex as `2` `>` `err`: the fd is not an argument.
+                kept.pop()
+            index += 2
             continue
         if arg in {"<", "<<", "<<<"}:
-            skip_next = True
+            index += 2
             continue
-        if arg.startswith("<"):
-            continue
-        kept.append(arg)
-    return kept
+        if not arg.startswith("<"):
+            kept.append(arg)
+        index += 1
+    return tuple(kept)
 
 
 def _install_paths(args: tuple[str, ...]) -> Iterable[str]:
     positionals: list[str] = []
     target_directories: list[str] = []
     directories_mode = False
-    values = _without_input_redirections(args)
+    values = args
     index = 0
     while index < len(values):
         arg = values[index]
@@ -433,7 +445,7 @@ def _install_paths(args: tuple[str, ...]) -> Iterable[str]:
 
 def _patch_paths(args: tuple[str, ...]) -> Iterable[str]:
     positionals: list[str] = []
-    values = _without_input_redirections(args)
+    values = args
     index = 0
     while index < len(values):
         arg = values[index]

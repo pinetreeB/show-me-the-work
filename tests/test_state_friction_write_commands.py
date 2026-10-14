@@ -107,3 +107,31 @@ def test_state_friction_uses_host_shell_cwd(tmp_path: Path) -> None:
 )
 def test_state_friction_allows_reads_and_project_writes(tmp_path: Path, command: str) -> None:
     assert _friction(tmp_path, command)["decision"] == "allow", command
+
+
+# --- Codex review r1 follow-up ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("install file .smtw/ledger.json > own.log", ".smtw/ledger.json"),
+        ("install file .smtw/ledger.json>own.log", ".smtw/ledger.json"),
+        ("install file .smtw/ledger.json 2> err.log", ".smtw/ledger.json"),
+        ("install file .smtw/ledger.json &> all.log", ".smtw/ledger.json"),
+        ("install file .smtw/ledger.json 2>&1", ".smtw/ledger.json"),
+        ("install -t .smtw/bin file > own.log", ".smtw/bin"),
+        ("patch .smtw/ledger.json < fix.diff > patch.log", ".smtw/ledger.json"),
+        ("curl -o .smtw/ledger.json https://example.invalid/x > c.log", ".smtw/ledger.json"),
+        ("echo x > own.log>.smtw/ledger.json", ".smtw/ledger.json"),
+    ],
+)
+def test_output_redirection_is_not_read_as_the_write_destination(
+    tmp_path: Path, command: str, expected: str
+) -> None:
+    assert expected in shell_candidate_paths(command), command
+    assert _friction(tmp_path, command)["decision"] == "block", command
+
+
+def test_install_hints_drop_redirect_operators_and_descriptors() -> None:
+    assert shell_candidate_paths("install a b 2> err.log") == ("err.log", "b")
