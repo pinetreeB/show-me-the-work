@@ -298,11 +298,13 @@ def _tokens(command: str) -> tuple[str, ...]:
 def _token_paths(tokens: tuple[str, ...]) -> Iterable[str]:
     index = 0
     while index < len(tokens):
-        command = tokens[index].lower()
-        end = _command_end(tokens, index + 1)
-        # Redirections are not arguments: `install a .smtw/x > own.log` installs
-        # to `.smtw/x`, not `own.log`.  Their targets come from _redirect_paths.
-        args = _without_redirections(tokens[index + 1 : end])
+        end = _command_end(tokens, index)
+        words = _command_words(tokens[index:end])
+        index = end + 1
+        if not words:
+            continue
+        command = words[0].lower()
+        args = words[1:]
         if command == "tee":
             yield from (arg for arg in args if not arg.startswith("-"))
         elif command in {"cp", "mv"}:
@@ -324,7 +326,24 @@ def _token_paths(tokens: tuple[str, ...]) -> Iterable[str]:
             yield from _option_value_paths(args, _CURL_OPTIONS)
         elif command == "wget":
             yield from _option_value_paths(args, _WGET_OPTIONS)
-        index = end + 1
+
+
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _command_words(segment: tuple[str, ...]) -> tuple[str, ...]:
+    """The command name and its arguments, without redirections or assignments.
+
+    Redirections are not arguments (`install a .smtw/x > own.log` installs to
+    `.smtw/x`, not `own.log`; their targets come from _redirect_paths), and they
+    may come before the command name (`< /dev/null install a .smtw/x`), as may
+    variable assignments (`LC_ALL=C install a .smtw/x`).
+    """
+    words = _without_redirections(segment)
+    start = 0
+    while start < len(words) and _ASSIGNMENT.match(words[start]):
+        start += 1
+    return words[start:]
 
 
 # Write destinations of commands that R2 does not model.  Friction only needs the
@@ -472,6 +491,11 @@ def _is_output_redirect_operator(token: str) -> bool:
     return ">" in token and not token.strip(">&|")
 
 
+# `<`, `0<`, `<<`, `<<-`, `<<<` (`_tokens` does not split on `<`, so the
+# operator may also carry its target: `</dev/null`, `0<in.txt`, `<<EOF`).
+_INPUT_REDIRECT = re.compile(r"\d*(?:<<<|<<-?|<)")
+
+
 def _without_redirections(args: tuple[str, ...]) -> tuple[str, ...]:
     """Drop input/output redirections (operator and target) from an argv."""
     kept: list[str] = []
@@ -484,11 +508,17 @@ def _without_redirections(args: tuple[str, ...]) -> tuple[str, ...]:
                 kept.pop()
             index += 2
             continue
-        if arg in {"<", "<<", "<<<"}:
-            index += 2
+        operator = _INPUT_REDIRECT.match(arg)
+        if operator is not None:
+            index += 1
+            if operator.end() == len(arg):
+                # `<>f` and `<&0` lex as `<` `>` `f` and `<` `&` `0`: the
+                # punctuation is part of the operator, the next word its target.
+                if index < len(args) and args[index] in {">", "&"}:
+                    index += 1
+                index += 1
             continue
-        if not arg.startswith("<"):
-            kept.append(arg)
+        kept.append(arg)
         index += 1
     return tuple(kept)
 

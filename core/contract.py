@@ -260,11 +260,17 @@ def _shell_state_dir_hint_interpretations(
         if unknown
         else None
     )
+    # Only a working-directory-relative hint moves with `cd`: after `cd .smtw`,
+    # `~/notes.txt` and `$HOME/notes.txt` are still outside the state directory.
+    # The root-only reading still adds the Git Bash drive translation.
     interpretations = list(
         dict.fromkeys(
             candidate
             for hint in hints
-            for candidate in path_interpretations(hint, bases)
+            for candidate in path_interpretations(
+                hint,
+                bases if _is_working_directory_relative_hint(hint) else bases[:1],
+            )
         )
     )
     return interpretations, unanchored
