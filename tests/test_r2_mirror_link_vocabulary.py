@@ -69,3 +69,56 @@ def test_single_operand_forced_link_targets_the_basename() -> None:
 )
 def test_rsync_value_letters_are_not_read_as_dry_run(tmp_path: Path, command: str) -> None:
     assert r2_gate(tmp_path, command)["decision"] == "block", command
+
+
+# --- Codex review r1 follow-up: remote and unknown rsync sources ------------
+
+SRC_PEER_ONLY = frozenset({"src/peer.py"})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rsync -a host:src/ src/",
+        "rsync -a user@host:/srv/app/ src/",
+        "rsync -a host::module/src/ src/",
+        "rsync -a rsync://host/module/src/ src/",
+        "rsync host:backup/peer.py src/",
+        "rsync -a host: src/",
+        "rsync -a 'host:src/' src/",
+        "rsync -a tmp/* src/",
+        "rsync -a ./ src/",
+        "rsync --files-from=list.txt tmp src/",
+        "rsync --files-from list.txt host:tmp src/",
+    ],
+)
+def test_rsync_remote_or_unknown_source_overwrites_local_destination(
+    tmp_path: Path, command: str
+) -> None:
+    result = r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)
+
+    assert result["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rsync -a host:src/ mine/",
+        "rsync -a host:src src",
+        "rsync host:backup/other.py src/",
+        "rsync -an host:src/ src/",
+        "rsync -a src/ host:src/",
+    ],
+)
+def test_rsync_remote_source_into_unrelated_paths_is_allowed(
+    tmp_path: Path, command: str
+) -> None:
+    result = r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)
+
+    assert result["decision"] == "allow", command
+
+
+def test_rsync_remote_source_name_is_placed_under_the_destination() -> None:
+    parsed = parse_destructive_commands("rsync host:dir/a.txt dest/")
+
+    assert [item.targets for item in parsed] == [("dest/", "dest/a.txt")]

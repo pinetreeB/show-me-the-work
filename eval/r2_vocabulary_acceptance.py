@@ -167,6 +167,12 @@ MUST_BLOCK: list[tuple[str, str]] = [
     ("F1-redirmask", f">own.log rm {PEER_FILE}"),
     ("F1-redirmask", f"sed -i s/x/y/ {PEER_FILE} 2>/dev/null"),
     ("F1-redirmask", f"Remove-Item {PEER_FILE} 2>$null"),
+    # ★R1 — bash에서 `$null`은 변수다. PowerShell 도구라고 확인된 경우에만 버리기로 본다
+    ("R1-bash-null", f"null={PEER_FILE}; echo x >$null"),
+    # ★R1 — 다음 단어에서 가져온 리디렉션 대상도 다시 쪼갠다
+    ("R1-chain", f"echo x > own.log>{PEER_FILE}"),
+    # ★R1 — 붙여 쓴 입력 리디렉션이 지울 대상을 가리면 안 된다
+    ("R1-input", f"rm {PEER_FILE}<in"),
     # ★F1 — 띄어쓰기 없이 단어에 붙은 리디렉션
     ("F1-glued", f"echo x>{PEER_FILE}"),
     # ★F2 — 셸이 서 있는 폴더 기준 상대경로(cd 뒤). 픽스처는 루트의 peer.py
@@ -241,8 +247,10 @@ MUST_ALLOW: list[tuple[str, str]] = [
     ("F1-own", "rm my_own_scratch.py 2>/dev/null"),
     ("F1-own", "rm my_own_scratch.py > my_own_log.txt"),
     ("F1-own", "git status 2>&1"),
-    ("F1-ps-sink", "Get-ChildItem 2>$null"),
+    ("F1-ps-sink", "Get-ChildItem 2>$null"),  # PowerShell 도구로 판정(POWERSHELL_TAGS)
     ("F1-ps-sink", "Remove-Item my_own_scratch.py *>$null"),
+    # ★R1 — 백슬래시로 이스케이프한 `>`는 글자일 뿐이다(bash·PowerShell 모두 출력만 함)
+    ("R1-escaped", f"echo safe\\>{PEER_FILE}"),
     # F2 수리가 내 폴더 작업까지 막으면 안 된다
     ("F2-own", "cd build && rm -rf out"),
     ("F2-own", "cd build && ls -la > listing.txt"),
@@ -274,6 +282,9 @@ DIR_MUST_BLOCK: list[tuple[str, str]] = [
     ("KL5-mirror", "rsync -a --delete src/ shared-dir/"),
     ("KL5-mirror", "rsync -a src/ shared-dir/"),
     ("KL5-mirror", "robocopy src shared-dir /MIR"),
+    # ★R1 — 원격 소스도 로컬 대상 폴더 안을 덮어쓴다
+    ("R1-rsync-remote", "rsync -a host:src/ shared-dir/"),
+    ("R1-rsync-remote", "rsync -a host:backup/peer.py shared-dir/"),
     # ★M1 — cmd 재귀 플래그 /s. G1 컨테이너 보호가 Windows 표준 문법에서 무력화됐다
     ("M1-cmdrec", "rd /s shared-dir"),
     ("M1-cmdrec", "rd /S /Q shared-dir"),
@@ -308,6 +319,7 @@ DIR_MUST_ALLOW: list[tuple[str, str]] = [
     # 미러링도 내 폴더면 통과
     ("KL5-own", "rsync -a --delete src/ my_own_dir/"),
     ("KL5-own", "robocopy src my_own_dir /MIR"),
+    ("R1-rsync-own", "rsync -a host:src/ my_own_dir/"),
 ]
 
 # ── P2-1 전용: peer가 공백 포함 경로 `peer dir/file.py`를 점유 ──────────────
@@ -360,8 +372,13 @@ def _lookup(ledger: JsonObject, path: str) -> JsonObject | None:
     return None
 
 
-def _decide(root: Path, command: str) -> str:
-    alpha = _identity(root, "alpha") | {"tool_name": "Bash", "command": command}
+# PowerShell 전용 표현은 host가 PowerShell 도구라고 알려 줄 때만 판정 기준이 같다.
+POWERSHELL_TAGS: frozenset[str] = frozenset({"F1-ps-sink"})
+
+
+def _decide(root: Path, command: str, tag: str = "") -> str:
+    tool_name = "PowerShell" if tag in POWERSHELL_TAGS else "Bash"
+    alpha = _identity(root, "alpha") | {"tool_name": tool_name, "command": command}
     try:
         result = evaluate_r2_destructive_gate(
             alpha, lookup_path_attribution=_lookup, attribution_health=_health
@@ -397,7 +414,7 @@ def main() -> int:
         print(f"MUST_BLOCK — 남의 작업물 파괴. ALLOW면 미탐 FAIL ({len(MUST_BLOCK)}건)")
         print("=" * 84)
         for tag, cmd in MUST_BLOCK:
-            decision = _decide(root, cmd)
+            decision = _decide(root, cmd, tag)
             ok = decision == "block"
             if not ok:
                 failures.append(f"미탐 [{tag}] {cmd} -> {decision}")
@@ -409,7 +426,7 @@ def main() -> int:
         print(f"MUST_ALLOW — 정상 작업. BLOCK이면 오탐/마찰회귀 FAIL ({len(MUST_ALLOW)}건)")
         print("=" * 84)
         for tag, cmd in MUST_ALLOW:
-            decision = _decide(root, cmd)
+            decision = _decide(root, cmd, tag)
             ok = decision != "block"
             if not ok:
                 failures.append(f"오탐 [{tag}] {cmd} -> {decision}")
@@ -449,14 +466,14 @@ def main() -> int:
         print(f"G1 — peer가 {PEER_IN_DIR} 점유. 상위 디렉터리 대상 명령")
         print("=" * 84)
         for tag, cmd in DIR_MUST_BLOCK:
-            decision = _decide(root2, cmd)
+            decision = _decide(root2, cmd, tag)
             ok = decision == "block"
             if not ok:
                 failures.append(f"미탐 [{tag}] {cmd} -> {decision}")
             if verbose or not ok:
                 print(f"  {'PASS' if ok else '**FAIL(미탐)**':<16} [{tag:<12}] {cmd}")
         for tag, cmd in DIR_MUST_ALLOW:
-            decision = _decide(root2, cmd)
+            decision = _decide(root2, cmd, tag)
             ok = decision != "block"
             if not ok:
                 failures.append(f"오탐 [{tag}] {cmd} -> {decision}")
@@ -489,14 +506,14 @@ def main() -> int:
         print(f"P2-1 — peer가 '{PEER_SPACED}' 점유. 콜론 결합 + 인용 경로")
         print("=" * 84)
         for tag, cmd in SPACED_MUST_BLOCK:
-            decision = _decide(root3, cmd)
+            decision = _decide(root3, cmd, tag)
             ok = decision == "block"
             if not ok:
                 failures.append(f"미탐 [{tag}] {cmd} -> {decision}")
             if verbose or not ok:
                 print(f"  {'PASS' if ok else '**FAIL(미탐)**':<16} [{tag:<14}] {cmd}")
         for tag, cmd in SPACED_MUST_ALLOW:
-            decision = _decide(root3, cmd)
+            decision = _decide(root3, cmd, tag)
             ok = decision != "block"
             if not ok:
                 failures.append(f"오탐 [{tag}] {cmd} -> {decision}")

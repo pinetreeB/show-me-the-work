@@ -23,6 +23,12 @@ from core.destructive_guard import (
 from r2_peer_support import r2_gate
 
 
+# Only the nested file is protected, so a test cannot pass by resolving the
+# relative target against the project root by mistake.
+SRC_PEER_ONLY = frozenset({"src/peer.py"})
+NESTED_PEER_ONLY = frozenset({"src/src/peer.py"})
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -39,7 +45,35 @@ from r2_peer_support import r2_gate
 def test_relative_target_after_cd_is_checked_in_the_new_directory(
     tmp_path: Path, command: str
 ) -> None:
-    assert r2_gate(tmp_path, command)["decision"] == "block", command
+    result = r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)
+
+    assert result["decision"] == "block", command
+
+
+def test_precise_fixture_does_not_protect_the_root_file(tmp_path: Path) -> None:
+    # Control: without the cd, `peer.py` is the unprotected root file.
+    assert r2_gate(tmp_path, "rm peer.py", peer_paths=SRC_PEER_ONLY)["decision"] == "allow"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd src && cd src && rm peer.py",
+        "cd src; cd src; rm peer.py",
+        "pushd src && pushd src && rm peer.py",
+        "cd src && cd lib && cd .. && cd src && rm peer.py",
+    ],
+)
+def test_repeated_cd_is_followed_step_by_step(tmp_path: Path, command: str) -> None:
+    result = r2_gate(tmp_path, command, peer_paths=NESTED_PEER_ONLY)
+
+    assert result["decision"] == "block", command
+
+
+def test_single_cd_does_not_reach_the_nested_directory(tmp_path: Path) -> None:
+    result = r2_gate(tmp_path, "cd src && rm peer.py", peer_paths=NESTED_PEER_ONLY)
+
+    assert result["decision"] == "allow"
 
 
 def test_cd_into_state_dir_then_relative_delete_is_blocked(tmp_path: Path) -> None:
@@ -86,8 +120,22 @@ def test_unresolvable_cd_with_relative_destructive_target_fails_closed(
 def test_host_shell_cwd_is_used_for_relative_targets(tmp_path: Path) -> None:
     shell_cwd = str(tmp_path / "src")
 
-    assert r2_gate(tmp_path, "rm peer.py", shell_cwd=shell_cwd)["decision"] == "block"
-    assert r2_gate(tmp_path, "rm own.py", shell_cwd=shell_cwd)["decision"] == "allow"
+    blocked = r2_gate(tmp_path, "rm peer.py", shell_cwd=shell_cwd, peer_paths=SRC_PEER_ONLY)
+    allowed = r2_gate(tmp_path, "rm own.py", shell_cwd=shell_cwd, peer_paths=SRC_PEER_ONLY)
+
+    assert blocked["decision"] == "block"
+    assert allowed["decision"] == "allow"
+
+
+def test_cd_after_host_shell_cwd_is_applied_on_top_of_it(tmp_path: Path) -> None:
+    result = r2_gate(
+        tmp_path,
+        "cd src && rm peer.py",
+        shell_cwd=str(tmp_path / "src"),
+        peer_paths=NESTED_PEER_ONLY,
+    )
+
+    assert result["decision"] == "block"
 
 
 def test_host_shell_cwd_inside_state_dir_protects_state(tmp_path: Path) -> None:
@@ -104,6 +152,22 @@ def test_command_working_directories_reports_static_and_dynamic_cd() -> None:
     )
     assert command_working_directories("cd ${OUT} && ls")[1] is True
     assert command_working_directories("ls -la") == ((), False)
+
+
+def test_command_working_directories_keep_repeats_in_order() -> None:
+    assert command_working_directories("cd src && cd src && cd lib && cd src") == (
+        ("src", "src", "lib", "src"),
+        False,
+    )
+
+
+def test_working_directory_bases_follow_a_repeated_cd(tmp_path: Path) -> None:
+    root = str(tmp_path)
+
+    bases, unknown = working_directory_bases(root, "cd src && cd src && rm x")
+
+    assert unknown is False
+    assert os.path.abspath(os.path.join(root, "src", "src")) in bases
 
 
 def test_working_directory_bases_keep_root_first(tmp_path: Path) -> None:
