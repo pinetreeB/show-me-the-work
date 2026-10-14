@@ -200,7 +200,7 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
         tool_input,
     )
     from core.contract import EDIT_TOOLS, SHELL_TOOLS, evaluate_pretool_contract
-    from core.destructive_guard import evaluate_r2_destructive_gate
+    from core.destructive_guard import evaluate_r2_destructive_gate, host_shell_cwd
 
     tool_name = canonical_tool_name(payload)
     family = "edit" if tool_name in EDIT_TOOLS else "shell" if tool_name in SHELL_TOOLS else "other"
@@ -222,6 +222,7 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
             "project_root": root,
             "tool_name": "Bash" if family == "shell" else tool_name,
             "command": tool_command(payload),
+            "shell_cwd": host_shell_cwd(payload),
             "host": invocation.host,
             "agent": invocation.agent,
             "session_id": invocation.session_id,
@@ -254,6 +255,7 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
             "tool_name": tool_name,
             "file_paths": tool_file_paths(payload),
             "command": tool_command(payload),
+            "shell_cwd": host_shell_cwd(payload),
             "prompt": input_text,
             "intent_set_command": intent_set_command(__file__),
             "host": invocation.host,

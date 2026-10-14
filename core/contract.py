@@ -210,6 +210,72 @@ def _shell_state_dir_hints(command: str) -> list[str]:
     return list(shell_candidate_paths(command))
 
 
+_DRIVE_PATH_RE: Final = re.compile(r"^[A-Za-z]:/")
+
+
+def _is_working_directory_relative_hint(hint: str) -> bool:
+    """Whether a write hint is resolved against the shell's working directory.
+
+    Rooted and drive paths, discard sinks, and paths anchored at ``~`` or a
+    variable (`$HOME/x`, PowerShell's `$null`) do not depend on it.
+    """
+    from .destructive_guard import SINK_PATHS
+
+    path = hint.strip().strip("\"'").replace("\\", "/")
+    if not path or path.casefold() in SINK_PATHS:
+        return False
+    return not path.startswith(("/", "~", "$")) and _DRIVE_PATH_RE.match(path) is None
+
+
+def _shell_state_dir_hint_interpretations(
+    root: str,
+    payload: Mapping[str, JsonValue],
+) -> tuple[list[str], str | None]:
+    """Shell write hints read under the root and every possible working directory.
+
+    `cd .smtw && echo x >> ledger.json` writes `.smtw/ledger.json`; the hint
+    alone (`ledger.json`) only looks safe when resolved against the root.
+
+    The second value is a relative write hint whose working directory could not
+    be resolved (`cd "$DIR" && echo x >> ledger.json`).  That directory may be
+    the state directory, so the caller must not treat the write as safe.
+    """
+    command = _command(payload)
+    hints = _shell_state_dir_hints(command)
+    if not hints:
+        return [], None
+    from .destructive_guard import path_interpretations, working_directory_bases
+
+    shell_cwd = payload.get("shell_cwd")
+    try:
+        bases, unknown = working_directory_bases(
+            root,
+            command,
+            shell_cwd if isinstance(shell_cwd, str) else None,
+        )
+    except (OSError, ValueError):
+        bases, unknown = (root,), True
+    unanchored = (
+        next((hint for hint in hints if _is_working_directory_relative_hint(hint)), None)
+        if unknown
+        else None
+    )
+    # Only a working-directory-relative hint moves with `cd`: after `cd .smtw`,
+    # `~/notes.txt` and `$HOME/notes.txt` are still outside the state directory.
+    # The root-only reading still adds the Git Bash drive translation.
+    interpretations = list(
+        dict.fromkeys(
+            candidate
+            for hint in hints
+            for candidate in path_interpretations(
+                hint,
+                bases if _is_working_directory_relative_hint(hint) else bases[:1],
+            )
+        )
+    )
+    return interpretations, unanchored
+
+
 def _contract_authoring_barrier(
     root: str,
     authoring_targets: list[str],
@@ -276,8 +342,12 @@ def evaluate_state_file_friction(payload: Mapping[str, JsonValue]) -> Decision:
         return {"decision": "allow", "message": "not a guarded tool"}
     root = _project_root(payload)
     targets = list(_string_list(payload.get("file_paths")))
+    unanchored_write: str | None = None
     if tool in SHELL_TOOLS:
-        targets.extend(_shell_state_dir_hints(_command(payload)))
+        interpretations, unanchored_write = _shell_state_dir_hint_interpretations(
+            root, payload
+        )
+        targets.extend(interpretations)
     authoring_targets = [
         target
         for target in targets
@@ -296,6 +366,16 @@ def evaluate_state_file_friction(payload: Mapping[str, JsonValue]) -> Decision:
                 "(마찰 장치 — 실질 방어는 §6-5 이중 근거 교차 확인). "
                 "정식 절차(계약 authoring·검증·오케스트레이터 경유)를 사용하세요. "
                 f"target={offending[0]}"
+            ),
+        }
+    if unanchored_write is not None:
+        return {
+            "decision": "block",
+            "reason": (
+                "[smtw] R2-friction: 작업 폴더를 미리 알 수 없는 `cd` 뒤의 상대경로 쓰기는 "
+                f"차단됩니다(`{_state_display_path(root, '**')}` 안일 수 있음). "
+                "절대경로로 다시 실행하세요. "
+                f"target={unanchored_write}"
             ),
         }
     if authoring_targets:

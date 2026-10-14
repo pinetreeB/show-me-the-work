@@ -2,6 +2,81 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **R2: 출력 리디렉션이 같은 명령의 삭제 대상을 가렸습니다.** 한 구간에서 처음 걸린 탐지 1건만
+  돌려주는데 리디렉션 탐지가 삭제 탐지보다 앞에 있어, `rm peer.py 2>/dev/null`은 `/dev/null`만,
+  `rm peer.py > own.log`는 `own.log`만 검사했습니다. 이제 리디렉션을 명령 인자에서 떼어 낸 뒤
+  명령 자체의 대상과 **모든** 리디렉션 대상을 함께 검사합니다. 단어에 붙은 리디렉션
+  (`echo x>peer.py`, `a>b>c`), 리디렉션이 명령 앞에 오는 형태(`>log rm peer.py`), 단어에 붙은
+  서브셸 괄호(`(true && rm peer.py)`)도 같은 규칙으로 해석합니다. 다음 단어에서 가져온 리디렉션
+  대상도 다시 쪼개므로 `echo x > own.log>peer.py`의 `peer.py`도 검사하고, 단어에 붙은 입력
+  리디렉션(`rm peer.py<in`)이 삭제 대상을 가리지 않습니다. 백슬래시로 이스케이프한 `>`
+  (`echo safe\>peer.py`)는 bash·PowerShell 모두 글자로 출력하므로 리디렉션으로 보지 않습니다.
+  PowerShell의 버리기 관용구 `2>$null`·`*>$null`은 **호스트가 PowerShell 도구라고 알려 준
+  경우에만** 파일을 쓰지 않는 것으로 봅니다. bash에서 `$null`은 변수라
+  (`null=peer.py; echo x >$null`은 `peer.py`를 씁니다) 그 밖의 셸에서는 이전처럼 해석 불가로
+  차단합니다. Claude·Codex 어댑터는 PowerShell 도구 이름을 그대로 R2에 전달합니다.
+- **R2·상태 보호: `cd` 뒤 상대경로를 프로젝트 루트 기준으로만 풀었습니다.** `cd src && rm peer.py`는
+  `<root>/peer.py`를, `cd .smtw && rm ledger.json`은 `<root>/ledger.json`을 검사해 통과했습니다. 이제
+  상대 대상은 루트와 함께 **명령 안의 `cd`/`pushd`/`Set-Location` 목적지**와 **호스트가 알려 준
+  셸 작업 폴더**(`shell_cwd`, 어댑터가 hook payload의 `cwd`를 전달) 기준으로도 모두 검사합니다.
+  해석을 늘리기만 하므로 보호가 줄어드는 경우는 없습니다. 같은 폴더로 여러 번 옮기는 경우
+  (`cd src && cd src` → `src/src`)도 순서대로 따라갑니다. 목적지를 정적으로 알 수 없는 `cd`
+  (`cd "$DIR"`, `cd -`, 짝 없는 `popd`)가 있고 상대 파괴 대상이 있으면 fail-closed로 차단합니다.
+  Windows에서는 Git Bash 경로(`/c/Users/...`)도 드라이브 경로로 함께 해석합니다.
+- **상태 파일 마찰 장치가 R2 밖의 쓰기 명령을 놓쳤습니다.** `install`, `patch`, `curl -o/--output`,
+  `wget -O/-P`의 쓰기 대상과 단어에 붙은 리디렉션(`x>>.smtw/ledger.json`)을 이제 `.smtw/**`
+  (및 레거시 `.fable-lite/**`) 직접 변경으로 차단합니다. `cd .smtw && echo x >> ledger.json`처럼
+  작업 폴더가 바뀐 경우도 같습니다. 쓰기 대상을 고를 때 출력 리디렉션은 인자에서 빼므로
+  `install file .smtw/ledger.json > own.log`의 설치 위치를 로그 파일로 착각하지 않습니다.
+- **R2: 입력 리디렉션이 명령 인자로 읽혀 대상을 가렸습니다(리뷰 r2).** `ln -sf other.py peer.py <
+  /dev/null`·`rsync -a --delete tmp/ src/ < /dev/null`은 실제 목적지 대신 `/dev/null`을 검사했고,
+  명령 앞의 입력 리디렉션(`< /dev/null rm peer.py`)이나 앞쪽 변수 대입에 붙은 리디렉션
+  (`FOO=a>peer.py true`)은 명령 이름 자체를 가렸습니다. 이제 입력·출력 리디렉션을 모두 인자에서 뗀
+  뒤 명령 이름과 대상을 찾습니다. 셸이 표준 입력에서 스크립트를 읽을 때(`bash < script.sh`,
+  `bash <<< "…"`)만 입력 리디렉션을 스크립트로 보고, `-c`나 스크립트 파일을 받은 셸에서는 데이터로
+  보므로 `bash -c 'rm peer.py' <<< x`의 `-c` 내용도 검사합니다(전에는 here-string·heredoc이 붙으면
+  건너뛰었습니다). 파이프로 받은 셸에 꼬리를 붙인 형태(`curl … | sh 2>&1`)와 heredoc 앞의
+  리디렉션(`bash 2>/dev/null <<EOF`)도 스크립트 입력으로 봅니다. `bash script.sh <<EOF`는 heredoc
+  없는 `bash script.sh`와 똑같이 판정합니다.
+- **R2: rsync 옵션 값을 시험 실행으로 오인했습니다(리뷰 r2).** 값을 받는 긴 옵션 목록이 일부뿐이라
+  `rsync -a --out-format --dry-run --delete tmp/ src/`의 `--dry-run`(실제로는 `--out-format`의
+  값)을 시험 실행으로 보고 통과시켰습니다. rsync 3.4의 값 옵션을 모두 등록했습니다.
+- **상태 파일 마찰 장치 보완(리뷰 r2).** `cd .smtw < /dev/null`의 목적지를 읽고, 목적지를 알 수
+  없는 `cd`(`cd "$DIR"`, `` cd `pwd`/.smtw ``, `cd -`, 짝 없는 `popd`) 뒤의 상대경로 쓰기는 상태
+  폴더 안일 수 있어 차단합니다(절대경로·`~`·변수로 시작하는 경로·`/dev/null`은 통과). 백틱 명령
+  치환이 들어간 `cd` 목적지도 `$(…)`처럼 알 수 없는 목적지로 봅니다. `install -Dt .smtw file`처럼
+  묶어 쓴 짧은 옵션, `--target=.smtw` 같은 긴 옵션 줄임말, `patch -Ed.smtw`·`--dir=.smtw`도 쓰기
+  위치로 읽습니다.
+- **상태 파일 마찰 장치: 명령 앞의 리디렉션을 명령 이름으로 읽었습니다(리뷰 r4).**
+  `< /dev/null install file .smtw/ledger.json`은 `<`를 명령 이름으로 보아 `install`을 놓쳤습니다.
+  이제 리디렉션(`<`, `0<`, `<<<`, `>`, `2>` 등)과 앞쪽 변수 대입(`LC_ALL=C`)을 뗀 뒤 명령 이름을
+  찾습니다. 인자 쪽에서도 `<>`·`<&0`처럼 두 토큰으로 쪼개지는 입력 리디렉션의 대상을 설치 위치로
+  착각하지 않습니다.
+- **상태 파일 마찰 장치: `cd` 뒤 홈 경로 쓰기를 잘못 막았습니다(리뷰 r4, 이 브랜치에서 생긴 회귀).**
+  `cd .smtw && echo x >> ~/notes.txt`를 `.smtw/~/notes.txt` 쓰기로 보고 차단했습니다. `cd` 목적지
+  기준 해석은 이제 작업 폴더에 따라 달라지는 상대경로에만 적용하고, `~`·변수로 시작하는 경로와
+  `/dev/null`·`nul`은 루트 기준 해석(Git Bash 드라이브 경로 변환 포함)만 합니다.
+- **설치기가 링크된 설정 폴더를 따라가 사용자 전역 설정을 바꿀 수 있었습니다.** Codex·Qwen 프로젝트
+  설치에서 `<target>/.codex`·`<target>/.qwen`이 심볼릭 링크·junction이거나 프로젝트 밖으로 풀리면
+  이제 설치를 거부합니다.
+
+### Changed
+
+- **R2 어휘 확장(KL5 일부 편입).** `rsync`(`--delete*`는 대상 폴더 전체, 재귀 복사는 덮어쓸 위치,
+  `--remove-source-files`는 원본), `robocopy`(`/MIR`·`/PURGE`·`/MOV(E)` 포함), `ln -f`/`ln -sf`
+  (링크 이름 위치의 기존 파일)를 파괴 대상으로 검사합니다. 원격 소스(`rsync -a host:src/ src/`)도
+  로컬 대상 폴더에 쓰므로 같은 규칙으로 보고, 복사될 이름을 알 수 없는 소스(`host:`, `tmp/*`,
+  `--files-from`, `-R`)는 대상 폴더 전체를 검사합니다. 내 파일·원격 대상·`-n`/`/L` 시험 실행은
+  통과합니다. `tar -x`는 아카이브 안 파일 이름을 정적으로 알 수 없어 계속 알려진 한계로 둡니다.
+- **Qwen 프로젝트 설치의 trust 자동 등록을 조건부로 바꿨습니다.** 대상의 기존
+  `.qwen/settings.json`에 smtw가 넣지 않은 훅·MCP 서버·도구 명령이 있으면, 폴더를 신뢰 등록하는
+  순간 Qwen이 그것들을 실행하게 되므로 자동 등록을 거부하고 `--trust`로 명시하도록 안내합니다.
+  그런 설정이 없으면 지금처럼 자동 등록합니다.
+- 공개 설계 문서·설치 예시에서 내부 원격 작업 환경 식별 정보(접속 별칭·호스트명·사용자 경로·도구
+  버전)를 자리표시자로 바꿨습니다.
+
 ## [2.8.2] - 2026-08-08 — Legacy Ledger Recovery
 
 **설치된 하네스가 조용히 죽어 있을 수 있습니다.** 이 저장소 자신이 그 상태였습니다 —

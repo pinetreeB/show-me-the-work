@@ -45,6 +45,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Atomically replace only smtw-owned hook entries in existing settings",
     )
+    _ = parser.add_argument(
+        "--trust",
+        action="store_true",
+        help=(
+            "Register the target as TRUST_FOLDER even when its existing "
+            "<target>/.qwen/settings.json defines hooks, MCP servers or tool "
+            "commands that show-me-the-work did not install (review them first)."
+        ),
+    )
     return parser
 
 
@@ -203,6 +212,63 @@ def _atomic_replace_text(destination: Path, content: str) -> None:
         raise
 
 
+def _is_junction(path: Path) -> bool:
+    isjunction = getattr(os.path, "isjunction", None)
+    return bool(isjunction is not None and isjunction(path))
+
+
+def _linked_config_problem(target_root: Path, config_dir: Path, settings: Path) -> str | None:
+    """Refuse to write through a link that leaves the target project.
+
+    A `<target>/.qwen` symlink or junction to `~/.qwen` would turn a workspace
+    install into a silent edit of the user-global settings.
+    """
+    if config_dir.is_symlink() or _is_junction(config_dir):
+        return f"Refusing to install through a linked .qwen directory: {config_dir}"
+    if settings.is_symlink():
+        return f"Refusing to install through a symlinked qwen settings file: {settings}"
+    for path in (config_dir, settings):
+        if not path.exists():
+            continue
+        try:
+            _ = path.resolve().relative_to(target_root)
+        except (OSError, ValueError):
+            return f"Refusing to install: {path} resolves outside the target project"
+    return None
+
+
+def _foreign_executable_settings(settings: dict[str, object]) -> list[str]:
+    """Settings that would start running once the folder is trusted."""
+    found: list[str] = []
+    hooks = settings.get("hooks")
+    if isinstance(hooks, dict):
+        for event, matchers in cast(dict[str, object], hooks).items():
+            if not isinstance(matchers, list):
+                continue
+            for raw_matcher in matchers:
+                entries = (
+                    cast(dict[str, object], raw_matcher).get("hooks")
+                    if isinstance(raw_matcher, dict)
+                    else None
+                )
+                if isinstance(entries, list) and any(
+                    not _is_owned_hook(entry) for entry in entries
+                ):
+                    found.append(f"hooks.{event}")
+                    break
+    if settings.get("mcpServers"):
+        found.append("mcpServers")
+    for key in ("toolDiscoveryCommand", "toolCallCommand"):
+        if settings.get(key):
+            found.append(key)
+    tools = settings.get("tools")
+    if isinstance(tools, dict):
+        for key in ("discoveryCommand", "callCommand"):
+            if cast(dict[str, object], tools).get(key):
+                found.append(f"tools.{key}")
+    return found
+
+
 def _trusted_folders_path() -> Path:
     override = os.environ.get(TRUSTED_FOLDERS_ENV)
     if override:
@@ -249,9 +315,31 @@ def main() -> int:
         return 2
 
     upgrade = getattr(args, "upgrade", False) is True
+    explicit_trust = getattr(args, "trust", False) is True
     if isinstance(target_value, Path):
-        destination = target_value.resolve() / ".qwen" / "settings.json"
+        target_root = target_value.resolve()
+        destination = target_root / ".qwen" / "settings.json"
         scope_label = "workspace"
+        problem = _linked_config_problem(target_root, destination.parent, destination)
+        if problem is not None:
+            print(problem, file=sys.stderr)
+            return 1
+        if destination.is_file() and not explicit_trust:
+            try:
+                current = _parsed_object(destination.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                current = None
+            foreign = _foreign_executable_settings(current) if current is not None else []
+            if foreign:
+                print(
+                    "Refusing to auto-register trust: the existing workspace qwen "
+                    f"settings ({destination}) already define {', '.join(foreign)} "
+                    "that show-me-the-work did not install. Trusting the folder "
+                    "would let Qwen run them. Review the file, then re-run with "
+                    "--trust to register trust anyway.",
+                    file=sys.stderr,
+                )
+                return 1
     else:
         destination = Path.home() / ".qwen" / "settings.json"
         scope_label = "user"
