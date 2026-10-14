@@ -177,6 +177,27 @@ def _atomic_replace_text(destination: Path, content: str) -> None:
         raise
 
 
+def _is_junction(path: Path) -> bool:
+    isjunction = getattr(os.path, "isjunction", None)
+    return bool(isjunction is not None and isjunction(path))
+
+
+def _linked_config_problem(target_root: Path, config_dir: Path) -> str | None:
+    """Refuse to write through a `.codex` link that leaves the target project.
+
+    A `<target>/.codex` symlink or junction to `~/.codex` would turn a project
+    install into a silent edit of the user-global Codex hooks.
+    """
+    if config_dir.is_symlink() or _is_junction(config_dir):
+        return f"Refusing to install through a linked .codex directory: {config_dir}"
+    if config_dir.exists():
+        try:
+            _ = config_dir.resolve().relative_to(target_root)
+        except (OSError, ValueError):
+            return f"Refusing to install: {config_dir} resolves outside the target project"
+    return None
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -190,7 +211,12 @@ def main() -> int:
         print("show-me-the-work Codex hook template is invalid; installation aborted.", file=sys.stderr)
         return 2
 
-    destination = target_value.resolve() / ".codex" / "hooks.json"
+    target_root = target_value.resolve()
+    destination = target_root / ".codex" / "hooks.json"
+    problem = _linked_config_problem(target_root, destination.parent)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return 1
     destination.parent.mkdir(parents=True, exist_ok=True)
     upgrade = getattr(args, "upgrade", False) is True
     try:
