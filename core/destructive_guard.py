@@ -1330,31 +1330,72 @@ def _detect_transfer(tokens: list[str]) -> ParsedDestructiveCommand | None:
 
 
 _RSYNC_SHORT_VALUE_LETTERS: Final[frozenset[str]] = frozenset("efBTM@")
+# Every rsync long option that takes a value (rsync 3.4 option table).  popt
+# takes the next word as the value even when it looks like an option, so
+# `--out-format --dry-run` formats output as "--dry-run" and is no dry run.
 _RSYNC_LONG_VALUE_OPTIONS: Final[frozenset[str]] = frozenset(
     {
+        "--address",
         "--backup-dir",
+        "--block-size",
+        "--bwlimit",
+        "--cc",
+        "--checksum-choice",
+        "--checksum-seed",
         "--chmod",
         "--chown",
         "--compare-dest",
+        "--compress-choice",
+        "--compress-level",
+        "--config",
+        "--contimeout",
+        "--copy-as",
         "--copy-dest",
+        "--debug",
+        "--dparam",
+        "--early-input",
         "--exclude",
         "--exclude-from",
         "--files-from",
         "--filter",
+        "--groupmap",
+        "--iconv",
         "--include",
         "--include-from",
+        "--info",
         "--link-dest",
         "--log-file",
+        "--log-file-format",
+        "--log-format",
+        "--max-alloc",
         "--max-delete",
         "--max-size",
         "--min-size",
+        "--modify-window",
+        "--only-write-batch",
+        "--out-format",
+        "--outbuf",
         "--partial-dir",
         "--password-file",
+        "--port",
+        "--protocol",
+        "--read-batch",
+        "--remote-option",
         "--rsh",
         "--rsync-path",
+        "--skip-compress",
+        "--sockopts",
+        "--stderr",
+        "--stop-after",
+        "--stop-at",
         "--suffix",
         "--temp-dir",
+        "--time-limit",
         "--timeout",
+        "--usermap",
+        "--write-batch",
+        "--zc",
+        "--zl",
     }
 )
 
@@ -1753,6 +1794,13 @@ def _detect_forced_new_item(tokens: list[str]) -> ParsedDestructiveCommand | Non
 
 @dataclass(frozen=True, slots=True)
 class _Redirection:
+    """One redirection split off a command's argv.
+
+    Output targets are unquoted file names.  Input targets keep the spelling
+    the command used (a here-string's quotes included) because the shell
+    wrapper detector parses them again as a script.
+    """
+
     operator: str
     target: str | None
     append: bool  # writes without truncating (`>>`, `<>`)
@@ -1927,15 +1975,33 @@ def _split_redirect_target_word(token: str) -> tuple[str, list[_Redirection]]:
     return token[:redirect_index], nested
 
 
+def _has_open_quote(text: str) -> bool:
+    """Whether ``text`` ends inside a quote (same rules as the redirect scan)."""
+    quote: str | None = None
+    index = 0
+    while index < len(text):
+        character = text[index]
+        if quote is not None:
+            if character == quote:
+                quote = None
+        elif character == "\\":
+            index += 1
+        elif character in "'\"":
+            quote = character
+        index += 1
+    return quote is not None
+
+
 def _split_redirections(
     tokens: list[str],
 ) -> tuple[list[str], list[_Redirection]]:
-    """Separate output redirections from the argv a command really sees.
+    """Separate every redirection from the argv a command really sees.
 
-    Input redirections stay in argv in the shape the command text used
-    (``<in``, ``<`` ``in``, ``<<<`` ``"…"``) because detectors read them
-    (`bash < script`, `bash <<< "rm x"`); they are only detached from a word
-    they were glued to, so ``rm peer.py<in`` still names ``peer.py``.
+    Neither output nor input redirections are arguments: ``ln -sf a peer.py <
+    /dev/null`` links ``peer.py``, and ``< /dev/null rm peer.py`` still runs
+    ``rm``.  Input redirections are returned with ``output=False`` so the shell
+    wrapper detector can still read a script fed on stdin (`bash < script`,
+    `bash <<< "rm x"`).
     """
     argv: list[str] = []
     redirections: list[_Redirection] = []
@@ -1948,28 +2014,49 @@ def _split_redirections(
         while pending:
             redirection = pending.pop(0)
             target = redirection.target
-            attached = target is not None
             if target is None:
                 target = ""
                 if index < len(tokens):
                     target, nested = _split_redirect_target_word(tokens[index])
                     index += 1
                     pending[0:0] = nested
-            if not redirection.output:
-                if attached:
-                    argv.append(redirection.operator + target)
-                else:
-                    argv.extend(part for part in (redirection.operator, target) if part)
-                continue
+            # The whitespace tokenizer cuts a quoted target glued to its
+            # operator (`<<<'echo hi'` -> `<<<'echo` `hi'`); join it back.
+            while _has_open_quote(target) and index < len(tokens):
+                target = f"{target} {tokens[index]}"
+                index += 1
             redirections.append(
                 _Redirection(
                     redirection.operator,
-                    _unquote(target),
+                    _unquote(target) if redirection.output else target,
                     redirection.append,
                     redirection.output,
                 )
             )
     return argv, redirections
+
+
+def _segment_argv(text: str) -> tuple[list[str], list[_Redirection]]:
+    """Tokenize one segment into its argv and its redirections.
+
+    Redirections are split off before anything else looks for the command
+    word: they may stand before it (`< /dev/null rm peer.py`) or be glued to a
+    leading assignment (`FOO=a>peer.py true`), and a glued subshell paren is
+    only detached once the redirection behind it is gone (`(rm peer.py)>log`).
+    """
+    argv, redirections = _split_redirections(_tokenize(text))
+    return _split_glued_subshell_parens(argv), redirections
+
+
+def _input_redirection_tokens(redirections: list[_Redirection]) -> list[str]:
+    """Input redirections re-spelled as words, for a wrapped command's payload."""
+    return [
+        part
+        for redirection in redirections
+        if not redirection.output
+        for part in (redirection.operator, redirection.target or "")
+        if part
+    ]
 
 
 def _is_descriptor_duplication(redirection: _Redirection) -> bool:
@@ -2113,24 +2200,49 @@ def _detect_tee(tokens: list[str]) -> ParsedDestructiveCommand | None:
     return ParsedDestructiveCommand(CATEGORY_TRUNCATE, True, tuple(validated), "")
 
 
-def _detect_wrapper_indirect(tokens: list[str]) -> ParsedDestructiveCommand | None:
-    wrapper = _command_name(tokens[0])
-    if wrapper not in WRAPPER_COMMAND_NAMES:
-        return None
-    if wrapper in SHELL_COMMAND_NAMES:
-        here_string = _shell_here_string_payload(tokens)
-        if here_string is not None:
+def _detect_shell_stdin_script(
+    stdin: list[_Redirection],
+) -> ParsedDestructiveCommand | None:
+    """Classify a shell whose script arrives through an input redirection."""
+    for redirection in stdin:
+        if redirection.operator.startswith("<<<"):
+            here_string = _unquote(redirection.target or "")
             if not here_string:
                 return _blocked(CATEGORY_REMOVE, "parse_unable_wrapped")
             nested = parse_destructive_command(here_string)
             if nested is not None:
                 return _blocked(nested.category, "parse_unable_wrapped")
-            return None
-        if any(_unquote(token).startswith("<<") for token in tokens[1:]):
-            return None
+        elif not redirection.operator.startswith("<<"):
+            # `bash < script.sh`, `bash <&3`: the script text is not visible.
+            return _blocked(CATEGORY_REMOVE, "parse_unable_wrapped")
+    # Heredoc bodies are evaluated as their own segments (_shell_reads_heredoc).
+    return None
+
+
+def _detect_wrapper_indirect(
+    tokens: list[str],
+    stdin: list[_Redirection],
+) -> ParsedDestructiveCommand | None:
+    """Parse the command a wrapper runs.
+
+    ``stdin`` holds the segment's input redirections, split off ``tokens``.  A
+    shell that reads its script from stdin runs them as the script; any other
+    wrapper passes them on to the wrapped command (`sudo bash < script`), and a
+    shell given ``-c`` or a script file only reads them as data, so its payload
+    is still checked (`bash -c 'rm peer.py' <<< x`).
+    """
+    wrapper = _command_name(tokens[0])
+    if wrapper not in WRAPPER_COMMAND_NAMES:
+        return None
+    stdin_tokens = _input_redirection_tokens(stdin)
+    if wrapper in SHELL_COMMAND_NAMES:
+        if stdin and _shell_stdin_is_script(tokens):
+            return _detect_shell_stdin_script(stdin)
+        stdin_tokens = []
     payload_tokens = _wrapper_payload_tokens(tokens, wrapper)
     if not payload_tokens:
         return None
+    payload_tokens = [*payload_tokens, *stdin_tokens]
     payload_command = " ".join(_unquote(token) for token in payload_tokens)
     nested = parse_destructive_command(payload_command)
     if nested is not None:
@@ -2139,6 +2251,8 @@ def _detect_wrapper_indirect(tokens: list[str]) -> ParsedDestructiveCommand | No
         return nested
     if wrapper not in OPAQUE_WRAPPER_COMMAND_NAMES:
         return None
+    # An input redirection only reads, so it is left out of the read-only proof:
+    # `bash -c 'echo hi' <<< x` stays allowed while `-c 'rm …'` is caught above.
     read_only_candidate = (
         payload_command
         if wrapper in INVOKE_EXPRESSION_COMMAND_NAMES
@@ -2147,20 +2261,6 @@ def _detect_wrapper_indirect(tokens: list[str]) -> ParsedDestructiveCommand | No
     if is_proven_read_only_command(read_only_candidate):
         return None
     return _blocked(CATEGORY_REMOVE, "parse_unable_wrapped")
-
-
-def _shell_here_string_payload(tokens: list[str]) -> str | None:
-    for index, raw_token in enumerate(tokens[1:], start=1):
-        token = _unquote(raw_token)
-        if token in {"-c", "--command"}:
-            return None
-        if token == "<<<":
-            if index + 1 >= len(tokens):
-                return ""
-            return _unquote(tokens[index + 1])
-        if token.startswith("<<<"):
-            return _unquote(token[3:])
-    return None
 
 
 _WRAPPER_OPTIONS_WITH_VALUE: Final[dict[str, frozenset[str]]] = {
@@ -2333,7 +2433,9 @@ def _heredoc_consumer(line: str, operator: int) -> str:
     for index, token in enumerate(tokens):
         if _unquote(token) in {"&&", "||", ";", "|", "&"}:
             last_boundary = index
-    tokens = _command_position_tokens(tokens[last_boundary + 1 :])
+    # `2>/dev/null bash <<EOF`: a redirection is not the consumer.
+    argv, _redirections = _split_redirections(tokens[last_boundary + 1 :])
+    tokens = _command_position_tokens(argv)
     while tokens and _command_name(tokens[0]) in {
         "builtin",
         "command",
@@ -2495,7 +2597,10 @@ def _shell_reads_heredoc(line: str, declaration: _HeredocDeclaration) -> bool:
     for index, token in enumerate(tokens):
         if _unquote(token) in {"&&", "||", ";", "|", "&"}:
             last_boundary = index
-    tokens = _command_position_tokens(tokens[last_boundary + 1 :])
+    # `bash 2>/dev/null <<EOF` still runs the body: a redirection is not the
+    # script operand that would make stdin plain data.
+    argv, _redirections = _split_redirections(tokens[last_boundary + 1 :])
+    tokens = _command_position_tokens(argv)
     while tokens and _command_name(tokens[0]) in {
         "builtin",
         "command",
@@ -2892,7 +2997,6 @@ _DETECTORS: Final[
     _detect_perl_in_place,
     _detect_forced_new_item,
     _detect_find_exec,
-    _detect_wrapper_indirect,
 )
 
 
@@ -3003,7 +3107,10 @@ def _detect_pipeline_shell_receiver(
 ) -> ParsedDestructiveCommand | None:
     if segment.incoming_separator not in {"|", "|&"}:
         return None
-    tokens = _effective_command_tokens(_tokenize(segment.text))
+    # `curl … | sh 2>&1`: a redirection is not a script operand, so the shell
+    # still runs whatever the pipe feeds it.
+    argv, _redirections = _segment_argv(segment.text)
+    tokens = _effective_command_tokens(argv)
     command = _command_name(tokens[0]) if tokens else ""
     if (
         tokens
@@ -3065,7 +3172,8 @@ def executable_command_positions(command: str) -> tuple[tuple[str, ...], ...]:
     positions: list[tuple[str, ...]] = []
     segments, _malformed = _r2_command_segments(command)
     for segment in segments:
-        tokens = _effective_command_tokens(_tokenize(segment.text))
+        argv, _redirections = _segment_argv(segment.text)
+        tokens = _effective_command_tokens(argv)
         if tokens:
             positions.append(tuple(_unquote(token) for token in tokens))
     return tuple(positions)
@@ -3138,10 +3246,9 @@ def command_working_directories(command: str) -> tuple[tuple[str, ...], bool]:
     pushed = False
     segments, _malformed = _r2_command_segments(command)
     for segment in segments:
-        tokens = _effective_command_tokens(
-            _split_glued_subshell_parens(_tokenize(segment.text))
-        )
-        tokens, _redirections = _split_redirections(tokens)
+        # `cd .smtw < /dev/null`: an input redirection is not a second operand.
+        argv, _redirections = _segment_argv(segment.text)
+        tokens = _effective_command_tokens(argv)
         if not tokens:
             continue
         name = _command_name(tokens[0])
@@ -3287,17 +3394,20 @@ def _parse_destructive_segment(
     리디렉션만 보고 삭제 대상을 놓치지 않기 위해서다. ``powershell``은 host가
     PowerShell 도구로 실행한다고 보고한 segment에서만 `$null` 버리기를 허용한다.
     """
-    raw_tokens = _split_glued_subshell_parens(_tokenize(command))
-    coproc = _detect_coproc(raw_tokens)
+    coproc = _detect_coproc(_split_glued_subshell_parens(_tokenize(command)))
     if coproc is not None:
         return (coproc,)
-    tokens = _command_position_tokens(raw_tokens)
-    if not tokens:
-        return ()
-    tokens, redirections = _split_redirections(tokens)
+    argv, redirections = _segment_argv(command)
+    tokens = _command_position_tokens(argv)
     redirect = _truncating_redirect_result(redirections, powershell=powershell)
     command_result = (
-        _parse_command_tokens(tokens, pipeline_literal) if tokens else None
+        _parse_command_tokens(
+            tokens,
+            pipeline_literal,
+            [redirection for redirection in redirections if not redirection.output],
+        )
+        if tokens
+        else None
     )
     return tuple(
         result for result in (command_result, redirect) if result is not None
@@ -3307,6 +3417,7 @@ def _parse_destructive_segment(
 def _parse_command_tokens(
     tokens: list[str],
     pipeline_literal: str | None,
+    stdin: list[_Redirection],
 ) -> ParsedDestructiveCommand | None:
     if _is_bare_sc_service_command(tokens):
         return None
@@ -3327,6 +3438,9 @@ def _parse_command_tokens(
         result = detector(tokens)
         if result is not None:
             return result
+    wrapped = _detect_wrapper_indirect(tokens, stdin)
+    if wrapped is not None:
+        return wrapped
     return _detect_obfuscated_fallback(tokens)
 
 
