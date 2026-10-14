@@ -3225,7 +3225,8 @@ def _change_directory_target(tokens: list[str]) -> str | None:
         target = os.path.expanduser(target)
         if target.startswith("~"):
             return None
-    if _has_glob(target) or _has_environment_reference(target):
+    # `cd `pwd`/.smtw`: a backtick command substitution is as dynamic as `$(…)`.
+    if _has_glob(target) or _has_environment_reference(target) or "`" in target:
         return None
     return target
 

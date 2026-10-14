@@ -256,3 +256,23 @@ def test_cd_with_input_redirection_checks_the_new_directory(
 
     assert result["decision"] == "block", command
     assert result["coordination_reason_code"] == "peer_unsettled"
+
+
+# --- Command substitution with backticks in a cd target ---------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd `pwd`/src && rm out.txt",
+        'cd "`pwd`/src" && rm out.txt',
+        "cd src/`echo x` && rm out.txt",
+    ],
+)
+def test_backtick_cd_target_is_unresolvable(tmp_path: Path, command: str) -> None:
+    # `pwd` may print any directory, so the new working directory is unknown.
+    assert command_working_directories(command)[1] is True, command
+    result = r2_gate(tmp_path, command)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "command_parse_unavailable"

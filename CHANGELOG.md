@@ -44,8 +44,9 @@
   `rsync -a --out-format --dry-run --delete tmp/ src/`의 `--dry-run`(실제로는 `--out-format`의
   값)을 시험 실행으로 보고 통과시켰습니다. rsync 3.4의 값 옵션을 모두 등록했습니다.
 - **상태 파일 마찰 장치 보완(리뷰 r2).** `cd .smtw < /dev/null`의 목적지를 읽고, 목적지를 알 수
-  없는 `cd`(`cd "$DIR"`, `cd -`, 짝 없는 `popd`) 뒤의 상대경로 쓰기는 상태 폴더 안일 수 있어
-  차단합니다(절대경로·`~`·변수로 시작하는 경로·`/dev/null`은 통과). `install -Dt .smtw file`처럼
+  없는 `cd`(`cd "$DIR"`, `` cd `pwd`/.smtw ``, `cd -`, 짝 없는 `popd`) 뒤의 상대경로 쓰기는 상태
+  폴더 안일 수 있어 차단합니다(절대경로·`~`·변수로 시작하는 경로·`/dev/null`은 통과). 백틱 명령
+  치환이 들어간 `cd` 목적지도 `$(…)`처럼 알 수 없는 목적지로 봅니다. `install -Dt .smtw file`처럼
   묶어 쓴 짧은 옵션, `--target=.smtw` 같은 긴 옵션 줄임말, `patch -Ed.smtw`·`--dir=.smtw`도 쓰기
   위치로 읽습니다.
 - **설치기가 링크된 설정 폴더를 따라가 사용자 전역 설정을 바꿀 수 있었습니다.** Codex·Qwen 프로젝트
