@@ -30,6 +30,24 @@
   (및 레거시 `.fable-lite/**`) 직접 변경으로 차단합니다. `cd .smtw && echo x >> ledger.json`처럼
   작업 폴더가 바뀐 경우도 같습니다. 쓰기 대상을 고를 때 출력 리디렉션은 인자에서 빼므로
   `install file .smtw/ledger.json > own.log`의 설치 위치를 로그 파일로 착각하지 않습니다.
+- **R2: 입력 리디렉션이 명령 인자로 읽혀 대상을 가렸습니다(리뷰 r2).** `ln -sf other.py peer.py <
+  /dev/null`·`rsync -a --delete tmp/ src/ < /dev/null`은 실제 목적지 대신 `/dev/null`을 검사했고,
+  명령 앞의 입력 리디렉션(`< /dev/null rm peer.py`)이나 앞쪽 변수 대입에 붙은 리디렉션
+  (`FOO=a>peer.py true`)은 명령 이름 자체를 가렸습니다. 이제 입력·출력 리디렉션을 모두 인자에서 뗀
+  뒤 명령 이름과 대상을 찾습니다. 셸이 표준 입력에서 스크립트를 읽을 때(`bash < script.sh`,
+  `bash <<< "…"`)만 입력 리디렉션을 스크립트로 보고, `-c`나 스크립트 파일을 받은 셸에서는 데이터로
+  보므로 `bash -c 'rm peer.py' <<< x`의 `-c` 내용도 검사합니다(전에는 here-string·heredoc이 붙으면
+  건너뛰었습니다). 파이프로 받은 셸에 꼬리를 붙인 형태(`curl … | sh 2>&1`)와 heredoc 앞의
+  리디렉션(`bash 2>/dev/null <<EOF`)도 스크립트 입력으로 봅니다. `bash script.sh <<EOF`는 heredoc
+  없는 `bash script.sh`와 똑같이 판정합니다.
+- **R2: rsync 옵션 값을 시험 실행으로 오인했습니다(리뷰 r2).** 값을 받는 긴 옵션 목록이 일부뿐이라
+  `rsync -a --out-format --dry-run --delete tmp/ src/`의 `--dry-run`(실제로는 `--out-format`의
+  값)을 시험 실행으로 보고 통과시켰습니다. rsync 3.4의 값 옵션을 모두 등록했습니다.
+- **상태 파일 마찰 장치 보완(리뷰 r2).** `cd .smtw < /dev/null`의 목적지를 읽고, 목적지를 알 수
+  없는 `cd`(`cd "$DIR"`, `cd -`, 짝 없는 `popd`) 뒤의 상대경로 쓰기는 상태 폴더 안일 수 있어
+  차단합니다(절대경로·`~`·변수로 시작하는 경로·`/dev/null`은 통과). `install -Dt .smtw file`처럼
+  묶어 쓴 짧은 옵션, `--target=.smtw` 같은 긴 옵션 줄임말, `patch -Ed.smtw`·`--dir=.smtw`도 쓰기
+  위치로 읽습니다.
 - **설치기가 링크된 설정 폴더를 따라가 사용자 전역 설정을 바꿀 수 있었습니다.** Codex·Qwen 프로젝트
   설치에서 `<target>/.codex`·`<target>/.qwen`이 심볼릭 링크·junction이거나 프로젝트 밖으로 풀리면
   이제 설치를 거부합니다.
