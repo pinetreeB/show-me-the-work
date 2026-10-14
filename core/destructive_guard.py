@@ -1397,13 +1397,15 @@ def _detect_rsync(tokens: list[str]) -> ParsedDestructiveCommand | None:
             index += 1
             continue
         if not after_double_dash and token.startswith("-") and token != "-":
-            cluster = token[1:]
-            if "n" in cluster:
-                return None  # -n is --dry-run
-            recursive = recursive or "a" in cluster or "r" in cluster
-            for position, letter in enumerate(cluster):
+            # Only the letters before the first value-taking option are flags:
+            # in `-e"nc host"` the `n` belongs to the remote-shell value.
+            for position, letter in enumerate(token[1:]):
+                if letter == "n":
+                    return None  # -n is --dry-run
+                if letter in "ar":
+                    recursive = True
                 if letter in _RSYNC_SHORT_VALUE_LETTERS:
-                    if position == len(cluster) - 1:
+                    if position == len(token) - 2:
                         index += 1
                     break
             index += 1
