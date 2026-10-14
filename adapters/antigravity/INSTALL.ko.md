@@ -9,12 +9,12 @@ Antigravity CLI 1.1.2에서 전역 `~/.gemini/config/hooks.json`에 설치하면
 `adapters/antigravity/hooks.json`의 두 placeholder를 모두 **공백이 없는 실제 절대 경로**로 바꾸십시오. 따옴표는 절대 추가하지 마십시오.
 
 - `{PYTHON_EXECUTABLE}`: Python 실행 파일의 절대 경로(예: `C:/Python312/python.exe`)
-- `{SMTW_ROOT}`: show-me-the-work 저장소의 절대 경로(예: `C:/Users/example/show-me-the-work`)
+- `{SMTW_ROOT}`: show-me-the-work 저장소의 절대 경로(예: `C:/path/to/show-me-the-work`)
 
 치환 뒤 command는 다음처럼 따옴표 없이 실행 파일과 스크립트가 모두 절대 경로여야 합니다.
 
 ```text
-C:/Python312/python.exe C:/Users/example/show-me-the-work/adapters/antigravity/oma_hook.py PreToolUse
+C:/Python312/python.exe C:/path/to/show-me-the-work/adapters/antigravity/oma_hook.py PreToolUse
 ```
 
 경로에 공백이 포함된 환경(예: `C:/Program Files/...`)이라면 공백 없는 경로에 Python을 설치하거나, 공백 없는 경로에 wrapper `.cmd`를 만들어 그 wrapper를 command로 지정하십시오.
