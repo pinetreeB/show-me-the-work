@@ -4,8 +4,9 @@ import ast
 import re
 import shlex
 from collections.abc import Iterable
+from dataclasses import dataclass
 
-from .destructive_guard import executable_command_positions
+from .destructive_guard import executable_command_positions, output_redirection_targets
 
 
 _REDIRECT = re.compile(r"(?:^|\s)(?:\d?>{1,2})\s*(?:'([^']+)'|\"([^\"]+)\"|([^\s;|&]+))")
@@ -44,6 +45,9 @@ def shell_candidate_paths(command: str) -> tuple[str, ...]:
 def _redirect_paths(command: str) -> Iterable[str]:
     for match in _REDIRECT.finditer(command):
         yield next(value for value in match.groups() if value is not None)
+    # R2's quote-aware parser also sees redirections glued to a word
+    # (`echo x>.smtw/ledger.json`, `x>>.smtw/ledger.json`) and appends.
+    yield from output_redirection_targets(command)
 
 
 def _inline_paths(command: str) -> Iterable[str]:
@@ -310,7 +314,179 @@ def _token_paths(tokens: tuple[str, ...]) -> Iterable[str]:
             yield from values[1:]
         elif command in {"set-content", "add-content", "out-content", "out-file"}:
             yield from _powershell_path(args)
+        elif command == "install":
+            yield from _install_paths(args)
+        elif command == "patch":
+            yield from _patch_paths(args)
+        elif command == "curl":
+            yield from _option_value_paths(args, _CURL_OPTIONS)
+        elif command == "wget":
+            yield from _option_value_paths(args, _WGET_OPTIONS)
         index = end + 1
+
+
+# Write destinations of commands that R2 does not model.  Friction only needs the
+# paths they may create or overwrite; reads (sources, patch input) are ignored.
+_INSTALL_VALUE_OPTIONS = frozenset({"-m", "-o", "-g", "-S", "-t"})
+_INSTALL_LONG_VALUE_OPTIONS = frozenset(
+    {"--mode", "--owner", "--group", "--suffix", "--target-directory", "--strip-program"}
+)
+_PATCH_VALUE_OPTIONS = frozenset(
+    {"-B", "-D", "-F", "-V", "-Y", "-d", "-g", "-i", "-o", "-p", "-r", "-z"}
+)
+_PATCH_WRITE_OPTIONS = frozenset(
+    {"-o", "-r", "-d", "--output", "--reject-file", "--directory"}
+)
+
+
+@dataclass(frozen=True)
+class _DownloadOptions:
+    short_values: frozenset[str]
+    short_writes: frozenset[str]
+    long_writes: frozenset[str]
+
+
+_CURL_OPTIONS = _DownloadOptions(
+    short_values=frozenset("AbcCdDeEFHKmoPQrtTuUwxXyYz"),
+    short_writes=frozenset("cDo"),
+    long_writes=frozenset(
+        {
+            "--alt-svc",
+            "--cookie-jar",
+            "--dump-header",
+            "--etag-save",
+            "--hsts",
+            "--libcurl",
+            "--output",
+            "--output-dir",
+            "--stderr",
+            "--trace",
+            "--trace-ascii",
+        }
+    ),
+)
+_WGET_OPTIONS = _DownloadOptions(
+    short_values=frozenset("ABDIOPQRTUXaeilotwY"),
+    short_writes=frozenset("OPao"),
+    long_writes=frozenset(
+        {
+            "--append-output",
+            "--directory-prefix",
+            "--output-document",
+            "--output-file",
+            "--save-cookies",
+            "--warc-file",
+        }
+    ),
+)
+
+
+def _without_input_redirections(args: tuple[str, ...]) -> list[str]:
+    kept: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in {"<", "<<", "<<<"}:
+            skip_next = True
+            continue
+        if arg.startswith("<"):
+            continue
+        kept.append(arg)
+    return kept
+
+
+def _install_paths(args: tuple[str, ...]) -> Iterable[str]:
+    positionals: list[str] = []
+    target_directories: list[str] = []
+    directories_mode = False
+    values = _without_input_redirections(args)
+    index = 0
+    while index < len(values):
+        arg = values[index]
+        name, separator, value = arg.partition("=")
+        if separator and name in _INSTALL_LONG_VALUE_OPTIONS:
+            if name == "--target-directory":
+                target_directories.append(value)
+            index += 1
+            continue
+        if arg in _INSTALL_VALUE_OPTIONS or arg in _INSTALL_LONG_VALUE_OPTIONS:
+            if arg in {"-t", "--target-directory"} and index + 1 < len(values):
+                target_directories.append(values[index + 1])
+            index += 2
+            continue
+        if arg in {"-d", "--directory"}:
+            directories_mode = True
+        elif arg.startswith("-t") and len(arg) > 2:
+            target_directories.append(arg[2:])
+        elif not arg.startswith("-"):
+            positionals.append(arg)
+        index += 1
+    if directories_mode:
+        yield from positionals
+    elif target_directories:
+        yield from target_directories
+    elif positionals:
+        yield positionals[-1]
+
+
+def _patch_paths(args: tuple[str, ...]) -> Iterable[str]:
+    positionals: list[str] = []
+    values = _without_input_redirections(args)
+    index = 0
+    while index < len(values):
+        arg = values[index]
+        name, separator, value = arg.partition("=")
+        if separator and name in _PATCH_WRITE_OPTIONS:
+            yield value
+            index += 1
+            continue
+        if arg in _PATCH_VALUE_OPTIONS or arg in _PATCH_WRITE_OPTIONS:
+            if arg in _PATCH_WRITE_OPTIONS and index + 1 < len(values):
+                yield values[index + 1]
+            index += 2
+            continue
+        if len(arg) > 2 and arg[:2] in {"-o", "-r", "-d"}:
+            yield arg[2:]
+        elif not arg.startswith("-"):
+            positionals.append(arg)
+        index += 1
+    if positionals:
+        # `patch FILE [PATCHFILE]`: the first operand is modified in place.
+        yield positionals[0]
+
+
+def _option_value_paths(
+    args: tuple[str, ...],
+    options: _DownloadOptions,
+) -> Iterable[str]:
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg.startswith("--"):
+            name, separator, value = arg.partition("=")
+            if separator and name in options.long_writes:
+                yield value
+            elif not separator and arg in options.long_writes and index + 1 < len(args):
+                yield args[index + 1]
+                index += 1
+            index += 1
+            continue
+        if arg.startswith("-") and len(arg) > 1:
+            # Short option cluster (`-sSo out`, `-qO-`): the first option that
+            # takes a value consumes the rest of the cluster or the next word.
+            for position, letter in enumerate(arg[1:], start=1):
+                if letter not in options.short_values:
+                    continue
+                attached = arg[position + 1 :]
+                value = attached or (args[index + 1] if index + 1 < len(args) else "")
+                if letter in options.short_writes and value not in {"", "-"}:
+                    yield value
+                if not attached:
+                    index += 1
+                break
+        index += 1
 
 
 def _command_end(tokens: tuple[str, ...], index: int) -> int:
