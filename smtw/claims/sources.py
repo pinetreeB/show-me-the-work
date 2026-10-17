@@ -126,6 +126,10 @@ class Repositories:
         if key not in self.cache:
             result = self.git(root, 'ls-tree', '-r', '--name-only', '-z', revision)
             self.cache[key] = decode(result.stdout).split('\0') if result.returncode == 0 else None
+            by_basename = {}
+            for name in self.cache[key] or []:
+                by_basename.setdefault(name.rsplit('/', 1)[-1].casefold(), []).append(name)
+            self.cache[('basenames', str(root), revision)] = by_basename
         return self.cache[key]
 
     def observations(self, path: str, *, fixed: bool) -> list[Evidence]:
@@ -139,7 +143,8 @@ class Repositories:
                 result.append(Evidence(path=path, origin=str(root), revision=revision,
                                        problem='저장소 revision 조회 실패'))
                 continue
-            for name in names:
+            basename = normalize_path(path, self.aliases).rsplit('/', 1)[-1]
+            for name in self.cache[('basenames', str(root), revision)].get(basename, []):
                 if not name or not (matches_path(path, str(root / name), self.aliases)
                                     or matches_path(path, name, self.aliases)):
                     continue

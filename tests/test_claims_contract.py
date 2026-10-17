@@ -488,6 +488,17 @@ def test_fixed_revision_is_a_sha_not_a_git_option(tmp_path):
     assert not (tmp_path/'unexpected-file').exists()
 
 
+@pytest.mark.parametrize('command,report,output,verdict', [
+    ('wc -l C:/sample/engine.py', '`engine.py` wc -l 0줄', '0 C:/sample/engine.py', 'match'),
+    ('wc -l C:/sample/engine.py', '`engine.py` 0줄', '0 C:/sample/engine.py', 'unverifiable'),
+    ('wc -c C:/sample/engine.py', '`engine.py` 42 B', '42 C:/sample/engine.py', 'match'),
+    ('stat -c %s C:/sample/engine.py', '`engine.py` 43 B', '42', 'mismatch'),
+])
+def test_command_file_measurements_keep_newline_and_byte_units_separate(tmp_path, command, report, output, verdict):
+    r, t = make_case(tmp_path, report, [agy_call('run_command', CommandLine=command), generic(output)])
+    assert only(run(r, agy=str(t)), 'K2')[0]['verdict'] == verdict
+
+
 def test_claims_entrypoint_does_not_import_legacy_modules(tmp_path):
     r, _ = make_case(tmp_path, '2건 중 1건')
     code = ('import sys; from smtw.cli import main; '

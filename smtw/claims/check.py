@@ -42,12 +42,6 @@ def line_values(c: Claim, e: Evidence) -> tuple[str, str, str]:
         if not values and e.total_lines is not None:
             values = [e.total_lines]
     if not values:
-        # wc/stat outputs are data only when the corresponding read command ran.
-        if 'wc' in e.command:
-            hit = re.search(r'^\s*(\d+)\s+(?:\S+\s*)?$', e.text.strip())
-            if hit:
-                values = [int(hit.group(1))]
-    if not values:
         return 'unverifiable', '줄 수 계측 미확보', ''
     okay = Decimal(c.value) in values
     return ('match' if okay else 'mismatch', f'줄 수 기준 {sorted(set(values))}', str(sorted(set(values))))

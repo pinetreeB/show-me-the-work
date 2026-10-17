@@ -14,7 +14,7 @@ from .sources import decode
 
 
 FILE_TOKEN = re.compile(r'''(?:[A-Za-z]:[\\/]|/|\.?\.?[/\\])?[^\s`"'<>;|{}=]+\.(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|csv|tsv)(?:@[\da-f]+)?''', re.I)
-READ_COMMAND = re.compile(r'\b(?:Get-Content|Select-String|cat|type|head|tail|sed|rg|grep|wc|stat|git|readFileSync|readFile|read_text|read_bytes|open)\b', re.I)
+READ_COMMAND = re.compile(r'\b(?:Get-Content|Get-Item|Select-String|cat|type|head|tail|sed|rg|grep|wc|stat|git|readFileSync|readFile|read_text|read_bytes|open)\b', re.I)
 WRITE_COMMAND = re.compile(r'\b(?:writeFileSync|writeFile|write_text|write_bytes|WriteAllText|WriteAllLines|Set-Content|Add-Content|Out-File|apply_patch|Remove-Item|Move-Item)\b|\bopen\s*\([^\n]+,[\s]*["\'][wax]|(?:^|[;&|])\s*(?:rm|mv|cp|tee)\s|(?<![2\d])>\s*[\w./\\]', re.I)
 GENERATED = re.compile(r'\b(?:echo|Write-Output)\b|\bprint\s*\(|console\.log|stdout\.write', re.I)
 GENERATED_LITERAL = re.compile(r'''(?:\bprint|console\.log|stdout\.write)\s*\(\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)''', re.I)
@@ -382,6 +382,17 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
         revision = re.search(r'\bgit\s+(?:-C\s+\S+\s+)?show\s+([0-9a-f]{7,40}):([^\s;"\']+)', call.command, re.I)
         if revision:
             e.revision, e.path = revision.group(1), revision.group(2)
+        if len(paths) == 1 and not e.problem:
+            measured = []
+            for line in body.splitlines():
+                value = re.fullmatch(r'\s*(\d+)(?:\s+(\S+))?\s*', line)
+                if value and (not value.group(2) or matches_path(paths[0], value.group(2)) or matches_path(value.group(2), paths[0])):
+                    measured.append(int(value.group(1)))
+            if len(measured) == 1:
+                if re.search(r'\bwc\s+-l\b', call.command):
+                    e.counts['L_nl'] = measured[0]
+                elif re.search(r'\bwc\s+-c\b|\bstat\s+[^;\n]*%s|\bGet-Item\b[^;\n]*\.Length', call.command, re.I):
+                    e.total_bytes = measured[0]
     return [e]
 
 

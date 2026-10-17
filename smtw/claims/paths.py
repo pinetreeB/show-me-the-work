@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import posixpath
 import re
+from functools import lru_cache
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 
 def normalize_path(value: str, aliases: dict[str, str] | None = None) -> str:
+    return _normalize_path(value, tuple(sorted((aliases or {}).items())))
+
+
+@lru_cache(maxsize=8192)
+def _normalize_path(value: str, aliases: tuple[tuple[str, str], ...]) -> str:
     value = value.strip().strip('`"\'').replace("\\", "/")
     if value.lower().startswith("file://"):
         value = unquote(value[7:])
         if re.match(r"^/[A-Za-z]:/", value):
             value = value[1:]
-    for alias, actual in sorted((aliases or {}).items(), key=lambda x: -len(x[0])):
+    for alias, actual in sorted(aliases, key=lambda x: -len(x[0])):
         alias = alias.replace("\\", "/")
         if value.casefold() == alias.casefold() or value.casefold().startswith(alias.casefold() + "/"):
             value = actual.replace("\\", "/") + value[len(alias):]
