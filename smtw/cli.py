@@ -24,6 +24,7 @@ def run_version(_args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from .claims.cli import add_claims_parser
     from .brief import run_brief
     from .check import run_check
     from .doctor import add_diagnostics_parsers
@@ -37,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(prog="smtw")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    add_claims_parser(subparsers)
 
     version_parser = subparsers.add_parser("version", help="설치된 버전을 출력합니다.")
     version_parser.set_defaults(func=run_version)
@@ -71,6 +73,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    # Claims runs independently: do not import legacy gate/ledger modules even
+    # indirectly through the other command parsers.
+    import sys
+    if sys.argv[1:2] == ["claims"]:
+        from .claims.cli import add_claims_parser
+        parser = argparse.ArgumentParser(prog="smtw")
+        add_claims_parser(parser.add_subparsers(dest="command", required=True))
+        args = parser.parse_args()
+        return int(args.func(args))
     parser = build_parser()
     args = parser.parse_args()
     return int(args.func(args))
