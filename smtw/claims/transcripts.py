@@ -16,6 +16,7 @@ FILE_TOKEN = re.compile(r'''(?:[A-Za-z]:[\\/]|/|\.?\.?[/\\])?[^\s`"'<>;|{}=]+\.(
 READ_COMMAND = re.compile(r'\b(?:Get-Content|Select-String|cat|type|head|tail|sed|rg|grep|wc|stat|git|readFileSync|readFile|read_text|read_bytes|open)\b', re.I)
 WRITE_COMMAND = re.compile(r'\b(?:writeFileSync|writeFile|write_text|write_bytes|WriteAllText|WriteAllLines|Set-Content|Add-Content|Out-File|apply_patch|Remove-Item|Move-Item)\b|\bopen\s*\([^\n]+,[\s]*["\'][wax]|(?:^|[;&|])\s*(?:rm|mv|cp|tee)\s|(?<![2\d])>\s*[\w./\\]', re.I)
 GENERATED = re.compile(r'\b(?:echo|Write-Output)\b|\bprint\s*\(|console\.log|stdout\.write', re.I)
+GENERATED_LITERAL = re.compile(r'''(?:\bprint|console\.log|stdout\.write)\s*\(\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)''', re.I)
 TRUNCATED = re.compile(r'<truncated|\[.{0,12}truncated|output (?:has been )?truncated|Warning: truncated output|\.\.\.\s*\d+ (?:tokens|chars).*truncated', re.I)
 NUMBERED = re.compile(r'^\s*(?:line\s+)?(\d+): ?(.*)$', re.I)
 
@@ -57,6 +58,8 @@ class Call:
         if self.url and re.search(r'web.*run|read_url|open_url', self.name, re.I):
             return True
         if re.search(r'\b(?:echo|Write-Output|printf)\b', self.command, re.I):
+            return False
+        if GENERATED_LITERAL.search(self.command):
             return False
         if GENERATED.search(self.command) and not re.search(r'\b(?:readFileSync|readFile|read_text|read_bytes|open|Get-Content)\b', self.command):
             return False
@@ -160,15 +163,15 @@ def js_calls(code: str, order: int, timestamp: str) -> list[Call]:
             except ValueError:
                 pass
         if args.get('cmd') or args.get('command'):
-            calls.append(Call(m.group(1), args, order, timestamp))
+            calls.append((m.start(), Call(m.group(1), args, order, timestamp)))
     for m in re.finditer(r'tools\.(web__run|web_run)\s*\(\s*', code):
         try:
             args, _ = js_literal(code, m.end())
         except (ValueError, SyntaxError):
             continue
         if isinstance(args, dict):
-            calls.append(Call(m.group(1), args, order, timestamp))
-    return calls
+            calls.append((m.start(), Call(m.group(1), args, order, timestamp)))
+    return [call for _, call in sorted(calls, key=lambda item: item[0])]
 
 
 def js_literal(code: str, index: int = 0):
@@ -245,6 +248,8 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
                  budget: Budget, exit_code: int | None = None) -> list[Evidence]:
     if re.search(r'web.*run', call.name, re.I) and isinstance(call.args.get('open'), list):
         observations = []
+        requests = call.args['open']
+        headings = list(re.finditer(r'^.*?\((https?://[^)\s]+)\)\s*$', body, re.M))
         for request in call.args['open']:
             url = request.get('ref_id', '') if isinstance(request, dict) else ''
             if not isinstance(url, str) or not url.startswith(('http://', 'https://')):
@@ -254,8 +259,16 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
                 observations.append(Evidence(url=url, tool=call.name, origin=origin,
                                              order=call.order, problem='웹 결과의 URL 연결 미확인'))
                 continue
+            content = body
+            if len(requests) > 1:
+                section = next((i for i, h in enumerate(headings) if normalize_url(h.group(1)) == normalize_url(url)), None)
+                if section is None:
+                    observations.append(Evidence(url=url, tool=call.name, origin=origin,
+                                                 order=call.order, problem='웹 결과별 본문 분리 미확인'))
+                    continue
+                content = body[headings[section].start():headings[section+1].start() if section+1 < len(headings) else len(body)]
             observations += parse_result(Call('read_url_content', {'Url': url}, call.order, call.timestamp),
-                                         body, origin, root, budget, exit_code)
+                                         content, origin, root, budget, exit_code)
         return observations
     if not call.read:
         return []
@@ -328,8 +341,15 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
             result.append(sub)
         if result:
             return result
-    pointers = re.findall(r'(?:has been saved to:|Task logs are available at:)\s*([^\r\n]+)|((?:[A-Za-z]:|/)[^\r\n`]*[/\\]steps[/\\]\d+[/\\]output\.txt)', body, re.I)
-    pointer_values = [a or b for a, b in pointers]
+    pointer_values = re.findall(r'(?:has been saved to:|Task logs are available at:)\s*([^\r\n]+)', body, re.I)
+    if not pointer_values and 'output.txt' in body:
+        # Do not backtrack a greedy path pattern from every slash in a long web
+        # line. First select output-file tokens, then validate their small suffix.
+        for line in body.splitlines():
+            if 'output.txt' not in line or not re.search(r'steps[/\\]\d+[/\\]output\.txt', line):
+                continue
+            pointer_values.extend(token.strip('`"') for token in line.split()
+                                  if 'output.txt' in token and re.search(r'steps[/\\]\d+[/\\]output\.txt', token))
     if pointer_values:
         target = pointer_path(pointer_values[0], root)
         if target is None or not target.is_file():

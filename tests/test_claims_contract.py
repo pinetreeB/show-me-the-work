@@ -449,6 +449,27 @@ def test_malformed_transcript_never_passes(tmp_path):
     assert run(r, agy=str(t))['status'] == 'INCOMPLETE'
 
 
+def test_long_web_line_does_not_backtrack_pointer_regex(tmp_path):
+    r, t = make_case(tmp_path, 'https://example.invalid/doc', [
+        agy_call('read_url_content', Url='https://example.invalid/doc'), generic('/segment' * 100000)])
+    start = time.monotonic()
+    assert run(r, agy=str(t))['status'] == 'PASS'
+    assert time.monotonic() - start < 5
+
+
+def test_k8_user_and_search_text_are_not_visits(tmp_path):
+    r, t = make_case(tmp_path, 'https://example.invalid/a\nhttps://example.invalid/b', [
+        {'type': 'USER_INPUT', 'content': 'https://example.invalid/a'},
+        agy_call('search_web', Query='documentation'), generic('https://example.invalid/b is a search hit')])
+    assert [c['verdict'] for c in run(r, agy=str(t))['claims']] == ['absent', 'absent']
+
+
+def test_third_party_consultation_quote_matches_without_k10(tmp_path):
+    result = check(tmp_path, '`engine.py` “담당자가 유선 상담으로 확인했습니다.”', '담당자가 유선 상담으로 확인했습니다.')
+    assert result['status'] == 'PASS'
+    assert not result['warnings']
+
+
 def test_claims_entrypoint_does_not_import_legacy_modules(tmp_path):
     r, _ = make_case(tmp_path, '2건 중 1건')
     code = ('import sys; from smtw.cli import main; '

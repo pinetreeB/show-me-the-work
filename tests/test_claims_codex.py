@@ -87,3 +87,24 @@ def test_codex_wrapped_patch_marks_future_reads(tmp_path):
     r, t = make_case(tmp_path, '`engine.py` 함수 `invented_name`', [row, output('Done', 'patch-wrapper'),
         call('exec_command', {'cmd': 'Get-Content C:/sample/engine.py'}), output('def invented_name(): pass')])
     assert run(r, codex=t)['status'] == 'INCOMPLETE'
+
+
+def test_codex_multi_web_pages_do_not_cross_match_quotes(tmp_path):
+    r, t = make_case(tmp_path, 'https://example.invalid/a “second page quotation”', [
+        call('web.run', {'open': [{'ref_id': 'https://example.invalid/a'}, {'ref_id': 'https://example.invalid/b'}]}),
+        output('First (https://example.invalid/a)\nfirst page quotation\nSecond (https://example.invalid/b)\nsecond page quotation')])
+    result = run(r, codex=t)
+    quote = next(c for c in result['claims'] if c['check_type'] == 'K5')
+    assert quote['verdict'] == 'mismatch'
+
+
+def test_literal_wrapper_call_order():
+    code = 'text(await tools.web__run({open:[{ref_id:"https://example.invalid/a"}]})); text(await tools.exec_command({cmd:"cat C:/sample/a.py"}));'
+    assert [c.name for c in js_calls(code, 1, '')] == ['web__run', 'exec_command']
+
+
+def test_generated_literal_mixed_with_file_read_is_excluded(tmp_path):
+    r, t = make_case(tmp_path, '`engine.py` 함수 `invented_name`', [
+        call('exec_command', {'cmd': 'python -c "from pathlib import Path; Path(\'C:/sample/engine.py\').read_text(); print(\'def invented_name(): pass\')"'}),
+        output('def invented_name(): pass')])
+    assert run(r, codex=t)['claims'][0]['verdict'] == 'unverifiable'

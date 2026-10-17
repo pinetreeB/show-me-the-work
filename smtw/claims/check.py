@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal
+from functools import lru_cache
 from pathlib import Path
 import re
 import subprocess
@@ -13,6 +14,7 @@ from .sources import Repositories, content_lines, local_source
 from .transcripts import read_transcript, resolve_agy
 
 
+@lru_cache(maxsize=1024)
 def boundary(token: str) -> re.Pattern:
     return re.compile(r'(?<![\w$])' + re.escape(token) + r'(?![\w$])')
 
@@ -79,9 +81,10 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> tuple[str, str, str]:
                 f'파일 크기 원문 {e.total_bytes} B', str(e.total_bytes))
     if c.check_type == 'K4':
         dirty, mentioned = False, False
+        token_pattern = boundary(c.value)
         for n, line in content_lines(e, budget):
             dirty |= '\ufffd' in line
-            if boundary(c.value).search(line):
+            if c.value in line and token_pattern.search(line):
                 if '\ufffd' in line:
                     continue
                 mentioned = True
