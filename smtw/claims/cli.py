@@ -28,7 +28,7 @@ def add_claims_parser(subparsers):
 
 
 def render_text(result: dict) -> str:
-    names = {'match': '일치', 'mismatch': '불일치', 'absent': '출처 없음', 'unverifiable': '미확인'}
+    names = {'match': '일치', 'mismatch': '불일치', 'absent': '출처 없음', 'unverifiable': '미확인', 'range_only': '범위만 확인'}
     output = [f"전체 상태: {result['status']}"]
     if 'error' in result:
         output.append(result['error'])

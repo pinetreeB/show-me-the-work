@@ -322,7 +322,7 @@ def test_required_12_timeout_preserves_found_failure(tmp_path, monkeypatch, afte
 def test_required_14_fixed_commit_conflicting_explicit_time(tmp_path, git_repo):
     root, sha = git_repo
     r, _ = make_case(tmp_path, '`engine.py:1`')
-    assert only(run(r, repos=[str(root)], commits={str(root): sha}), 'K1')[0]['verdict'] == 'match'
+    assert only(run(r, repos=[str(root)], commits={str(root): sha}), 'K1')[0]['verdict'] == 'range_only'
     r.write_text('commit abcdef1234 `engine.py:1`', encoding='utf-8')
     assert only(run(r, repos=[str(root)], commits={str(root): sha}), 'K1')[0]['verdict'] == 'unverifiable'
 
@@ -383,9 +383,10 @@ def test_aux_default_brain_layout_and_id(tmp_path):
 
 def test_schema_fields_and_atomic_claims(tmp_path):
     result = check(tmp_path, '`engine.py:1` 함수 `first_name`, `second_name`, 8줄', 'def first_name(): pass')
-    assert len(result['claims']) == 4
+    assert len(result['claims']) == 5
+    assert [c['verdict'] for c in only(result, 'K1')] == ['match', 'mismatch']
     for c in result['claims']:
-        assert {'report_line', 'text', 'check_type', 'verdict', 'author_marked', 'exempt', 'source', 'reason'} <= c.keys()
+        assert {'report_line', 'text', 'check_type', 'verdict', 'author_marked', 'exempt', 'source', 'reason', 'reason_code'} <= c.keys()
         assert c['report_line'] == 1
 
 

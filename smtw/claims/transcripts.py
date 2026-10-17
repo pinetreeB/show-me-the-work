@@ -20,6 +20,22 @@ GENERATED = re.compile(r'\b(?:echo|Write-Output)\b|\bprint\s*\(|console\.log|std
 GENERATED_LITERAL = re.compile(r'''(?:\bprint|console\.log|stdout\.write)\s*\(\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)''', re.I)
 TRUNCATED = re.compile(r'<truncated|\[.{0,12}truncated|output (?:has been )?truncated|Warning: truncated output|\.\.\.\s*\d+ (?:tokens|chars).*truncated', re.I)
 NUMBERED = re.compile(r'^\s*(?:line\s+)?(\d+): ?(.*)$', re.I)
+BROWSER_READ = re.compile(r'navigate|snapshot|fetch|(?:browser|mcp|page).*read|read.*(?:page|url)', re.I)
+SEARCH_TOOL = re.compile(r'search|query|find', re.I)
+
+
+def success_marker(command: str) -> tuple[str, str]:
+    """Recognize only a literal, conditional trailing marker; never execute shell text."""
+    literal = r'''(?:"([^"$`\r\n]*)"|'([^'\r\n]*)'|([\w.-]+))'''
+    patterns = [r'\s*&&\s*(?:echo|Write-Output)\s+' + literal + r'\s*;?\s*$',
+                r'\s*;\s*if\s*\(\s*\$\?\s*\)\s*\{\s*(?:echo|Write-Output)\s+' + literal + r'\s*;?\s*\}\s*$']
+    for pattern in patterns:
+        match = re.search(pattern, command, re.I)
+        if match:
+            marker = next(g for g in match.groups() if g is not None)
+            if marker:
+                return command[:match.start()], marker
+    return command, ''
 
 
 @dataclass
@@ -58,11 +74,14 @@ class Call:
             return False
         if self.url and re.search(r'web.*run|read_url|open_url', self.name, re.I):
             return True
-        if re.search(r'\b(?:echo|Write-Output|printf)\b', self.command, re.I):
+        if BROWSER_READ.search(self.name) and not SEARCH_TOOL.search(self.name):
+            return True
+        command, _ = success_marker(self.command)
+        if re.search(r'\b(?:echo|Write-Output|printf)\b', command, re.I):
             return False
-        if GENERATED_LITERAL.search(self.command):
+        if GENERATED_LITERAL.search(command):
             return False
-        if GENERATED.search(self.command) and not re.search(r'\b(?:readFileSync|readFile|read_text|read_bytes|open|Get-Content)\b', self.command):
+        if GENERATED.search(command) and not re.search(r'\b(?:readFileSync|readFile|read_text|read_bytes|open|Get-Content)\b', command):
             return False
         if re.search(r'view_file|read_file|read_url|open_url|grep|search|fetch', self.name, re.I):
             return True
@@ -73,7 +92,8 @@ def call_paths(call: Call) -> list[str]:
     if call.path:
         return [call.path]
     paths = []
-    for m in FILE_TOKEN.finditer(call.command):
+    command, _ = success_marker(call.command)
+    for m in FILE_TOKEN.finditer(command):
         path = m.group().rstrip('),')
         if path not in paths:
             paths.append(path)
@@ -123,6 +143,12 @@ def unwrapped(value) -> list[tuple[str, int | None, int | None]]:
         inner = value.get('value', value)
         if isinstance(inner, dict) and 'output' in inner:
             return [(text_value(inner['output']), inner.get('exit_code'), value.get('i'))]
+        if isinstance(inner, dict) and ('url' in inner or 'pageUrl' in inner or 'isError' in inner or 'success' in inner):
+            metadata = {k: v for k, v in inner.items() if k not in {'content', 'text'}}
+            body = json.dumps(metadata, ensure_ascii=False) + '\n' + text_value(inner)
+            return [(body, None, value.get('i'))]
+        if inner is not value:
+            return [(body, code, value.get('i', index)) for body, code, index in unwrapped(inner)]
         return unwrapped(value.get('text', value.get('content', '')))
     if not isinstance(value, str):
         return []
@@ -172,7 +198,7 @@ def js_calls(code: str, order: int, timestamp: str) -> list[Call]:
                 pass
         if args.get('cmd') or args.get('command'):
             calls.append((m.start(), Call(m.group(1), args, order, timestamp)))
-    for m in re.finditer(r'tools\.(web__run|web_run)\s*\(\s*', code):
+    for m in re.finditer(r'tools\.(web__run|web_run|mcp__[A-Za-z0-9_]+)\s*\(\s*', code):
         try:
             args, _ = js_literal(code, m.end())
         except (ValueError, SyntaxError):
@@ -281,23 +307,47 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
     if not call.read:
         return []
     budget.check()
+    command, marker = success_marker(call.command)
+    if marker:
+        # A success marker is control data, never quoted file content.
+        rows = body.splitlines(keepends=True)
+        markers = [i for i, row in enumerate(rows) if row.strip('\r\n') == marker]
+        if markers:
+            rows.pop(markers[-1])
+            body = ''.join(rows)
+    if BROWSER_READ.search(call.name) and not SEARCH_TOOL.search(call.name) and not re.search(r'read_url|open_url', call.name, re.I):
+        urls = re.findall(r'(?:["\']?(?:URL|pageUrl|page_url|currentUrl)["\']?\s*[:=]\s*["\']?|^\s*[-*]?\s*Page URL:\s*)(https?://[^\s"\'<>]+)', body, re.I | re.M)
+        if not urls:
+            urls = re.findall(r'https?://[^\s"\'<>]+', body)
+        urls = list(dict.fromkeys(u.rstrip('.,;)]}') for u in urls))
+        if call.url:
+            urls = [u for u in urls if normalize_url(u) == normalize_url(call.url)]
+        if len(urls) != 1:
+            return []
+        e_url = urls[0]
+    else:
+        e_url = '' if SEARCH_TOOL.search(call.name) else call.url
     paths = call_paths(call)
-    e = Evidence(path=call.path, url=call.url, command=call.command, cwd=call.cwd,
+    e = Evidence(path=call.path, url=e_url, command=call.command, cwd=call.cwd,
                  tool=call.name, origin=origin, order=call.order, timestamp=call.timestamp)
-    if exit_code not in (None, 0) or re.search(r'^(?:Error:|Error executing|File not found|Access denied)', body, re.M | re.I):
+    if exit_code not in (None, 0) or re.search(r'^(?:Error:|Error executing|File not found|Access denied)|"isError"\s*:\s*true|"success"\s*:\s*false|"status"\s*:\s*"(?:ERROR|FAILED)"', body, re.M | re.I):
         e.problem = '읽기 도구 실패'
+        e.problem_code = 'read_failed'
     if TRUNCATED.search(body):
         e.problem = '잘린 도구 출력'
+        e.problem_code = 'partial_range'
     path_header = re.search(r'^File Path:\s*`?([^\r\n`]+)', body, re.M)
     if path_header:
         actual = path_header.group(1).strip()
         if call.path and normalize_path(call.path) != normalize_path(actual):
             e.problem = '호출 경로와 결과 경로 불일치'
+            e.problem_code = 'binding_ambiguous'
         e.path = actual
     if call.url:
         observed_url = re.search(r'^(?:Source|URL):\s*(https?://\S+)', body, re.M | re.I)
         if observed_url and normalize_url(observed_url.group(1)) != normalize_url(call.url):
             e.problem = '호출 URL과 결과 URL 불일치'
+            e.problem_code = 'binding_ambiguous'
     for attr, header in [('total_lines', 'Total Lines'), ('total_bytes', 'Total Bytes')]:
         m = re.search(header + r':\s*([\d,]+)', body)
         if m:
@@ -317,6 +367,8 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
                 text = '\n'.join(e.lines.values())
                 e.counts = line_counts(text)
                 e.counts['L_view'] = e.total_lines
+            elif e.total_lines in e.lines and e.lines[e.total_lines] == '':
+                e.counts = {'L_lines': max(0, e.total_lines - 1), 'L_view': e.total_lines}
         e.text = '\n'.join(e.lines.values())
     elif call.command and numbered and len(paths) == 1:
         e.path, e.lines = paths[0], numbered
@@ -327,7 +379,7 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
         e.complete = not e.problem
         if call.command and len(paths) == 1:
             e.path = paths[0]
-            if re.search(r'\b(?:cat|Get-Content|readFileSync|read_text|read_bytes)\b', call.command, re.I) and not re.search(r'\b(?:Select-Object|head|tail|slice|split|sed|rg|grep)\b', call.command, re.I):
+            if re.search(r'\b(?:cat|Get-Content|readFileSync|read_text|read_bytes)\b', command, re.I) and not re.search(r'\b(?:Select-Object|head|tail|slice|split|sed|rg|grep|Measure-Object)\b|\.(?:Count|Length)\b', command, re.I):
                 e.lines = dict(enumerate(body.splitlines(), 1))
                 e.counts = line_counts(body)
                 e.total_lines = e.counts['L_view']
@@ -343,7 +395,7 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
                 continue
             text = body[section.end():sections[i+1].start() if i+1 < len(sections) else len(body)].lstrip('\r\n')
             sub = Evidence(path=path, text=text, lines=dict(enumerate(text.splitlines(), 1)),
-                           complete=not e.problem, problem=e.problem, tool=call.name,
+                           complete=not e.problem, problem=e.problem, problem_code=e.problem_code, tool=call.name,
                            origin=origin, command=call.command, cwd=call.cwd,
                            order=call.order, timestamp=call.timestamp)
             result.append(sub)
@@ -362,6 +414,7 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
         target = pointer_path(pointer_values[0], root)
         if target is None or not target.is_file():
             e.problem = '보조 파일 포인터 없음'
+            e.problem_code = 'pointer_missing'
             e.complete = False
         else:
             e.aux_path = str(target)
@@ -378,6 +431,7 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
             e.aux_path = str(target) if target.is_file() else ''
         e.complete = False
         e.problem = '비동기 완료 정보 미확보'
+        e.problem_code = 'async_incomplete'
     if call.command:
         revision = re.search(r'\bgit\s+(?:-C\s+\S+\s+)?show\s+([0-9a-f]{7,40}):([^\s;"\']+)', call.command, re.I)
         if revision:
@@ -389,7 +443,9 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
                 if value and (not value.group(2) or matches_path(paths[0], value.group(2)) or matches_path(value.group(2), paths[0])):
                     measured.append(int(value.group(1)))
             if len(measured) == 1:
-                if re.search(r'\bwc\s+-l\b', call.command):
+                if re.search(r'\bGet-Content\b', command, re.I) and re.search(r'\.(?:Count|Length)\b|Measure-Object\s+-Line', command, re.I):
+                    e.counts['L_lines'] = measured[0]
+                elif re.search(r'\bwc\s+-l\b', command):
                     e.counts['L_nl'] = measured[0]
                 elif re.search(r'\bwc\s+-c\b|\bstat\s+[^;\n]*%s|\bGet-Item\b[^;\n]*\.Length', call.command, re.I):
                     e.total_bytes = measured[0]
@@ -525,8 +581,10 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                 e.complete = True
                 if e.problem == '비동기 완료 정보 미확보':
                     e.problem = ''
+                    e.problem_code = ''
             else:
                 e.problem = '비동기 완료 정보 미확보' if code is None else '비동기 명령 실패 또는 로그 없음'
+                e.problem_code = 'async_incomplete' if code is None else 'read_failed'
         filtered.append(e)
     result.evidence = filtered
     if not recognized:

@@ -35,6 +35,9 @@ class Claim:
     start: int = 0
     end: int = 0
     quote: str = ""
+    quote_code: bool = False
+    binding_candidates: tuple[str, ...] = ()
+    ordinal: bool = False
     context: str = ""
     entity: str = ""
     definition: bool = False
@@ -44,6 +47,7 @@ class Claim:
     when: str = ""
     verdict: str = "unverifiable"
     reason: str = "근거 미확보"
+    reason_code: str = "no_evidence"
     source: dict = field(default_factory=dict)
 
     @property
@@ -54,7 +58,7 @@ class Claim:
         return {"report_line": self.report_line, "text": self.text,
                 "check_type": self.check_type, "verdict": self.verdict,
                 "author_marked": self.author_marked, "exempt": self.exempt,
-                "source": self.source, "reason": self.reason}
+                "source": self.source, "reason": self.reason, "reason_code": self.reason_code}
 
 
 @dataclass
@@ -75,6 +79,7 @@ class Evidence:
     counts: dict[str, int] = field(default_factory=dict)
     complete: bool = False
     problem: str = ""
+    problem_code: str = ""
     aux_path: str = ""
     task_id: str = ""
     after_report: bool = False
@@ -86,6 +91,7 @@ class Evidence:
                 "location": self.origin, "command": self.command, "cwd": self.cwd,
                 "timestamp": self.timestamp, "revision": self.revision,
                 "complete": self.complete, "problem": self.problem,
+                "problem_code": self.problem_code,
                 "range": [min(self.lines), max(self.lines)] if self.lines else [],
                 "total_lines": self.total_lines, "total_bytes": self.total_bytes,
                 "aux_path": self.aux_path,
@@ -111,14 +117,15 @@ def line_counts(text: str) -> dict[str, int]:
 def summarize(claims: list[Claim], *, timed_out: bool, unchecked_count: int,
               warnings: list, input_incomplete: bool = False) -> dict:
     checked = [c for c in claims if c.check_type != "K10"]
-    failed = any(c.verdict in {"mismatch", "absent"} and not c.exempt for c in checked)
-    incomplete = (not checked or timed_out or input_incomplete
-                  or any(c.verdict != "match" for c in checked))
+    deciding = [c for c in checked if c.verdict != "range_only"]
+    failed = any(c.verdict in {"mismatch", "absent"} and not c.exempt for c in deciding)
+    incomplete = (not deciding or timed_out or input_incomplete
+                  or any(c.verdict != "match" for c in deciding))
     status = "FAIL" if failed else "INCOMPLETE" if incomplete else "PASS"
     return {"status": status, "claims": [c.as_dict() for c in checked],
             "timed_out": timed_out, "unchecked_count": unchecked_count,
             "author_marked_review": [c.as_dict() for c in checked
-                                      if c.exempt and c.verdict != "match"],
+                                      if c.exempt and c.verdict not in {"match", "range_only"}],
             "warnings": warnings,
             "summary": {v: sum(c.verdict == v for c in checked)
-                        for v in ("match", "mismatch", "absent", "unverifiable")}}
+                        for v in ("match", "mismatch", "absent", "unverifiable", "range_only")}}

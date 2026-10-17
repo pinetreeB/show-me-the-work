@@ -58,14 +58,14 @@ def raw_evidence(data: bytes, **kwargs) -> Evidence:
 def local_source(path: Path, name: str, budget: Budget) -> Evidence:
     budget.check()
     if not path.is_file():
-        return Evidence(path=name, origin=str(path), problem='기준 원문 파일 없음')
+        return Evidence(path=name, origin=str(path), problem='기준 원문 파일 없음', problem_code='no_read_of_file')
     suffix = path.suffix.lower()
     # Snapshot names can append @revision without changing their content format.
     suffix = Path(path.name.split('@', 1)[0]).suffix.lower()
     if suffix == '.docx':
         return docx_source(path, name, budget)
     if suffix not in TEXT_SUFFIXES:
-        return Evidence(path=name, origin=str(path), problem='미지원 원문 형식')
+        return Evidence(path=name, origin=str(path), problem='미지원 원문 형식', problem_code='unsupported_format')
     return raw_evidence(path.read_bytes(), path=name, origin=str(path), tool='source-file')
 
 
@@ -84,6 +84,7 @@ def docx_source(path: Path, name: str, budget: Budget) -> Evidence:
             body = doc.find('w:body', ns)
             if body is None:
                 e.problem = 'docx 본문 없음'
+                e.problem_code = 'unsupported_format'
                 return e
             def paragraph_text(node):
                 if node.tag in {q+t for t in ('txbxContent', 'ins', 'del', 'moveFrom', 'moveTo')}:
@@ -105,6 +106,7 @@ def docx_source(path: Path, name: str, budget: Budget) -> Evidence:
             e.text = '\n'.join(e.lines.values())
     except (OSError, zipfile.BadZipFile, KeyError, ET.ParseError) as exc:
         e.problem = f'docx 읽기 실패: {type(exc).__name__}'
+        e.problem_code = 'read_failed'
         e.complete = False
     return e
 
@@ -141,7 +143,7 @@ class Repositories:
             names = self.files(root, revision)
             if names is None:
                 result.append(Evidence(path=path, origin=str(root), revision=revision,
-                                       problem='저장소 revision 조회 실패'))
+                                       problem='저장소 revision 조회 실패', problem_code='revision_unresolved'))
                 continue
             basename = normalize_path(path, self.aliases).rsplit('/', 1)[-1]
             for name in self.cache[('basenames', str(root), revision)].get(basename, []):
@@ -152,7 +154,7 @@ class Repositories:
                 if key not in self.cache:
                     value = self.git(root, 'show', f'{revision}:{name}')
                     if value.returncode:
-                        e = Evidence(path=str(root / name), problem='git show 읽기 실패')
+                        e = Evidence(path=str(root / name), problem='git show 읽기 실패', problem_code='read_failed')
                     else:
                         e = raw_evidence(value.stdout, path=str(root / name))
                     e.origin = f'{root}@{revision}:{name}'

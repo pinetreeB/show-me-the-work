@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from .model import Budget, Claim
+from .markup import (QUOTE, TICK, bind_path, cell_spans, normalized_quote,
+                     parent_span, same_scope, sentence_span)
 
 
 EXT = r'(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|csv|tsv|go|rs|html|css)'
 PATH = re.compile(r'(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>+-]+[\\/])*[\w.@-]+\.' + EXT + r'\b', re.I)
-REFERENCE = re.compile(r'(?P<path>(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>()+-]+[\\/])*[\w.@-]+\.' + EXT + r'):(?:L)?(?P<start>\d+)(?:\s*[-–]\s*L?(?P<end>\d+))?', re.I)
-TICK = re.compile(r'`([^`\n]+)`')
-QUOTE = re.compile(r'“([^”\n]{8,})”|"([^"\n]{8,})"|‘([^’\n]{8,})’')
-NUMBER = re.compile(r'(?<![\w.])([\d,]+(?:\.\d+)?)\s*(줄(?:짜리)?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z])', re.I)
+REFERENCE = re.compile(r'(?P<path>(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>()+-]+[\\/])*[\w.@-]+\.' + EXT + r'):(?:L)?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?', re.I)
+LOCATION = re.compile(r'(?<![\w.])(?:L(?P<l>\d+)(?:\s*[-–~]\s*L?(?P<le>\d+))?|(?:line\s+|줄\s+)(?P<p>\d+)(?:\s*[-–~]\s*(?P<pe>\d+))?|(?P<a>\d+)\s*[-–~]\s*(?P<b>\d+)\s*(?:행|줄)|(?P<n>\d+)\s*(?:행|번째\s*줄))(?![A-Za-z0-9_])', re.I)
+NUMBER = re.compile(r'(?<![\w.])(?:`|\*\*|__)?([\d,]+(?:\.\d+)?)(?:`|\*\*|__)?\s*(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z])', re.I)
 IDENTIFIER = re.compile(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?\Z')
 CONTEXT = re.compile(r'함수|변수|설정\s*키|메서드|필드|\b키\b|function|method|variable|config|field', re.I)
 ITEM = re.compile(r'(?<![\w/\\.-])(?:F\d+-[A-Z]\d+|[RDB]\d+(?:-[A-Z]\d+)?|§\s*\d+(?:\.\d+)*|#\d+|항목\s*\d+)(?![\w.-])')
@@ -18,21 +20,13 @@ URL = re.compile(r'https?://[^\s<>`"\u201d]+')
 
 
 def sentence(line: str, pos: int) -> str:
-    # Table marks apply to a cell; outside a table, sentence punctuation delimits.
-    bounds = [0, len(line)]
-    if line.lstrip().startswith('|'):
-        bounds += [m.start() for m in re.finditer(r'(?<!\\)\|', line)]
-    else:
-        bounds += [m.end() for m in re.finditer(r'[.!?](?:\s+|$)', line)]
-    bounds.sort()
-    left = max(x for x in bounds if x <= pos)
-    right = min((x for x in bounds if x > pos), default=len(line))
-    return line[left:right]
+    a, b = sentence_span(line, pos)
+    return line[a:b]
 
 
 def marked(context: str) -> bool:
     visible = TICK.sub('', context)
-    visible = re.sub(r'“[^”]*”|"[^"]*"|‘[^’]*’', '', visible)
+    visible = QUOTE.sub('', visible)
     if re.search(r'예시|가상|예를\s*들', visible):
         return False
     return bool(re.search(r'\[미확인\]|\[추정\]|추정\s*:|(?<![\w])미확인(?![\w])', visible))
@@ -44,7 +38,7 @@ def paths_in(line: str) -> list[tuple[int, int, str]]:
     for m in TICK.finditer(line):
         value = m.group(1)
         # Preserve spaces and parentheses in explicitly quoted paths.
-        path = re.sub(r':L?\d+(?:-L?\d+)?$', '', value)
+        path = re.sub(r':L?\d+(?:[-–~]L?\d+)?$', '', value)
         if re.search(r'\.' + EXT + r'$', path, re.I) and not re.search(r'\s[=;]|https?://', path):
             result.append((m.start(), m.end(), path))
             covered.append((m.start(), m.end()))
@@ -66,29 +60,31 @@ def linked_path(paths, pos: int, fallback: str) -> str:
     return paths[0][2] if paths else fallback
 
 
-def normalized_quote(value: str) -> str:
-    return re.sub(r'\s+', ' ', value.translate(str.maketrans({'“': '"', '”': '"', '‘': "'", '’': "'"}))).strip()
-
-
 def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
     lines = report.splitlines()
     claims, warnings = [], []
     heading_path = ''
+    heading_paths: list[str] = []
     heading_time = ''
     fenced = False
     fence_claim: Claim | None = None
     fence_lines: list[str] = []
     previous_path = ''
+    previous_paths: list[str] = []
     previous_refs: list[Claim] = []
     table_headers: list[str] = []
     table_rows: list[list[str]] = []
     last_table: list[list[str]] = []
+    item_stack: list[tuple[int, list[str]]] = []
+    paragraph_paths: list[str] = []
+    blank_before = True
     for line_no, line in enumerate(lines, 1):
         budget.check()
         if re.match(r'^\s*(```|~~~)', line):
             if fenced:
                 if fence_claim:
                     fence_claim.quote = '\n'.join(fence_lines)
+                    fence_claim.quote_code = True
                 fence_claim, fence_lines = None, []
             else:
                 fence_claim = previous_refs[-1] if previous_refs else None
@@ -100,14 +96,31 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             continue
         paths = paths_in(line)
         if line.startswith('#'):
+            heading_paths = list(dict.fromkeys(p[2] for p in paths))
             heading_path = paths[0][2] if len(paths) == 1 else ''
             heading_time = line
-        fallback = heading_path
+            item_stack.clear()
+            paragraph_paths = []
+        item = re.match(r'^(\s*)(?:[-+*]|\d+[.)])\s+', line)
+        if item:
+            indent = len(item.group(1))
+            while item_stack and item_stack[-1][0] >= indent:
+                item_stack.pop()
+            inherited = item_stack[-1][1] if item_stack else heading_paths
+            item_stack.append((indent, [p[2] for p in paths] or inherited))
+            paragraph_paths = []
+        elif blank_before and line.strip() and not line[0].isspace() and not line.lstrip().startswith(('|', '>')):
+            item_stack.clear()
+        inherited = (item_stack[-1][1] if item_stack else paragraph_paths) or heading_paths
         if line.lstrip().startswith('>') and not paths:
-            fallback = previous_path or fallback
+            inherited = previous_paths or inherited
+        if not inherited and previous_refs and not blank_before:
+            inherited = list(dict.fromkeys(c.path for c in previous_refs if c.path))
+        def binding(pos):
+            return bind_path(line, pos, paths, inherited)
         row = line.lstrip().startswith('|')
         if row:
-            cells = [s.strip() for s in line.strip().strip('|').split('|')]
+            cells = [line[a:b].strip() for a, b in cell_spans(line)]
             if all(re.fullmatch(r':?-+:?', c or ' ') for c in cells):
                 table_rows = []
             elif not table_headers:
@@ -128,7 +141,10 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             stamp = re.search(r'\d{4}-\d{2}-\d{2}T[\d:]+Z', scope)
             if stamp:
                 when = stamp.group()
-            c = Claim(line_no, text, kind, path=kwargs.pop('path', linked_path(paths, pos, fallback)),
+            bound, candidates = binding(pos)
+            explicit = kwargs.pop('path', None)
+            c = Claim(line_no, text, kind, path=bound if explicit is None else explicit,
+                      binding_candidates=candidates if explicit is None else (),
                       context=context, author_marked=marked(context),
                       current=bool(re.search(r'현재\s*(?:HEAD|파일|상태)|지금\s*파일|current\s+HEAD', scope, re.I)),
                       revision=rev.group(1) if rev else '', when=when, **kwargs)
@@ -136,12 +152,24 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             return c
 
         refs = []
+        ref_spans = []
         for m in REFERENCE.finditer(line):
             c = add('K1', m.group(), m.start(), path=m.group('path'),
                     start=int(m.group('start')), end=int(m.group('end') or m.group('start')))
             refs.append(c)
+            ref_spans.append((m.start(), m.end(), c))
+        quoted_spans = [(m.start(), m.end()) for m in QUOTE.finditer(line)]
+        for m in LOCATION.finditer(line):
+            if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans):
+                continue
+            start = m.group('l') or m.group('p') or m.group('a') or m.group('n')
+            end = m.group('le') or m.group('pe') or m.group('b') or start
+            c = add('K1', m.group(), m.start(), start=int(start), end=int(end))
+            refs.append(c)
+            ref_spans.append((m.start(), m.end(), c))
         ticks = list(TICK.finditer(line))
         quoted = []
+        snippets = []
         for m in QUOTE.finditer(line):
             if any(t.start() <= m.start() < t.end() for t in ticks):
                 continue
@@ -149,73 +177,133 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 continue
             value = next(g for g in m.groups() if g is not None)
             quoted.append((m.start(), value))
-            quote_path = linked_path(paths, m.start(), fallback)
+            snippets.append((m.start(), m.end(), value, m.group(), False))
+            quote_path, ambiguous = binding(m.start())
             urls = list(URL.finditer(line))
             if not quote_path and len(urls) == 1:
                 quote_path = urls[0].group().rstrip('.,;)]}')
-            add('K5', m.group(), m.start(), path=quote_path, quote=value)
+            c = add('K5', m.group(), m.start(), path=quote_path, quote=value)
+            c.binding_candidates = ambiguous
         if line.lstrip().startswith('>'):
             value = re.sub(r'^\s*>\s?', '', line)
             if len(value) >= 8 and not re.search(r'번역\s*:', value):
                 quoted.append((0, value))
                 add('K5', value, 0, quote=value)
+                snippets.append((0, len(line), value, line.strip(), False))
         numbered = re.match(r'^\s*(?:`)?(\d+):\s+(.{8,}?)(?:`)?$', line)
-        if numbered and (paths or previous_path or heading_path):
-            add('K5', line.strip(), 0, path=previous_path or heading_path, quote=numbered.group(2),
-                start=int(numbered.group(1)), end=int(numbered.group(1)))
-        for c in refs or previous_refs:
-            same = [quote for p, quote in quoted if not paths or linked_path(paths, p, fallback) == c.path]
-            if same:
-                c.quote = same[0]
+        if numbered:
+            c = add('K5', line.strip(), 0, quote=numbered.group(2), quote_code=True,
+                    start=int(numbered.group(1)), end=int(numbered.group(1)))
+            if not c.path and not c.binding_candidates:
+                c.path = previous_path or heading_path
+            snippets.append((0, len(line), numbered.group(2), line.strip(), True))
+        for m in ticks:
+            if paths_in(m.group(1)) or REFERENCE.search(m.group(1)) or LOCATION.fullmatch(m.group(1)) or re.fullmatch(r'[\d,.]+', m.group(1)):
+                continue
+            snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
+        attached: dict[int, list[tuple]] = {}
+        for snippet in snippets:
+            pos = snippet[0]
+            possible = [(a, b, c) for a, b, c in ref_spans if same_scope(line, pos, a)
+                        and not (snippet[0] <= a < snippet[1])]
+            if possible:
+                preceding = [r for r in possible if r[1] <= pos]
+                selected = preceding[-1] if preceding else possible[0]
+                attached.setdefault(id(selected[2]), []).append(snippet)
+        for c in refs:
+            for index, snippet in enumerate(attached.get(id(c), [])):
+                target = c if index == 0 else replace(c)
+                if index:
+                    claims.append(target)
+                target.quote, target.quote_code = snippet[2], snippet[4]
+                target.text = next(line[a:b] for a, b, original in ref_spans if original is c) + ' ' + snippet[3]
+        if not refs and previous_refs and snippets:
+            for c in previous_refs:
+                if c.report_line == line_no-1 and not c.quote:
+                    c.quote, c.quote_code = snippets[0][2], snippets[0][4]
         for m in ticks:
             value = m.group(1)
             if re.match(r'(?:[A-Za-z]:[\\/]|file://|https?://)', value) or '/' in value or '\\' in value:
                 continue
-            if REFERENCE.search(value) or paths_in(value) or re.fullmatch(r'[0-9a-f]{7,40}', value, re.I):
+            if REFERENCE.search(value) or paths_in(value) or LOCATION.fullmatch(value) or re.fullmatch(r'[0-9a-f]{7,40}', value, re.I):
                 continue
             kv = re.fullmatch(r'([A-Za-z_$][\w.$]*)\s*[:=]\s*["\u201c]?([^"\u201d]+?)["\u201d]?', value)
-            if kv and linked_path(paths, m.start(), fallback) and (re.search(r'\s[:=]|[:=]\s|["\u201c]', value) or CONTEXT.search(sentence(line, m.start()))):
+            bound, candidates = binding(m.start())
+            if kv and (bound or candidates) and (re.search(r'\s[:=]|[:=]\s|["\u201c]', value) or CONTEXT.search(sentence(line, m.start()))):
                 add('K4', m.group(), m.start(), value=kv.group(1), definition=True)
                 add('K6', m.group(), m.start(), value=kv.group(2).strip(), entity=kv.group(1), unit='value')
                 continue
             if not IDENTIFIER.fullmatch(value):
                 continue
-            path = linked_path(paths, m.start(), fallback)
+            path = bound
             is_code = bool(re.search(r'[a-z][A-Z]|_|\.|\(\)', value))
-            if not path and not (is_code and CONTEXT.search(sentence(line, m.start()))):
-                continue
-            # Bare words in backticks need an explicit code relationship, even beside a path.
-            if not is_code and not CONTEXT.search(sentence(line, m.start())):
+            if not path and not candidates and not (is_code and CONTEXT.search(sentence(line, m.start()))):
                 continue
             definition = bool(re.search(r'정의|설정\s*키|필드|\b키\b|function|함수', sentence(line, m.start()), re.I))
             add('K4', m.group(), m.start(), value=value.removesuffix('()'), definition=definition)
         for m in NUMBER.finditer(line):
-            if any(a <= m.start() < b for a, b, _ in paths):
+            if any(a <= m.start() < b for a, b, _ in paths + ref_spans):
                 continue
-            path = linked_path(paths, m.start(), fallback)
-            nearby = [t.group(1) for t in ticks if t.end() <= m.start() and IDENTIFIER.fullmatch(t.group(1))]
+            if any(t.start() < m.start() and t.end() >= m.end() and re.search(r'[:=]', t.group(1)) for t in ticks):
+                continue
+            path, candidates = binding(m.start())
+            local = sentence(line, m.start())
+            nearby = [t.group(1) for t in ticks if t.end() <= m.start() and IDENTIFIER.fullmatch(t.group(1)) and same_scope(line, t.start(), m.start())]
             entity = nearby[-1] if nearby else ''
-            if not path and not entity:
+            key = re.search(r'([A-Za-z_$][\w.$]*)\s*[:=]\s*$', line[:m.start()])
+            if key:
+                entity = key.group(1)
+            if not path and not entity and not candidates:
                 continue
             unit = m.group(2).removesuffix('짜리')
-            file_metric = bool(path) and unit.lower() in {'줄', 'b', 'bytes', 'byte', '바이트', 'kb', 'mb', 'kib', 'mib'}
+            if unit.lower() in {'line', 'lines'}:
+                unit = '줄'
+            setting = bool(key or re.search(r'제한|한도|최대|최소|\blimit\b|\bmax(?:imum)?\b|\bmin(?:imum)?\b|설정값', local, re.I))
+            file_metric = bool(path or candidates) and not setting and unit.lower() in {'줄', 'b', 'bytes', 'byte', '바이트', 'kb', 'mb', 'kib', 'mib'}
+            if not file_metric and not entity:
+                continue
             add('K2' if file_metric else 'K6', m.group(), m.start(), value=m.group(1).replace(',', ''), unit=unit, entity=entity)
-        if re.search(r'commit|커밋|HEAD|해시|SHA|revision|리비전', line, re.I):
-            for m in re.finditer(r'(?<![\w])[0-9a-f]{7,40}(?![\w])', line, re.I):
+        if row and table_headers:
+            for i, (a, b) in enumerate(cell_spans(line)):
+                value = line[a:b].strip()
+                number = re.fullmatch(r'(?:`|\*\*|__)?([\d,]+)(?:`|\*\*|__)?', value)
+                header = table_headers[i] if i < len(table_headers) else ''
+                path, candidates = binding(a)
+                metric = '줄' if re.search(r'줄\s*수|행\s*수|lines?', header, re.I) else 'B' if re.search(r'바이트|bytes?|크기', header, re.I) else ''
+                if number and metric and (path or candidates) and not re.search(r'제한|설정|한도', header):
+                    add('K2', value, a, value=number.group(1).replace(',', ''), unit=metric)
+        for m in re.finditer(r'(?<![\w])[0-9a-f]{7,40}(?![\w])', line, re.I):
+            nearby = sentence(line, m.start())
+            in_tick = any(t.start() <= m.start() < t.end() for t in ticks)
+            if len(m.group()) == 40 or in_tick or re.search(r'commit|커밋|HEAD|해시|SHA|revision|리비전|parent|부모|대상|\bbase\b|\btarget\b|\bmerge\b', nearby, re.I):
                 add('K3', m.group(), m.start(), value=m.group(), path='')
         for m in URL.finditer(line):
             value = m.group().rstrip('.,;)]}')
             add('K8', value, m.start(), value=value, path='')
-        for m in ITEM.finditer(line):
-            if any(a <= m.start() < b for a, b, _ in paths):
+        item_matches = [(m.start(), m.end(), m.group(), False) for m in ITEM.finditer(line)]
+        if row:
+            spans = cell_spans(line)
+            if spans:
+                a, b = spans[0]
+                identifier = line[a:b].strip(' *`')
+                if re.fullmatch(r'#?\d+\.?', identifier):
+                    item_matches.append((a, b, identifier.rstrip('.'), True))
+        for start, end, item_id, ordinal in item_matches:
+            if any(a <= start < b for a, b, _ in paths):
                 continue
-            path = linked_path(paths, m.start(), fallback)
-            paired = [t.group(1) for t in ticks if t.start() > m.end() and not paths_in(t.group(1))]
-            paired += [q for p, q in quoted if p > m.end()]
-            title = re.match(r'\s*(?:[:：—–]|\|)\s*([^|]+)', line[m.end():])
-            expected = paired[0] if paired else title.group(1).strip(' *`') if title else ''
-            if path and expected:
-                add('K9', line[m.start():].strip(), m.start(), value=m.group(), quote=expected)
+            path, candidates = binding(start)
+            paired = [(t.group(1), t.group()) for t in ticks if t.start() >= end and not paths_in(t.group(1)) and (IDENTIFIER.fullmatch(t.group(1)) or re.fullmatch(r'[\da-f]{7,40}', t.group(1), re.I))]
+            paired += [(q, q) for p, q in quoted if p >= end]
+            for sha in re.finditer(r'(?<!\w)[\da-f]{7,40}(?!\w)', line[end:], re.I):
+                if not any(sha.group() == v for v, _ in paired):
+                    paired.append((sha.group(), sha.group()))
+            title = re.match(r'\s*(?:[:：—–]|\|)\s*([^|]+)', line[end:])
+            if not paired and title:
+                paired = [(title.group(1).strip(' *`'), title.group(1).strip())]
+            if path or candidates:
+                for expected, raw in paired:
+                    add('K9', item_id+' '+raw, start, value=item_id, quote=expected,
+                        ordinal=ordinal or bool(re.fullmatch(r'#\d+|항목\s*\d+', item_id)))
         arithmetic = re.search(r'([\d,]+)\s*건\s*중\s*([\d,]+)\s*건', line)
         if arithmetic:
             add('K7', arithmetic.group(), arithmetic.start(), value=arithmetic.group(1).replace(',', ''),
@@ -236,8 +324,15 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             warnings.append({'check_type': 'K10', 'report_line': line_no, 'text': action.group(),
                              'reason': '에이전트의 직접 전화·방문 수행 주장: 독립 확인 필요'})
         if paths:
-            previous_path = paths[-1][2]
+            previous_paths = list(dict.fromkeys(p[2] for p in paths))
+            previous_path = previous_paths[0] if len(previous_paths) == 1 else ''
+            if not row and not item:
+                paragraph_paths = [p[2] for p in paths]
         elif line.strip() and not line.lstrip().startswith('>'):
             previous_path = heading_path
+            previous_paths = heading_paths
         previous_refs = refs if line.strip() else previous_refs
+        blank_before = not line.strip()
+        if blank_before:
+            paragraph_paths = []
     return claims, warnings
