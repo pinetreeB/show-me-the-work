@@ -105,6 +105,22 @@ def test_r3_backtick_location_is_not_identifier(tmp_path):
     assert atoms(result, 'K1')[0]['verdict'] == 'range_only'
 
 
+@pytest.mark.parametrize('reference,snippet,verdict', [
+    ('widget.py:1', '1: def realToken(): pass', 'match'),
+    ('widget.py:1-2', '2: second source line', 'match'),
+    ('widget.py:1-2', '2: different source line', 'mismatch'),
+    ('widget.py:1', '2: def realToken(): pass', 'mismatch'),
+])
+def test_r3_inline_numbered_snippet_prefix_is_position(tmp_path, reference, snippet, verdict):
+    result = inspect(tmp_path, f'`{reference}` `{snippet}`')
+    assert atoms(result, 'K1')[0]['verdict'] == verdict
+
+
+def test_r3_numbered_block_compares_each_position(tmp_path):
+    result = inspect(tmp_path, '`widget.py:1-2`\n```\n1: def realToken(): pass\n2: second source line\n```')
+    assert atoms(result, 'K1')[0]['verdict'] == 'match'
+
+
 @pytest.mark.parametrize('report', ['`widget.py` (`2`줄)', '`widget.py` `2`줄',
     '`widget.py` 2 줄', '`widget.py` 총 **2**줄', '`widget.py` 2 lines',
     '| 파일 | 줄 수 |\n|---|---|\n| `widget.py` | 2 |'])

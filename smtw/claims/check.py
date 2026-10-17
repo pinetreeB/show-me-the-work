@@ -73,6 +73,15 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
             return Result('unverifiable', '인용 구간에 손상된 글자', code='decode_damage')
         if not c.quote:
             return Result('range_only', '줄 범위만 확인 (내용 인용 없음)', 'range', 'range_only')
+        numbered = [re.fullmatch(r'\s*(?:line\s+)?(\d+): ?(.*)', line, re.I)
+                    for line in c.quote.splitlines()]
+        if numbered and all(numbered):
+            pairs = [(int(match.group(1)), match.group(2)) for match in numbered]
+            if any(not c.start <= n <= c.end for n, _ in pairs):
+                return Result('mismatch', '번호 붙은 인용이 명시한 줄 범위 밖', text, 'quote_range_mismatch')
+            okay = all(normalized_quote(quote) in normalized_quote(e.lines[n]) for n, quote in pairs)
+            return Result('match' if okay else 'mismatch', '줄 번호 접두사를 제외한 코드 인용 ' + ('일치' if okay else '불일치'),
+                          '\n'.join(e.lines[n] for n, _ in pairs), 'quote_match' if okay else 'quote_mismatch')
         prose = c.check_type == 'K5' and not c.quote_code
         if normalized_quote(c.quote, prose=prose) not in normalized_quote(text, prose=prose):
             return Result('mismatch', f'대응 줄 원문과 인용 불일치: {text[:240]}', text, 'quote_mismatch')
