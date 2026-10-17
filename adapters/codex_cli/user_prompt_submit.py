@@ -85,14 +85,17 @@ def main() -> int:
             fail_closed_runtime_env as runtime_env_fail_closed,
             project_root,
             read_payload,
+            supervision_enabled,
         )
+        payload = read_payload()
+        if not supervision_enabled(payload):
+            return emit({})
         from core.ambiguity import evaluate_ambiguity
         from core.classify import classify_prompt
         from core.intent import clear_intent
         from core.ledger import record_event
         from core.adapter_observation import start_turn
 
-        payload = read_payload()
         from core.ledger import ledger_read_cache
 
         cache_stack.enter_context(ledger_read_cache())

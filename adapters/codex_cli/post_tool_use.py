@@ -22,6 +22,8 @@ def main() -> int:
             sys.path.insert(0, str(root))
         common = runpy.run_path(str(Path(__file__).with_name("common.py")))
         payload = common["read_payload"]()
+        if not common["supervision_enabled"](payload):
+            return common["emit"]({})
         from core.ledger import ledger_read_cache
 
         cache_stack.enter_context(ledger_read_cache())
