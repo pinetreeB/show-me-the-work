@@ -18,6 +18,10 @@ Pointers are remapped into that root; transcripts never cause commands or URLs t
 be executed. Missing pointers, failed reads, truncated output, ambiguous links,
 unsupported source formats and damaged text produce `unverifiable` results.
 
+`--agy-auto` searches that brain root for the report's exact path and matching
+last successful full-write content. Zero or multiple matching conversations, or
+a last partial edit whose final bytes cannot be established, remain INCOMPLETE.
+
 Each `--source-file` is either `report-path=actual-path` or an actual path whose
 basename is used for matching. `--repo`, `--commit`, `--source-file` and
 `--path-alias` can be repeated. Matching uses normalized paths; absolute paths do

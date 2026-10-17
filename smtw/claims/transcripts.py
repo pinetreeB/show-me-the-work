@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 import ast
 from pathlib import Path
+import posixpath
 import re
 
 from .model import Budget, Evidence, Transcript, line_counts
@@ -77,6 +78,13 @@ def call_paths(call: Call) -> list[str]:
         if path not in paths:
             paths.append(path)
     return paths
+
+
+def observed_path(value: str, cwd: str) -> str:
+    path = normalize_path(value)
+    if not path or path.startswith('/') or re.match(r'^[a-z]:/', path) or not cwd:
+        return value
+    return posixpath.normpath(normalize_path(cwd) + '/' + path)
 
 
 def aux_root(path: Path) -> Path:
@@ -388,25 +396,27 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
     report_writes: list[int] = []
     completions: dict[str, int] = {}
     recognized = 0
+    conversation_cwd = ''
 
     def register(call):
         if not call.write:
             return
         for target in call_paths(call):
-            writes.setdefault(normalize_path(target, aliases), call.order)
+            writes.setdefault(normalize_path(observed_path(target, call.cwd), aliases), call.order)
         content = str(call.args.get('CodeContent') or call.args.get('content') or '')
-        if call.path and (normalize_path(call.path, aliases) in report_targets
+        if call.path and (normalize_path(observed_path(call.path, call.cwd), aliases) in report_targets
                           or content and content == report_text):
-            report_targets.add(normalize_path(call.path, aliases))
+            report_targets.add(normalize_path(observed_path(call.path, call.cwd), aliases))
             report_writes.append(call.order)
         # apply_patch is never evidence, but its path headers mark future self-reads.
         patch = str(call.args.get('patch', call.args.get('input', '')))
         for target in re.findall(r'^\*\*\* (?:Add|Update|Delete) File: (.+)$', patch, re.M):
-            writes.setdefault(normalize_path(target, aliases), call.order)
+            writes.setdefault(normalize_path(observed_path(target, call.cwd), aliases), call.order)
 
     def accept(call, body, n, exit_code=None):
         observations = parse_result(call, body, f'{path}:{n}', root, budget, exit_code)
         for e in observations:
+            e.path = observed_path(e.path, call.cwd)
             normalized = normalize_path(e.path, aliases)
             if normalized in report_targets or normalized in writes and writes[normalized] <= call.order:
                 continue
@@ -450,6 +460,10 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                     if task:
                         completions[task.group(1)] = int(task.group(2))
             else:
+                if row.get('type') in {'turn_context', 'session_meta'} and isinstance(row.get('payload'), dict):
+                    value = row['payload'].get('cwd')
+                    if isinstance(value, str):
+                        conversation_cwd = value
                 if row.get('type') != 'response_item':
                     continue
                 item = row.get('payload', {})
@@ -463,6 +477,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                     if name.rsplit('.', 1)[-1] == 'exec' and isinstance(args, str):
                         calls = js_calls(args, n, stamp)
                         for write in js_writes(args, n, stamp):
+                            write.args.setdefault('cwd', conversation_cwd)
                             register(write)
                     else:
                         if isinstance(args, str):
@@ -473,6 +488,8 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                         calls = [Call(name, args if isinstance(args, dict) else {}, n, stamp)]
                     codex_calls[str(item.get('call_id', ''))] = calls
                     for call in calls:
+                        if not call.cwd:
+                            call.args['cwd'] = conversation_cwd
                         register(call)
                 elif typ in {'function_call_output', 'custom_tool_call_output'}:
                     calls = codex_calls.pop(str(item.get('call_id', '')), [])
@@ -512,3 +529,39 @@ def resolve_agy(value: str, brain_root: Path) -> Path:
     if path.is_file() or path.suffix.lower() == '.jsonl':
         return path
     return brain_root.expanduser() / value / '.system_generated' / 'logs' / 'transcript_full.jsonl'
+
+
+def discover_agy(report: Path, report_text: str, brain_root: Path,
+                 aliases: dict[str, str], budget: Budget) -> list[Path]:
+    """Find exact last-write matches; never select among ambiguous conversations."""
+    candidates = []
+    target = normalize_path(str(report), aliases)
+    for transcript in brain_root.expanduser().glob('*/.system_generated/logs/transcript_full.jsonl'):
+        budget.check()
+        last_content = None
+        pending = deque()
+        try:
+            with transcript.open('rb') as stream:
+                for raw in stream:
+                    budget.check()
+                    row = json.loads(raw)
+                    if row.get('type') == 'PLANNER_RESPONSE':
+                        pending.clear()
+                        pending.extend(row.get('tool_calls', []))
+                    elif row.get('type') == 'GENERIC' and pending:
+                        tool = pending.popleft()
+                        args = tool.get('args', {})
+                        path = args.get('TargetFile', args.get('AbsolutePath', ''))
+                        if not isinstance(path, str) or normalize_path(path, aliases) != target:
+                            continue
+                        if not re.search(r'write|replace|edit', str(tool.get('name', '')), re.I):
+                            continue
+                        if row.get('status') != 'DONE' or re.search(r'^Error', text_value(row.get('content')), re.M):
+                            continue
+                        # A final partial edit cannot prove byte equality with the report.
+                        last_content = args.get('CodeContent') if 'write' in tool.get('name', '') else None
+        except (OSError, UnicodeDecodeError, ValueError, AttributeError, TypeError):
+            continue
+        if last_content == report_text:
+            candidates.append(transcript)
+    return candidates

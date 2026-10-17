@@ -470,6 +470,24 @@ def test_third_party_consultation_quote_matches_without_k10(tmp_path):
     assert not result['warnings']
 
 
+@pytest.mark.parametrize('count,changed,status', [(0, False, 'INCOMPLETE'), (1, False, 'PASS'),
+                                               (2, False, 'INCOMPLETE'), (1, True, 'INCOMPLETE')])
+def test_auto_discovery_requires_unique_exact_last_write(tmp_path, count, changed, status):
+    r, _ = make_case(tmp_path, '2건 중 1건')
+    brain = tmp_path/'fake-brain'
+    for index in range(count):
+        t = brain/f'synthetic-{index}/.system_generated/logs/transcript_full.jsonl'
+        write_transcript(t, [agy_call('write_to_file', TargetFile=str(r), CodeContent='changed' if changed else r.read_text(encoding='utf-8')), generic('saved')])
+    assert run(r, agy_auto=True, brain_root=brain)['status'] == status
+
+
+def test_fixed_revision_is_a_sha_not_a_git_option(tmp_path):
+    report, _ = make_case(tmp_path, '`engine.py:1`')
+    with pytest.raises(ValueError, match='SHA'):
+        run(report, commits={str(tmp_path): '--output=unexpected-file'})
+    assert not (tmp_path/'unexpected-file').exists()
+
+
 def test_claims_entrypoint_does_not_import_legacy_modules(tmp_path):
     r, _ = make_case(tmp_path, '2건 중 1건')
     code = ('import sys; from smtw.cli import main; '

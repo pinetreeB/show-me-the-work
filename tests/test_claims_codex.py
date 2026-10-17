@@ -108,3 +108,20 @@ def test_generated_literal_mixed_with_file_read_is_excluded(tmp_path):
         call('exec_command', {'cmd': 'python -c "from pathlib import Path; Path(\'C:/sample/engine.py\').read_text(); print(\'def invented_name(): pass\')"'}),
         output('def invented_name(): pass')])
     assert run(r, codex=t)['claims'][0]['verdict'] == 'unverifiable'
+
+
+def test_relative_write_absolute_reread_uses_turn_cwd(tmp_path):
+    r, t = make_case(tmp_path, '`engine.py` 함수 `invented_name`', [
+        {'type': 'turn_context', 'payload': {'cwd': 'C:/sample'}},
+        call('apply_patch', {'input': '*** Begin Patch\n*** Add File: engine.py\n+def invented_name(): pass\n*** End Patch'}, 'patch-relative'),
+        output('Done', 'patch-relative'),
+        call('exec_command', {'cmd': 'Get-Content C:/sample/engine.py'}), output('def invented_name(): pass')])
+    assert run(r, codex=t)['status'] == 'INCOMPLETE'
+
+
+def test_absolute_write_relative_reread_uses_tool_cwd(tmp_path):
+    r, t = make_case(tmp_path, '`engine.py` 함수 `invented_name`', [
+        call('apply_patch', {'input': '*** Begin Patch\n*** Add File: C:/sample/engine.py\n+def invented_name(): pass\n*** End Patch'}, 'patch-absolute'),
+        output('Done', 'patch-absolute'),
+        call('exec_command', {'cmd': 'Get-Content engine.py', 'workdir': 'C:/sample'}), output('def invented_name(): pass')])
+    assert run(r, codex=t)['status'] == 'INCOMPLETE'

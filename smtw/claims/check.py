@@ -11,7 +11,7 @@ from .extract import extract, normalized_quote
 from .model import Budget, Claim, DeadlineExceeded, Evidence, Transcript, summarize
 from .paths import matches_path, normalize_path, normalize_url
 from .sources import Repositories, content_lines, local_source
-from .transcripts import read_transcript, resolve_agy
+from .transcripts import discover_agy, read_transcript, resolve_agy
 
 
 @lru_cache(maxsize=1024)
@@ -278,11 +278,14 @@ class Checker:
 
 
 def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
+        agy_auto: bool = False,
         brain_root: Path | None = None, repos: list[str] | None = None,
         commits: dict[str, str] | None = None, sources: dict[str, str] | None = None,
         aliases: dict[str, str] | None = None, time_limit: float = 60,
         budget: Budget | None = None) -> dict:
     budget = budget or Budget(time_limit)
+    if any(not re.fullmatch(r'[0-9a-fA-F]{7,40}', revision) for revision in (commits or {}).values()):
+        raise ValueError('--commit 기준은 7~40자리 16진 SHA여야 합니다.')
     report_text = report.read_bytes().decode('utf-8-sig')
     aliases = aliases or {}
     claims, warnings = [], []
@@ -291,6 +294,13 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
     completed = 0
     try:
         claims, warnings = extract(report_text, budget)
+        if agy_auto:
+            candidates = discover_agy(report, report_text, brain_root or Path('~/.gemini/antigravity-cli/brain'), aliases, budget)
+            if len(candidates) == 1:
+                agy = str(candidates[0])
+            else:
+                transcript.valid = False
+                transcript.warnings.append(f'보고서 마지막 쓰기와 바이트가 일치하는 agy 대화 {len(candidates)}개: 자동 선택 안 함')
         if agy:
             transcript = read_transcript(resolve_agy(agy, brain_root or Path('~/.gemini/antigravity-cli/brain')),
                                          'agy', report, report_text, aliases, budget)

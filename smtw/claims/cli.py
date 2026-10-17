@@ -17,6 +17,7 @@ def add_claims_parser(subparsers):
     check.add_argument('--report', type=Path, required=True)
     transcript = check.add_mutually_exclusive_group()
     transcript.add_argument('--agy')
+    transcript.add_argument('--agy-auto', action='store_true', help='마지막 보고서 쓰기가 정확히 일치하는 대화 1개만 자동 연결')
     transcript.add_argument('--codex', type=Path)
     check.add_argument('--agy-brain-root', type=Path, default=Path('~/.gemini/antigravity-cli/brain'))
     for option in ('repo', 'commit', 'source-file', 'path-alias'):
@@ -51,7 +52,7 @@ def run_check(args) -> int:
     try:
         if not math.isfinite(args.time_limit) or args.time_limit <= 0:
             raise ValueError('--time-limit은 양의 유한 초 단위 숫자여야 합니다.')
-        result = run(args.report, agy=args.agy, codex=args.codex, brain_root=args.agy_brain_root,
+        result = run(args.report, agy=args.agy, agy_auto=args.agy_auto, codex=args.codex, brain_root=args.agy_brain_root,
                      repos=args.repo, commits=mapping(args.commit), sources=mapping(args.source_file, basename_default=True),
                      aliases=mapping(args.path_alias), time_limit=args.time_limit)
     except (OSError, ValueError) as exc:
