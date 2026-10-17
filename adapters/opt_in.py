@@ -4,9 +4,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from adapters.claude_code.project_config import config_state
-
-
 def supervision_enabled(root: str | Path) -> bool:
     candidate = Path(root).expanduser().resolve()
     # Match Claude's home safeguard and existing isolated-test override.
@@ -14,5 +11,7 @@ def supervision_enabled(root: str | Path) -> bool:
         return False
     if os.environ.get('SMTW_TEST_FORCE_ENABLE') == '1':
         return True
+    from adapters.claude_code.project_config import config_state
+
     enabled, _digest, _corrupt = config_state(candidate)
     return enabled

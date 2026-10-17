@@ -8,7 +8,7 @@ def main() -> int:
     root = Path(__file__).resolve().parents[2]
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
-    from adapters.codex_cli.common import emit, read_payload, supervision_enabled
+    from adapters.codex_cli.common import PayloadError, emit, read_payload, supervision_enabled
 
     try:
         payload = read_payload()
@@ -17,7 +17,7 @@ def main() -> int:
         # Turn setup belongs to UserPromptSubmit, which has the actual prompt.
         # This optional entry point does not register or activate any hook.
         return emit({})
-    except Exception:
+    except (PayloadError, OSError, ValueError):
         return emit({})
 
 
