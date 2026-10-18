@@ -298,3 +298,5 @@ N7 코드 검색 확장자: .py/.pyi/.js/.mjs/.cjs/.jsx/.ts/.tsx/.sh/.ps1/.bat/.
 패킷 가림은 이스케이프/HTML/Unicode·제로폭, YAML/TOML 비밀 블록, 인증 헤더·URL·CLI·한글 키·제공자 토큰·분할 hex까지 검사합니다. 관측 전체를 먼저 가린 뒤 발췌하므로 블록 머리가 발췌 밖이어도 값이 남지 않으며 원래 줄 번호를 보존합니다. 32~39 hex는 Git 해시 면제 대상이 아닙니다. CLI 인증·급여/인사 파일명도 민감 경로입니다.
 
 P1F 가림 예외는 정확한 40자리 Git SHA 구분자, SHA256/digest/checksum·파일명·manifest의 64자리 해시, 타입·숫자 상한·코드 참조에 적용합니다. 따옴표 문자열과 불투명 값은 계속 가리며, 긴 식별자는 결정적 단어 비율로 구분합니다. 발췌 길이 예산은 가림 전 원래 줄 길이를 사용합니다.
+
+패킷 재현 비교: `python scripts/compare_claim_packets.py LEFT RIGHT`는 항목 id별 path/source/text 발췌 집합을 비교합니다. 배치·셔플·ref 순서는 무시하고 version/revision/observation 변화는 별도 metadata_changed_ids로 표시합니다. 동일 내용 0, 내용/항목 변경 1, 입력 오류 2이며 발췌 원문은 출력하지 않습니다.
