@@ -117,6 +117,13 @@ prefixes. Supported command flags are bash/sh letter bundles containing `c`
 (`-c`, `-lc`, `-ec`, `-xc`), cmd `/c` or `/k`, and PowerShell/pwsh `-c` or
 `-Command` (including `-Command:`), without case sensitivity. Quoted command
 arguments and shell argument lists are unwrapped to at most three nested levels.
+Bash/sh consume values for `-o`, `-O`, `+o`, `+O`, `--rcfile`, and `--init-file`;
+other `+[a-z]+` bundles and `--long` options are skipped, and the first non-option
+stops wrapper detection. PowerShell/pwsh skip an unlisted `-option` and its immediately
+following non-option value, while `-File`/`-f` stops wrapper detection.
+`zsh`, `dash`, and `ksh` are not shell wrappers, and nesting beyond three levels is
+ignored without a warning. Quoted `env` assignments and quoted executable paths
+such as `& "C:\Program Files\PowerShell\7\pwsh.exe"` are not recognized as wrappers.
 Other quoted text remains masked when identifying redirection and patch commands.
 PowerShell `-EncodedCommand` is not decoded and remains outside this support.
 Reads of explicit write targets after the write cannot serve as independent evidence.

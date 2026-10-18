@@ -93,6 +93,7 @@ def _wrapper_flag(shell: str, argument: str) -> bool:
 
 
 def _wrapper_flag_index(shell: str, arguments: list[str]) -> int | None:
+    bash_values = {'-o', '-O', '+o', '+O', '--rcfile', '--init-file'}
     powershell_switches = {
         '-nologo', '-noexit', '-noprofile', '-noninteractive', '-mta', '-sta',
     }
@@ -108,6 +109,14 @@ def _wrapper_flag_index(shell: str, arguments: list[str]) -> int | None:
         if _wrapper_flag(shell, value):
             return index
         if shell in {'bash', 'sh'}:
+            if value in bash_values:
+                if index + 1 >= len(arguments):
+                    return None
+                index += 2
+                continue
+            if re.fullmatch(r'\+[a-z]+', value) or value.startswith('--'):
+                index += 1
+                continue
             if not value.startswith('-'):
                 return None
             index += 1
@@ -115,12 +124,21 @@ def _wrapper_flag_index(shell: str, arguments: list[str]) -> int | None:
             if not value.startswith('/'):
                 return None
             index += 1
-        elif value in powershell_switches:
-            index += 1
-        elif value in powershell_values and index + 1 < len(arguments):
-            index += 2
         else:
-            return None
+            if value in {'-file', '-f'}:
+                return None
+            if not value.startswith('-'):
+                return None
+            if value in powershell_switches:
+                index += 1
+            elif value in powershell_values:
+                if index + 1 >= len(arguments):
+                    return None
+                index += 2
+            else:
+                index += 1
+                if index < len(arguments) and not arguments[index].startswith('-'):
+                    index += 1
     return None
 
 
@@ -217,12 +235,8 @@ def _command_positions(code: str) -> list[int]:
     return positions
 
 
-def _segment_end(code: str, start: int) -> int:
-    positions = _command_positions(code)
-    following = [position for position in positions if position > start]
-    if not following:
-        return len(code)
-    end = min(following)
+def _segment_end(code: str, start: int, next_start: int | None) -> int:
+    end = len(code) if next_start is None else next_start
     while end > start and code[end - 1] in {'\n', ';', '&', '|'}:
         end -= 1
     return end
@@ -294,8 +308,7 @@ def _plain_shell_token(token: str) -> str:
     return token if not any(quote in token for quote in {'"', "'", '`'}) else ''
 
 
-def _string_wrapper_body(command: str, code: str, start: int) -> str:
-    end = _segment_end(code, start)
+def _string_wrapper_body(command: str, start: int, end: int) -> str:
     tokens = _shell_tokens(command, start, end)
     plain_tokens = [_plain_shell_token(token[0]) or None for token in tokens]
     token_index = _prefix_command_index(plain_tokens)
@@ -334,8 +347,10 @@ def shell_wrapper_bodies(command: str) -> list[str]:
 
     code = shell_code(command)
     bodies = []
-    for start in _command_positions(code):
-        body = _string_wrapper_body(command, code, start)
+    positions = _command_positions(code)
+    for index, start in enumerate(positions):
+        next_start = positions[index + 1] if index + 1 < len(positions) else None
+        body = _string_wrapper_body(command, start, _segment_end(code, start, next_start))
         if body:
             bodies.append(body)
     return bodies
