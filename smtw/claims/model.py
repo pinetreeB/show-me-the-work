@@ -130,7 +130,7 @@ def summarize(claims: list[Claim], *, timed_out: bool, unchecked_count: int,
               warnings: list, input_incomplete: bool = False) -> dict:
     checked = [c for c in claims if c.check_type != "K10"]
     deciding = [c for c in checked if c.verdict != "range_only"]
-    failed = any(c.verdict in {"mismatch", "absent"} and not c.exempt for c in deciding)
+    failed = any(c.verdict in {"mismatch", "absent"} and not c.exempt and c.check_type != "K8" for c in deciding)
     incomplete = (not deciding or timed_out or input_incomplete
                   or any(c.verdict != "match" for c in deciding))
     status = "FAIL" if failed else "INCOMPLETE" if incomplete else "PASS"
@@ -138,7 +138,8 @@ def summarize(claims: list[Claim], *, timed_out: bool, unchecked_count: int,
             "timed_out": timed_out, "unchecked_count": unchecked_count,
             "author_marked_review": [c.as_dict() for c in checked
                                       if c.exempt and c.verdict not in {"match", "range_only"}],
-            "warnings": warnings,
+            "warnings": [*warnings, *[c.as_dict() for c in checked
+                                      if c.check_type == "K8" and c.verdict != "match"]],
             "verdict_reason_counts": {
                 verdict: dict(sorted(Counter(c.reason_code for c in checked if c.verdict == verdict).items()))
                 for verdict in ("match", "mismatch", "absent", "unverifiable", "range_only")},

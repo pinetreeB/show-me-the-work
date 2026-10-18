@@ -42,7 +42,8 @@ Rev2 also recognizes Korean/English line positions (`12행`, `12~14줄`, `L12`,
 `line 12`, `줄 12`), Markdown numbers, and numbered table/list references. A unique
 file can be inherited from the containing sentence, parentheses, table row, list
 item, or preceding heading. Multiple candidates are never resolved by list order.
-Line references bind adjacent quoted snippets or the following code block. Valid
+Line references bind adjacent quoted snippets or the following code block, including
+one intervening blank line. Two blank lines or intervening prose break that link. Valid
 references without quoted content have verdict `range_only`: they are not matches
 and do not affect other claims' status. A report with only these neutral references
 is INCOMPLETE because it has no substantive checked claim.
@@ -67,9 +68,16 @@ heading or from a unique source. The same source mapping is available for explic
 references to that display path; conflicting `--source-file` mappings are errors.
 
 Prose quotations normalize whitespace, quote styles, Markdown emphasis, backticks
-and link formatting on both sides. Code blocks and numbered code quotations retain
+and link formatting on both sides. Ellipses (`…` or `...`) split a prose quotation
+into nonempty fragments that must occur in order, without reusing the same source
+characters. Code blocks and numbered code quotations retain
 their operators and formatting. File-linked identifiers use token boundaries;
 unlinked identifiers still require both a code-like shape and explicit code context.
+Inherited paths do not turn general words, tool names or repository names into code
+claims. Negative, hypothetical and recommendation contexts are not K4 existence
+claims. Context words come from prose outside paths and quoted tokens; a filename
+such as `config.py` cannot supply its own code context. Without a supplied transcript, a repository search miss for an unlinked
+identifier remains unverified; search scopes list only the inputs actually searched.
 Setting limits are not file sizes. Entity values with multiple possible values
 remain unverified.
 Numbers described as file contents are entity values, not dimensions of that file.
@@ -93,6 +101,9 @@ conditional marker as control evidence. Marker/exit metadata never establishes a
 file identifier or quotation. This also applies to syntax-check commands without
 file-content output. An asynchronous marker requires its linked completed task log;
 missing/failed results and post-write self-reads retain their exclusion rules.
+Recognized shell writes include in-place sed/perl edits, git apply, patch, tee,
+PowerShell Set-Content/Out-File and output redirection. Their subsequent file reads
+cannot serve as independent evidence. Dynamic write targets remain conservative.
 
 Plain text/code and `.docx` paragraphs and tables are supported. Unsupported Word
 regions (headers, notes, text boxes, revisions) prevent an absence conclusion when
@@ -110,6 +121,13 @@ as `Total Lines - 1`, including partial views. Linked PowerShell content counts 
 Linked view-file exports and completed measurement logs are loaded on demand.
 An empty or whitespace-only final display line establishes `Total Lines - 1`;
 missing or differently bound auxiliary files cannot establish a measurement.
+If the last display row was not obtained, a count of `Total Lines - 1` is
+`unverifiable` with `partial_range`. A compatible linked content-line measurement
+can resolve it. For this partial-view boundary, a completed same-file `wc -l`
+measurement matching the claim can also resolve it (`linked_line_measurement`);
+this records a command-count comparison, not proof of the unseen final row.
+An isolated `wc -l` measurement does not establish an unspecified content-line count,
+and a known nonempty last row is never overridden by this fallback.
 K2 uses transcript observations whenever that file was read in the eligible evidence
 window. Missing measurements, failed reads or unresolved explicit times remain
 unverified; current files, source snapshots and fixed commits cannot replace those
@@ -127,6 +145,12 @@ Exit codes are **0 PASS**, **1 FAIL**, **3 INCOMPLETE**, **2 execution error**.
 change individual verdicts. Such marked failures make the result INCOMPLETE,
 except literal quotations and file/line references (K5/K1), which are not exempt.
 No extracted claims is INCOMPLETE. K10 warnings never change status.
+K8 URL failures retain their individual verdicts and are also warnings: they make
+the report INCOMPLETE, never FAIL by themselves. A separate substantive failure
+still makes the report FAIL. Unexpected checker exceptions produce ERROR and exit
+2 (JSON when requested); KeyboardInterrupt is not swallowed. Numeric extraction
+requires a leading digit and never treats a hexadecimal token's `b` as a byte unit.
+Comma-only file metrics or arithmetic operands are malformed input errors.
 
 JSON includes `status`, `claims`, `timed_out`, `unchecked_count`,
 `author_marked_review`, `warnings`, `summary`, and `elapsed_seconds`. Claims expose

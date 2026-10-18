@@ -186,7 +186,7 @@ def test_r6_code_does_not_strip_operators(tmp_path, report):
 
 @pytest.mark.parametrize('token,verdict', [('enabled', 'match'), ('missing', 'absent'), ('real', 'absent')])
 def test_r7_linked_plain_identifier_and_boundaries(tmp_path, token, verdict):
-    result = inspect(tmp_path, f'### `widget.py`\n`{token}`', 'enabled realToken')
+    result = inspect(tmp_path, f'### `widget.py`\n변수 `{token}`', 'enabled realToken')
     assert atoms(result, 'K4')[0]['verdict'] == verdict
 
 
@@ -279,7 +279,7 @@ def test_p2_entity_value_must_be_unique(tmp_path, source, verdict):
 @pytest.mark.parametrize('suffix', [' && echo DONE', "; if ($?) {echo 'DONE'}", ' && Write-Output "DONE"'])
 def test_p3_conditional_marker_is_control_not_content(tmp_path, suffix):
     rows = [agy_call('run_command', CommandLine='cat C:/sample/widget.py'+suffix), generic('realToken\nDONE\n')]
-    r, t = make_case(tmp_path, '`widget.py` `realToken`, `DONE`', rows)
+    r, t = make_case(tmp_path, '`widget.py` 변수 `realToken`, `DONE`', rows)
     assert [c['verdict'] for c in atoms(run(r, agy=str(t)), 'K4')] == ['match', 'absent']
 
 

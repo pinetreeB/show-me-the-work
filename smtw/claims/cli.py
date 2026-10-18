@@ -48,17 +48,21 @@ def render_text(result: dict) -> str:
 
 
 def run_check(args) -> int:
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8')
     try:
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8')
         if not math.isfinite(args.time_limit) or args.time_limit <= 0:
             raise ValueError('--time-limit은 양의 유한 초 단위 숫자여야 합니다.')
         result = run(args.report, agy=args.agy, agy_auto=args.agy_auto, codex=args.codex, brain_root=args.agy_brain_root,
                      repos=args.repo, commits=mapping(args.commit), sources=mapping(args.source_file, basename_default=True),
                      default_file=mapping([args.default_file]) if args.default_file is not None else None,
                      aliases=mapping(args.path_alias), time_limit=args.time_limit)
-    except (OSError, ValueError) as exc:
+        output = json.dumps(result, ensure_ascii=False, indent=2) if args.format == 'json' else render_text(result)
+        code = {'PASS': 0, 'FAIL': 1, 'ERROR': 2, 'INCOMPLETE': 3}[result['status']]
+    except Exception as exc:
         result = {'status': 'ERROR', 'claims': [], 'timed_out': False, 'unchecked_count': 0,
                   'author_marked_review': [], 'warnings': [], 'error': f'실행 오류: {exc}'}
-    print(json.dumps(result, ensure_ascii=False, indent=2) if args.format == 'json' else render_text(result))
-    return {'PASS': 0, 'FAIL': 1, 'ERROR': 2, 'INCOMPLETE': 3}[result['status']]
+        output = json.dumps(result, ensure_ascii=False, indent=2) if args.format == 'json' else '전체 상태: ERROR\n' + result['error']
+        code = 2
+    print(output)
+    return code

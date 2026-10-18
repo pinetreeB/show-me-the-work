@@ -11,7 +11,7 @@ import subprocess
 from typing import NamedTuple
 
 from .extract import extract
-from .markup import cell_spans, normalized_quote
+from .markup import cell_spans, normalized_quote, quote_fragments, quote_in_text
 from .model import Budget, Claim, DeadlineExceeded, Evidence, Transcript, summarize
 from .paths import matches_path, normalize_path, normalize_url
 from .sources import Repositories, content_lines, file_lines, local_source
@@ -98,6 +98,9 @@ def line_values(c: Claim, e: Evidence) -> Result:
         values = [counts[k] for k in ('L_lines', 'L_view') if k in counts]
         if not values and e.total_lines is not None:
             values = [e.total_lines]
+        if ('L_lines' not in counts and e.total_lines is not None
+                and e.total_lines not in e.lines and Decimal(c.value) == e.total_lines - 1):
+            return Result('unverifiable', '마지막 줄 미표시로 내용 줄 수 미확정', code='partial_range')
     if not values:
         return Result('unverifiable', '줄 수 계측 미확보', code='measurement_missing')
     okay = Decimal(c.value) in values
@@ -132,7 +135,7 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
             return Result('match' if okay else 'mismatch', '줄 번호 접두사를 제외한 코드 인용 ' + ('일치' if okay else '불일치'),
                           '\n'.join(e.lines[n] for n, _ in pairs), 'quote_match' if okay else 'quote_mismatch')
         prose = not c.quote_code
-        if normalized_quote(c.quote, prose=prose) not in normalized_quote(text, prose=prose):
+        if not quote_in_text(c.quote, text, prose=prose):
             return Result('mismatch', f'대응 줄 원문과 인용 불일치: {text[:240]}', text, 'quote_mismatch')
         return Result('match', '파일 줄 범위·인용 일치', text, 'quote_match')
     if c.check_type in {'K2', 'K6'} and c.unit == '줄' and (c.check_type == 'K2' or not c.entity):
@@ -162,14 +165,30 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
         return missing(e, dirty)
     if c.check_type == 'K5':
         dirty = False
-        needle = normalized_quote(c.quote, prose=not c.quote_code)
+        parts = quote_fragments(c.quote, prose=not c.quote_code)
+        if not parts:
+            return Result('unverifiable', '대조할 인용 조각 없음', code='quote_empty')
+        part_index = 0
+        span_dirty = False
         window = ''
         for n, line in content_lines(e, budget):
             dirty |= '\ufffd' in line
             window = window + ' ' + normalized_quote(line, prose=not c.quote_code)
-            if needle in window and '\ufffd' not in window[window.find(needle):window.find(needle)+len(needle)]:
-                return Result('match', f'원문 인용 확인 ({e.locations.get(n, str(n)+"행")})', needle, 'quote_match')
-            window = window[-max(4096, len(needle)*2):]
+            while part_index < len(parts):
+                needle = parts[part_index]
+                offset = window.find(needle)
+                if part_index:
+                    span_dirty |= '\ufffd' in window[:offset+len(needle)] if offset >= 0 else '\ufffd' in window
+                if offset < 0 or '\ufffd' in window[offset:offset+len(needle)]:
+                    break
+                window = window[offset+len(needle):]
+                part_index += 1
+            if part_index == len(parts):
+                if span_dirty:
+                    return Result('unverifiable', '줄임표 인용 조각 사이의 원문 손상', code='decode_damage')
+                return Result('match', f'원문 인용 확인 ({e.locations.get(n, str(n)+"행")})',
+                              ' … '.join(parts), 'quote_match')
+            window = window[-max(4096, len(parts[part_index])*2):]
         result = missing(e, dirty)
         if result.verdict == 'absent':
             return Result('mismatch', '연결 원문의 글자와 인용 불일치', 'quote mismatch', 'quote_mismatch')
@@ -204,7 +223,7 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
                             values.append(re.split(r'[,;\n"\'}]', raw.strip('"\''))[0].strip())
             else:
                 unit = re.escape(c.unit)
-                values += re.findall(r'([\d,]+(?:\.\d+)?)\s*' + unit + r'(?!\w)', line)
+                values += re.findall(r'(\d[\d,]*(?:\.\d+)?)\s*' + unit + r'(?!\w)', line)
         if dirty:
             return Result('unverifiable', '연결 엔터티의 원문 손상', code='decode_damage')
         if incomplete_value:
@@ -395,7 +414,7 @@ class Checker:
             else:
                 c.verdict = 'unverifiable' if relevant or not self.transcript.valid or not self.transcript.version else 'absent'
                 c.reason = '성공한 URL 읽기 결과 없음 (검색 질의·본문 URL 제외)'
-                c.source = {'search_scope': '대화의 성공한 URL 읽기 도구 결과'}
+                c.source = {'search_scope': ['대화의 성공한 URL 읽기 도구 결과'] if self.transcript.version else []}
                 c.reason_code = next((e.problem_code for e in relevant if e.problem_code), 'no_successful_visit')
             return
         if c.check_type == 'K3':
@@ -436,10 +455,13 @@ class Checker:
             hit, complete, scopes = self.repos.identifier(c.value)
             # git grep proves mention, not definition.
             reads_complete = all(r[0] != 'unverifiable' for r, _ in results)
-            c.verdict = 'match' if hit and not c.definition else 'absent' if complete and not hit and reads_complete and self.transcript.valid else 'unverifiable'
-            c.reason = '연결 파일 없는 식별자: 대화 읽기 결과 + 저장소 HEAD 토큰 검색'
-            c.source = {'search_scope': ['대화 읽기 결과', *scopes], 'existence': 'mention'}
-            c.reason_code = 'token_match' if c.verdict == 'match' else 'not_found' if c.verdict == 'absent' else 'partial_range'
+            has_transcript = bool(self.transcript.version)
+            c.verdict = 'match' if hit and not c.definition else 'absent' if complete and not hit and reads_complete and self.transcript.valid and has_transcript else 'unverifiable'
+            searched = (['대화 읽기 결과'] if has_transcript else []) + scopes
+            c.reason = '연결 파일 없는 식별자: ' + (' + '.join(searched) or '검색 근거 미확보')
+            c.source = {'search_scope': searched, 'existence': 'mention'}
+            c.reason_code = ('token_match' if c.verdict == 'match' else 'not_found' if c.verdict == 'absent'
+                             else 'partial_range' if has_transcript else 'transcript_missing')
             return
         if not observations:
             c.reason = '연결된 당시 읽기 결과 또는 지정 기준 원문 미확보'
@@ -468,6 +490,27 @@ class Checker:
                 for f in full))]
         results = [(check_one(c, e, self.budget), e) for e in observations]
         line_metric = c.check_type in {'K2', 'K6'} and c.unit == '줄' and (c.check_type == 'K2' or not c.entity)
+        if line_metric and 'wc -l' not in c.context and 'Total Lines' not in c.context:
+            measured = {e.counts['L_lines'] for e in observations if not e.problem and 'L_lines' in e.counts}
+            if len(measured) == 1:
+                lines = next(iter(measured))
+                # A linked content-line measurement resolves the unknown final row,
+                # but only if it is compatible with this view's total.
+                results = [(line_values(c, replace(e, counts={**e.counts, 'L_lines': lines})), e)
+                           if r.code == 'partial_range' and e.total_lines is not None
+                           and e.total_lines - lines in (0, 1) else (r, e) for r, e in results]
+            # For an unresolved partial view, a linked completed wc measurement
+            # can answer the reported count without inventing a final source row.
+            newline_counts = {e.counts['L_nl'] for e in observations if not e.problem and 'L_nl' in e.counts}
+            if len(newline_counts) == 1:
+                newlines = next(iter(newline_counts))
+                if Decimal(c.value) == newlines and any(
+                        r.code == 'partial_range' and e.total_lines == newlines + 1 for r, e in results):
+                    results = [(Result('match', '부분 열람의 미확정 줄 수를 연결된 wc -l 계측으로 대조',
+                                       str(newlines), 'linked_line_measurement'), e)
+                               if (r.code == 'partial_range' and e.total_lines == newlines + 1
+                                   or r.code == 'measurement_missing' and e.counts.get('L_nl') == newlines)
+                               else (r, e) for r, e in results]
         if c.check_type == 'K2' and any(r.verdict != 'unverifiable' for r, _ in results):
             results = [(r, e) for r, e in results if r.code != 'measurement_missing']
         c.source = {'observations': [e.metadata() for _, e in results],

@@ -45,11 +45,15 @@ def test_p6_numbered_and_adjacent_code_are_quotes(tmp_path, snippet):
     assert atoms(result, 'K1')[0]['verdict'] == 'mismatch'
 
 
-@pytest.mark.parametrize('report', ['`widget.py:1` 설명 중간의 `result = call(value);` 뒤 문장',
-    '`widget.py:1` 설명을 마친 뒤 `call(value)`', '`widget.py:1`\n설명 속 `result = call(value);`',
-    '`widget.py:1` `value = true`', '`widget.py:1`\n\n```\nwrong source code\n```'])
-def test_p6_prose_gaps_weak_code_and_nonadjacent_fences_do_not_bind(tmp_path, report):
-    assert atoms(inspect(tmp_path, report), 'K1')[0]['verdict'] == 'range_only'
+@pytest.mark.parametrize('report,expected', [
+    ('`widget.py:1` 설명 중간의 `result = call(value);` 뒤 문장', 'range_only'),
+    ('`widget.py:1` 설명을 마친 뒤 `call(value)`', 'range_only'),
+    ('`widget.py:1`\n설명 속 `result = call(value);`', 'range_only'),
+    ('`widget.py:1` `value = true`', 'range_only'),
+    # Fix2 N12 explicitly binds one blank line before a fenced quotation.
+    ('`widget.py:1`\n\n```\nwrong source code\n```', 'mismatch')])
+def test_p6_prose_gaps_weak_code_and_nonadjacent_fences_do_not_bind(tmp_path, report, expected):
+    assert atoms(inspect(tmp_path, report), 'K1')[0]['verdict'] == expected
 
 
 @pytest.mark.parametrize('report', ['`widget.py:1` “first source line”', '`widget.py:1`\n```\nfirst source line\n```',

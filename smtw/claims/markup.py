@@ -85,3 +85,21 @@ def normalized_quote(value: str, *, prose: bool = False) -> str:
             value = re.sub(pattern, r'\1', value)
     translated = value.translate(str.maketrans({'“': '"', '”': '"', '‘': "'", '’': "'"}))
     return re.sub(r'\s+', ' ', translated).strip()
+
+
+def quote_fragments(value: str, *, prose: bool) -> list[str]:
+    # Ellipses in prose denote omission; literal code keeps its operators.
+    parts = re.split(r'…|\.{3}', value) if prose else [value]
+    return [text for part in parts if (text := normalized_quote(part, prose=prose))]
+
+
+def quote_in_text(quote: str, text: str, *, prose: bool) -> bool:
+    parts = quote_fragments(quote, prose=prose)
+    text = normalized_quote(text, prose=prose)
+    cursor = 0
+    for index, part in enumerate(parts):
+        offset = text.find(part, cursor)
+        if offset < 0 or '\ufffd' in text[cursor if index else offset:offset+len(part)]:
+            return False
+        cursor = offset + len(part)
+    return bool(parts)

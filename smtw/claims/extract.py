@@ -4,7 +4,7 @@ import re
 from dataclasses import replace
 
 from .model import Budget, Claim
-from .markup import (QUOTE, TICK, bind_path, cell_spans, normalized_quote,
+from .markup import (QUOTE, TICK, bind_path, cell_spans, masked, normalized_quote,
                      parent_span, same_scope, sentence_span)
 
 
@@ -14,9 +14,13 @@ REFERENCE = re.compile(r'(?P<path>(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>()+
 REFERENCE_TAIL = re.compile(r',\s*L?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?(?![\w.]|\s*(?:B\b|bytes?\b|KB\b|MB\b|개|건|회|%))', re.I)
 SINGLE_LINE = re.compile(r'(?<![\w.])(?P<n>\d+)\s*줄(?!짜리)')
 LOCATION = re.compile(r'(?<![\w.])(?:L(?P<l>\d+)(?:\s*[-–~]\s*L?(?P<le>\d+))?|(?:line\s+|줄\s+)(?P<p>\d+)(?:\s*[-–~]\s*(?P<pe>\d+))?|(?P<a>\d+)\s*[-–~]\s*(?P<b>\d+)\s*(?:행|줄)|(?P<n>\d+)\s*(?:행|번째\s*줄))(?![A-Za-z0-9_])', re.I)
-NUMBER = re.compile(r'(?<![\w.])(?:`|\*\*|__)?([\d,]+(?:\.\d+)?)(?:`|\*\*|__)?\s*(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z])', re.I)
+NUMBER = re.compile(r'(?<![\w.])(?:`|\*\*|__)?(\d[\d,]*(?:\.\d+)?)(?:`|\*\*|__)?\s*(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z0-9])', re.I)
 IDENTIFIER = re.compile(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?\Z')
-CONTEXT = re.compile(r'함수|변수|설정\s*키|메서드|필드|\b키\b|function|method|variable|config|field', re.I)
+CONTEXT = re.compile(r'함수|변수|설정\s*키|메서드|필드|\b키\b|\b(?:function|method|variable|config|field)\b', re.I)
+NEGATED_OR_TENTATIVE = re.compile(r'없|제거|삭제|않|추가|권고|권장|제안|가정|다른\s*(?:모듈|파일)|\b(?:no|not|should|propos\w*|hypothetical|if|would|other\s+(?:module|file))\b', re.I)
+STATUS_WORD = re.compile(r'(?:PASS|FAIL|INCOMPLETE|ERROR|RUNNING)\Z', re.I)
+TOOL_OR_REPOSITORY = re.compile(r'(?:\w*(?:repo|repository|project)|(?:pytest|unittest|git|python|node|npm|pnpm|pip|cargo|docker|view_file|run_command|read_file|write_to_file))\Z', re.I)
+HEX_SHA = re.compile(r'(?<![\w])[0-9a-f]{7,40}(?![\w])', re.I)
 ITEM = re.compile(r'(?<![\w/\\.-])(?:F\d+-[A-Z]\d+|[RDB]\d+(?:-[A-Z]\d+)?|§\s*\d+(?:\.\d+)*|#\d+|항목\s*\d+)(?![\w.-])')
 URL = re.compile(r'https?://[^\s<>`"\u201d]+')
 
@@ -72,6 +76,31 @@ def code_snippet(value: str) -> bool:
         return False
     symbols = re.findall(r'->|=>|==|!=|<=|>=|[=()"\x27$;{}\[\]:,+*/]', value)
     return len(symbols) >= 2 and bool(re.search(r'\s|[(),;:{}\[\]]', value))
+
+
+def code_shaped(value: str) -> bool:
+    return bool(re.search(r'[a-z][A-Z]|_|\.|\(\)', value))
+
+
+def general_identifier(value: str) -> bool:
+    """Names for tools, repositories, and status prose are not K4 targets."""
+    return bool(STATUS_WORD.fullmatch(value) or TOOL_OR_REPOSITORY.fullmatch(value))
+
+
+def touches_hex_sha(line: str, start: int, end: int) -> bool:
+    return any(match.start() < end and start < match.end() for match in HEX_SHA.finditer(line))
+
+
+def malformed_metric(line: str, paths: list[tuple[int, int, str]]) -> bool:
+    """Reject only comma-only file metrics; ordinary comma prose remains prose."""
+    for match in re.finditer(r'(?<![\w.])(?:`|\*\*|__)?(?:,+)(?:`|\*\*|__)?\s*'
+                            r'(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z0-9])', line, re.I):
+        unit = match.group(1).removesuffix('짜리')
+        if unit.lower() in {'line', 'lines'}:
+            unit = '줄'
+        if metric_context(line, match.start(), match.end(), paths, unit):
+            return True
+    return False
 
 
 def adjacent_snippet(line: str, span: tuple[int, int], snippet: tuple) -> bool:
@@ -159,7 +188,9 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     fence_claim.quote_code = True
                 fence_claim, fence_lines = None, []
             else:
-                fence_claim = previous_refs[-1] if previous_refs and previous_refs[-1].report_line == line_no-1 else None
+                # A single blank line before a fence is ordinary Markdown layout.
+                fence_claim = (previous_refs[-1] if previous_refs
+                               and line_no - previous_refs[-1].report_line <= 2 else None)
             fenced = not fenced
             continue
         if fenced:
@@ -167,6 +198,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 fence_lines.append(line)
             continue
         paths = paths_in(line)
+        if malformed_metric(line, paths):
+            raise ValueError('쉼표만 있는 숫자 단위 주장')
         if line.startswith('#'):
             heading_paths = list(dict.fromkeys(p[2] for p in paths))
             heading_path = paths[0][2] if len(paths) == 1 else ''
@@ -343,13 +376,25 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if not IDENTIFIER.fullmatch(value):
                 continue
             path = bound
-            is_code = bool(re.search(r'[a-z][A-Z]|_|\.|\(\)', value))
-            if not path and not candidates and not (is_code and CONTEXT.search(sentence(line, m.start()))):
+            is_code = code_shaped(value)
+            context = sentence(line, m.start())
+            prose_chars = list(masked(context))
+            for a, b, _ in paths_in(context):
+                prose_chars[a:b] = ' ' * (b-a)
+            prose = ''.join(prose_chars)
+            code_context = bool(CONTEXT.search(prose))
+            if NEGATED_OR_TENTATIVE.search(prose) or general_identifier(value) and not code_context:
                 continue
-            definition = bool(re.search(r'정의|설정\s*키|필드|\b키\b|function|함수', sentence(line, m.start()), re.I))
+            if not path and not candidates and not (is_code and code_context):
+                continue
+            if not (is_code or code_context):
+                continue
+            definition = bool(re.search(r'정의|설정\s*키|필드|\b키\b|\bfunction\b|함수', prose, re.I))
             add('K4', m.group(), m.start(), value=value.removesuffix('()'), definition=definition)
         for m in NUMBER.finditer(line):
             if any(a <= m.start() < b for a, b, _ in paths + ref_spans):
+                continue
+            if touches_hex_sha(line, m.start(), m.end()):
                 continue
             if any(t.start() < m.start() and t.end() >= m.end() and re.search(r'[:=]', t.group(1)) for t in ticks):
                 continue
@@ -374,7 +419,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         if row and table_headers:
             for i, (a, b) in enumerate(cell_spans(line)):
                 value = line[a:b].strip()
-                number = re.fullmatch(r'(?:`|\*\*|__)?([\d,]+)(?:`|\*\*|__)?', value)
+                number = re.fullmatch(r'(?:`|\*\*|__)?(\d[\d,]*)(?:`|\*\*|__)?', value)
                 header = table_headers[i] if i < len(table_headers) else ''
                 path, candidates = binding(a)
                 metric = '줄' if re.search(r'줄\s*수|행\s*수|lines?', header, re.I) else 'B' if re.search(r'바이트|bytes?|크기', header, re.I) else ''
@@ -414,7 +459,12 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 for expected, raw in paired:
                     add('K9', item_id+' '+raw, start, value=item_id, quote=expected,
                         ordinal=ordinal or bool(re.fullmatch(r'#\d+|항목\s*\d+', item_id)))
-        arithmetic = re.search(r'([\d,]+)\s*건\s*중\s*([\d,]+)\s*건', line)
+        malformed_arithmetic = re.search(
+            r'(?<![\w.])(?:,+)\s*건\s*중\s*\d[\d,]*\s*건|'
+            r'\d[\d,]*\s*건\s*중\s*(?:,+)\s*건', line)
+        if malformed_arithmetic:
+            raise ValueError('쉼표만 있는 산술 주장')
+        arithmetic = re.search(r'(\d[\d,]*)\s*건\s*중\s*(\d[\d,]*)\s*건', line)
         if arithmetic:
             add('K7', arithmetic.group(), arithmetic.start(), value=arithmetic.group(1).replace(',', ''),
                 entity=arithmetic.group(2).replace(',', ''), path='')

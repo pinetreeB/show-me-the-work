@@ -15,7 +15,7 @@ from .sources import content_lines, decode, file_lines
 
 FILE_TOKEN = re.compile(r'''(?:[A-Za-z]:[\\/]|/|\.?\.?[/\\])?[^\s`"'<>;|{}=]+\.(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|csv|tsv)(?:@[\da-f]+)?''', re.I)
 READ_COMMAND = re.compile(r'\b(?:Get-Content|Get-Item|Select-String|cat|type|head|tail|sed|rg|grep|wc|stat|git|readFileSync|readFile|read_text|read_bytes|open)\b', re.I)
-WRITE_COMMAND = re.compile(r'\b(?:writeFileSync|writeFile|write_text|write_bytes|WriteAllText|WriteAllLines|Set-Content|Add-Content|Out-File|apply_patch|Remove-Item|Move-Item)\b|\bopen\s*\([^\n]+,[\s]*["\'][wax]|(?:^|[;&|])\s*(?:rm|mv|cp|tee)\s|(?<![2\d])>\s*[\w./\\]', re.I)
+WRITE_COMMAND = re.compile(r'\b(?:writeFileSync|writeFile|write_text|write_bytes|WriteAllText|WriteAllLines|Set-Content|Add-Content|Out-File|apply_patch|Remove-Item|Move-Item|git\s+apply|patch|sed\s+[^\n;|]*-[^\s;|]*i|perl\b(?=[^\n;|]*\s-\S*i\S*))\b|\bopen\s*\([^\n]+,[\s]*["\'][wax]|(?:^|[;&|])\s*(?:rm|mv|cp|tee)\s|(?<![<>=])(?:&>|(?:\d+)?>>?)\s*["\'`\w./\\$%]', re.I)
 GENERATED = re.compile(r'\b(?:echo|Write-Output)\b|\bprint\s*\(|console\.log|stdout\.write', re.I)
 GENERATED_LITERAL = re.compile(r'''(?:\bprint|console\.log|stdout\.write)\s*\(\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)''', re.I)
 TRUNCATED = re.compile(r'<truncated|\[.{0,12}truncated|output (?:has been )?truncated|Warning: truncated output|\.\.\.\s*\d+ (?:tokens|chars).*truncated', re.I)
@@ -100,6 +100,56 @@ def call_paths(call: Call) -> list[str]:
     return paths
 
 
+def command_write_targets(call: Call) -> tuple[list[str], bool]:
+    """Return literal write targets and whether an unresolvable write occurred.
+
+    Shell patch applicators name their input patch, not the files they modify.  A
+    later read therefore cannot safely establish any file claim.  In contrast,
+    the common in-place and redirect forms expose their target literally, so
+    only that target needs to be excluded.
+    """
+    command, _ = success_marker(call.command)
+    if not command:
+        return ([call.path] if call.path else [], False)
+    if re.search(r'\b(?:git\s+apply|patch)\b', command, re.I):
+        return [], True
+    targets = []
+
+    unresolved = False
+
+    def add(value: str) -> None:
+        nonlocal unresolved
+        if not value or re.search(r'\$|%[^%]+%|`|\$\(', value):
+            unresolved = True
+            return
+        value = value.strip().strip('"\'(),')
+        if value and value not in targets:
+            targets.append(value)
+
+    if re.search(r'\b(?:sed\s+[^\n;|]*-[^\s;|]*i|perl\b(?=[^\n;|]*\s-\S*i\S*))\b', command, re.I):
+        for value in call_paths(call):
+            add(value)
+    for match in re.finditer(r'\b(?:Set-Content|Add-Content|Out-File)\b\s+(?:-(?:Path|LiteralPath|FilePath)\s+)?(?:"([^"]+)"|\'([^\']+)\'|([^\s;|]+))', command, re.I):
+        value = next(value for value in match.groups() if value is not None)
+        if not value.startswith('-'):
+            add(value)
+    for match in re.finditer(r'-(?:Path|LiteralPath|FilePath)\s+(?:"([^"]+)"|\'([^\']+)\'|([^\s;|]+))', command, re.I):
+        add(next(value for value in match.groups() if value is not None))
+    for match in re.finditer(r'\btee\b\s+([^;|&\n]+)', command, re.I):
+        for token in re.findall(r'"[^"]*"|\'[^\']*\'|\S+', match.group(1)):
+            if not token.startswith('-'):
+                add(token)
+    for match in re.finditer(r'(?<![<>=])(?:&>|(?:\d+)?>>?)\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s;|&]+))', command):
+        value = next(value for value in match.groups() if value is not None)
+        if not value.startswith('&'):
+            add(value)
+    if targets:
+        return targets, unresolved
+    # Existing literal API writes and direct file operations remain path-bound.
+    paths = call_paths(call)
+    return paths, unresolved or not bool(paths)
+
+
 def observed_path(value: str, cwd: str) -> str:
     path = normalize_path(value)
     if not path or path.startswith('/') or re.match(r'^[a-z]:/', path) or not cwd:
@@ -143,6 +193,15 @@ def unwrapped(value) -> list[tuple[str, int | None, int | None]]:
         inner = value.get('value', value)
         if isinstance(inner, dict) and 'output' in inner:
             return [(text_value(inner['output']), inner.get('exit_code'), value.get('i'))]
+        if isinstance(inner, dict) and isinstance(inner.get('result'), dict):
+            # MCP browser tools commonly wrap their observed page URL in a
+            # result object.  Preserve that literal result metadata so only a
+            # matching successful browser call can establish a URL visit.
+            result = inner['result']
+            if any(key in result for key in ('url', 'pageUrl', 'page_url', 'currentUrl')):
+                metadata = {k: v for k, v in inner.items() if k not in {'content', 'text'}}
+                body = json.dumps(metadata, ensure_ascii=False) + '\n' + text_value(inner)
+                return [(body, None, value.get('i'))]
         if isinstance(inner, dict) and ('url' in inner or 'pageUrl' in inner or 'isError' in inner or 'success' in inner):
             metadata = {k: v for k, v in inner.items() if k not in {'content', 'text'}}
             body = json.dumps(metadata, ensure_ascii=False) + '\n' + text_value(inner)
@@ -468,6 +527,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
     pending: deque[Call] = deque()
     codex_calls: dict[str, list[Call]] = {}
     writes: dict[str, int] = {}
+    unresolved_write_orders: list[int] = []
     report_targets = {normalize_path(str(report), aliases)}
     report_writes: list[int] = []
     completions: dict[str, int] = {}
@@ -477,24 +537,34 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
     def register(call):
         if not call.write:
             return
-        for target in call_paths(call):
+        targets, unresolved = command_write_targets(call)
+        # apply_patch carries its literal targets in patch headers rather than
+        # a call path.  Those targets are determinate, so unrelated later reads
+        # remain usable.
+        patch = str(call.args.get('patch', call.args.get('input', '')))
+        patch_targets = re.findall(r'^\*\*\* (?:Add|Update|Delete) File: (.+)$', patch, re.M)
+        if patch_targets:
+            targets.extend(patch_targets)
+            unresolved = False
+        for target in targets:
             writes.setdefault(normalize_path(observed_path(target, call.cwd), aliases), call.order)
+        if unresolved:
+            unresolved_write_orders.append(call.order)
         content = str(call.args.get('CodeContent') or call.args.get('content') or '')
         if call.path and (normalize_path(observed_path(call.path, call.cwd), aliases) in report_targets
                           or content and content == report_text):
             report_targets.add(normalize_path(observed_path(call.path, call.cwd), aliases))
             report_writes.append(call.order)
         # apply_patch is never evidence, but its path headers mark future self-reads.
-        patch = str(call.args.get('patch', call.args.get('input', '')))
-        for target in re.findall(r'^\*\*\* (?:Add|Update|Delete) File: (.+)$', patch, re.M):
-            writes.setdefault(normalize_path(observed_path(target, call.cwd), aliases), call.order)
 
     def accept(call, body, n, exit_code=None):
         observations = parse_result(call, body, f'{path}:{n}', root, budget, exit_code)
         for e in observations:
             e.path = observed_path(e.path, call.cwd)
             normalized = normalize_path(e.path, aliases)
-            if normalized in report_targets or normalized in writes and writes[normalized] <= call.order:
+            if (normalized in report_targets
+                    or normalized in writes and writes[normalized] <= call.order
+                    or e.path and any(order <= call.order for order in unresolved_write_orders)):
                 continue
             result.evidence.append(e)
 
