@@ -60,8 +60,48 @@ def linked_path(paths, pos: int, fallback: str) -> str:
     return paths[0][2] if paths else fallback
 
 
+def numbered_snippet(value: str) -> bool:
+    return bool(re.fullmatch(r'\s*(?:line\s+)?\d+:\s*\S.*', value, re.I))
+
+
+def code_snippet(value: str) -> bool:
+    """A lone identifier (including f()) is a file-level K4 claim, not a quote."""
+    if IDENTIFIER.fullmatch(value):
+        return False
+    symbols = re.findall(r'->|=>|==|!=|<=|>=|[=()"\x27$;{}\[\]:,+*/]', value)
+    return len(symbols) >= 2 and bool(re.search(r'\s|[(),;:{}\[\]]', value))
+
+
+def adjacent_snippet(line: str, span: tuple[int, int], snippet: tuple) -> bool:
+    if not snippet[4] or numbered_snippet(snippet[2]):
+        return True
+    a, b = span
+    gap = line[b:snippet[0]] if b <= snippet[0] else line[snippet[1]:a]
+    return bool(re.fullmatch(r'[\s`*:：,，;()\[\]{}=→-]*', gap))
+
+
+def paragraphs(lines: list[str]) -> dict[int, str]:
+    result, pending = {}, []
+    def flush():
+        text = '\n'.join(value for _, value in pending)
+        for number, _ in pending:
+            result[number] = text
+        pending.clear()
+    for number, line in enumerate(lines, 1):
+        boundary = bool(re.match(r'^\s*(?:#{1,6}\s|[-+*]\s|\d+[.)]\s|\||```|~~~)', line))
+        if not line.strip() or boundary:
+            flush()
+        if line.strip():
+            pending.append((number, line))
+        if line.lstrip().startswith(('|', '#', '```', '~~~')):
+            flush()
+    flush()
+    return result
+
+
 def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
     lines = report.splitlines()
+    paragraph_contexts = paragraphs(lines)
     claims, warnings = [], []
     heading_path = ''
     heading_paths: list[str] = []
@@ -87,7 +127,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     fence_claim.quote_code = True
                 fence_claim, fence_lines = None, []
             else:
-                fence_claim = previous_refs[-1] if previous_refs else None
+                fence_claim = previous_refs[-1] if previous_refs and previous_refs[-1].report_line == line_no-1 else None
             fenced = not fenced
             continue
         if fenced:
@@ -145,6 +185,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             explicit = kwargs.pop('path', None)
             c = Claim(line_no, text, kind, path=bound if explicit is None else explicit,
                       binding_candidates=candidates if explicit is None else (),
+                      repository_contexts=(context, line, paragraph_contexts.get(line_no, line)) if kind == 'K3' else (),
                       context=context, author_marked=marked(context),
                       current=bool(re.search(r'현재\s*(?:HEAD|파일|상태)|지금\s*파일|current\s+HEAD', scope, re.I)),
                       revision=rev.group(1) if rev else '', when=when, **kwargs)
@@ -200,11 +241,12 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         for m in ticks:
             if paths_in(m.group(1)) or REFERENCE.search(m.group(1)) or LOCATION.fullmatch(m.group(1)) or re.fullmatch(r'[\d,.]+', m.group(1)):
                 continue
-            snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
+            if numbered_snippet(m.group(1)) or code_snippet(m.group(1)):
+                snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
         attached: dict[int, list[tuple]] = {}
         for snippet in snippets:
             pos = snippet[0]
-            possible = [(a, b, c) for a, b, c in ref_spans if same_scope(line, pos, a)
+            possible = [(a, b, c) for a, b, c in ref_spans if same_scope(line, pos, a) and adjacent_snippet(line, (a, b), snippet)
                         and not (snippet[0] <= a < snippet[1])]
             if possible:
                 preceding = [r for r in possible if r[1] <= pos]
@@ -219,7 +261,9 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 target.text = next(line[a:b] for a, b, original in ref_spans if original is c) + ' ' + snippet[3]
         if not refs and previous_refs and snippets:
             for c in previous_refs:
-                if c.report_line == line_no-1 and not c.quote:
+                if c.report_line == line_no-1 and not c.quote and (
+                    not snippets[0][4] or numbered_snippet(snippets[0][2]) or
+                    line.strip() == snippets[0][3]):
                     c.quote, c.quote_code = snippets[0][2], snippets[0][4]
         for m in ticks:
             value = m.group(1)

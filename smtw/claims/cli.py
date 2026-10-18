@@ -22,6 +22,7 @@ def add_claims_parser(subparsers):
     check.add_argument('--agy-brain-root', type=Path, default=Path('~/.gemini/antigravity-cli/brain'))
     for option in ('repo', 'commit', 'source-file', 'path-alias'):
         check.add_argument('--' + option, action='append', default=[])
+    check.add_argument('--default-file', metavar='표기=실제파일', help='파일 문맥 없는 줄 위치의 명시적 기본 원문')
     check.add_argument('--format', choices=('text', 'json'), default='text')
     check.add_argument('--time-limit', type=float, default=60)
     check.set_defaults(func=run_check)
@@ -54,6 +55,7 @@ def run_check(args) -> int:
             raise ValueError('--time-limit은 양의 유한 초 단위 숫자여야 합니다.')
         result = run(args.report, agy=args.agy, agy_auto=args.agy_auto, codex=args.codex, brain_root=args.agy_brain_root,
                      repos=args.repo, commits=mapping(args.commit), sources=mapping(args.source_file, basename_default=True),
+                     default_file=mapping([args.default_file]) if args.default_file is not None else None,
                      aliases=mapping(args.path_alias), time_limit=args.time_limit)
     except (OSError, ValueError) as exc:
         result = {'status': 'ERROR', 'claims': [], 'timed_out': False, 'unchecked_count': 0,

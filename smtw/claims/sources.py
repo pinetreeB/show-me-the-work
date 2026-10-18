@@ -114,6 +114,7 @@ def docx_source(path: Path, name: str, budget: Budget) -> Evidence:
 class Repositories:
     def __init__(self, roots: list[str], commits: dict[str, str], aliases: dict[str, str], budget: Budget):
         self.roots = [Path(p).resolve() for p in dict.fromkeys([*roots, *commits])]
+        self.scope_roots = list(dict.fromkeys(Path(p).resolve() for p in roots))
         self.commits = {normalize_path(str(Path(k).resolve())): v for k, v in commits.items()}
         self.aliases, self.budget = aliases, budget
         self.cache: dict[tuple, object] = {}
@@ -164,9 +165,38 @@ class Repositories:
                 result.append(self.cache[key])
         return result
 
-    def commit(self, sha: str) -> tuple[str, str, dict]:
+    def scope(self, contexts: tuple[str, ...]) -> list[Path]:
+        """Explicit repository paths/names only; CLI availability is not report scope."""
+        for context in contexts:
+            text = context.replace('\\', '/').casefold()
+            for alias, actual in self.aliases.items():
+                text = text.replace(alias.replace('\\', '/').casefold(), actual.replace('\\', '/').casefold())
+            quoted = {normalize_path(value, self.aliases) for value in re.findall(r'`([^`]+)`', context)}
+            names = {normalize_path(str(root)) for root in self.scope_roots} | {root.name.casefold() for root in self.scope_roots}
+            found = []
+            recognized_cues = []
+            for root in self.scope_roots:
+                full, name = normalize_path(str(root)), root.name.casefold()
+                full_mention = re.search(r'(?<![\w./-])' + re.escape(full) + r'(?![\w./-])', text)
+                cue = (r'(?:\brepo(?:sitory)?\b|저장소)\s*[:=]?\s*["\x27]?' + re.escape(name) + r'(?![\w./-])|'
+                       r'(?<![\w./-])' + re.escape(name) + r'["\x27]?\s*(?:저장소|\brepo(?:sitory)?\b)')
+                if full in quoted or name in quoted or full_mention or re.search(cue, text):
+                    found.append(root)
+                    recognized_cues.extend((m.start(), m.end()) for m in re.finditer(cue, text))
+            remainder = list(text)
+            for start, end in recognized_cues:
+                remainder[start:end] = ' ' * (end-start)
+            declarations = re.findall(r'(?:\brepo(?:sitory)?\b|저장소)\s*[:=]?\s+(?:`([^`]+)`|"([^"]+)"|([^\s,;|]+))', ''.join(remainder), re.I)
+            if any(normalize_path(next(value for value in groups if value), self.aliases) not in names for groups in declarations):
+                return []
+            if found:
+                return found
+        return []
+
+    def commit(self, sha: str, roots: list[Path] | None = None) -> tuple[str, str, dict]:
         answers = []
-        for root in self.roots:
+        selected = self.roots if roots is None else roots
+        for root in selected:
             key = ('sha', str(root), sha)
             if key not in self.cache:
                 valid = self.git(root, 'rev-parse', '--git-dir')
@@ -184,7 +214,7 @@ class Repositories:
                                            else ('mismatch', 'commit 아닌 객체') if obj.returncode == 0
                                            else ('unverifiable', '객체 종류 조회 실패'))
             answers.append(self.cache[key])
-        source = {'search_scope': [str(r) for r in self.roots], 'tool': 'git cat-file -t'}
+        source = {'search_scope': [str(r) for r in selected], 'tool': 'git cat-file -t'}
         if not answers:
             return 'unverifiable', '조회할 저장소 없음', source
         if any(v == 'unverifiable' for v, _ in answers):

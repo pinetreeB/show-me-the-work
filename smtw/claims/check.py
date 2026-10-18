@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -241,6 +242,7 @@ class Checker:
                     if (c.current or not e.after_report)
                     and c.path and (matches_path(c.path, e.path, self.aliases)
                                     or c.path.startswith(('https://', 'http://')) and normalize_url(c.path) == normalize_url(e.url))]
+        file_reads = observed
         if c.revision:
             observed = [e for e in observed if e.revision and
                         (e.revision.startswith(c.revision) or c.revision.startswith(e.revision))]
@@ -251,6 +253,9 @@ class Checker:
             for e in observed:
                 groups[normalize_path(e.path, self.aliases)].append(e)
             observed = [(min if c.when == 'before' else max)(g, key=lambda e: e.order) for g in groups.values()]
+        if c.check_type == 'K2' and file_reads:
+            return observed or [replace(e, problem='파일 읽기 관측은 있으나 명시 시점에 연결하지 못함',
+                                        problem_code='observation_time_unresolved') for e in file_reads]
         if observed:
             if c.check_type not in {'K1', 'K5'} or not c.start or any(
                 e.total_lines is not None and c.end > e.total_lines or all(n in e.lines for n in range(c.start, c.end+1))
@@ -303,17 +308,27 @@ class Checker:
                 c.reason_code = next((e.problem_code for e in relevant if e.problem_code), 'no_successful_visit')
             return
         if c.check_type == 'K3':
+            scope = self.repos.scope(c.repository_contexts)
+            scoped = scope if len(scope) == 1 else None
             for e in self.transcript.evidence:
                 if e.problem or not e.complete or e.after_report and not c.current or not re.search(r'\bgit\b', e.command):
                     continue
+                if scoped:
+                    cwd = normalize_path(e.cwd, self.aliases)
+                    root = normalize_path(str(scoped[0]), self.aliases)
+                    if not cwd or not (cwd == root or cwd.startswith(root + '/')):
+                        continue
                 for n, text in content_lines(e, self.budget):
                     if boundary(c.value).search(text) and '\ufffd' not in text:
                         c.verdict, c.reason, c.source = 'match', '연결된 git 읽기 명령 출력에서 SHA 확인', e.metadata()
                         c.reason_code = 'sha_observed'
                         return
-            c.verdict, c.reason, c.source = self.repos.commit(c.value)
+            c.verdict, c.reason, c.source = self.repos.commit(c.value, scoped)
             c.reason_code = {'match': 'commit_exists', 'mismatch': 'not_commit', 'absent': 'commit_not_found',
                              'unverifiable': 'commit_unresolved'}[c.verdict]
+            c.source['repository_binding'] = 'explicit' if scoped else 'unknown'
+            if not scoped and (c.verdict == 'absent' or not self.repos.roots):
+                c.verdict, c.reason, c.reason_code = 'unverifiable', 'SHA가 속한 저장소 범위 미확정', 'repo_scope_unknown'
             return
         observations = self.select(c)
         if not c.path and c.check_type == 'K4':
@@ -397,6 +412,7 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
         agy_auto: bool = False,
         brain_root: Path | None = None, repos: list[str] | None = None,
         commits: dict[str, str] | None = None, sources: dict[str, str] | None = None,
+        default_file: dict[str, str] | None = None,
         aliases: dict[str, str] | None = None, time_limit: float = 60,
         budget: Budget | None = None) -> dict:
     budget = budget or Budget(time_limit)
@@ -404,12 +420,24 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
         raise ValueError('--commit 기준은 7~40자리 16진 SHA여야 합니다.')
     report_text = report.read_bytes().decode('utf-8-sig')
     aliases = aliases or {}
+    sources = dict(sources or {})
+    if default_file:
+        if len(default_file) != 1:
+            raise ValueError('--default-file은 표기=실제파일 한 개만 지정해야 합니다.')
+        name, actual = next(iter(default_file.items()))
+        if not name or not actual or name in sources and sources[name] != actual:
+            raise ValueError('--default-file이 비어 있거나 --source-file과 충돌합니다.')
+        sources[name] = actual
     claims, warnings = [], []
     transcript = Transcript()
     timed_out, unchecked = False, 0
     completed = 0
     try:
         claims, warnings = extract(report_text, budget)
+        if default_file:
+            for c in claims:
+                if c.check_type in {'K1', 'K5'} and c.start and not c.path and not c.binding_candidates:
+                    c.path = name
         if agy_auto:
             candidates = discover_agy(report, report_text, brain_root or Path('~/.gemini/antigravity-cli/brain'), aliases, budget)
             if len(candidates) == 1:
@@ -425,7 +453,7 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
         warnings.extend(transcript.warnings)
         repositories = Repositories(repos or [], commits or {}, aliases, budget)
         repositories.preload_commits([c.value for c in claims if c.check_type == 'K3'])
-        checker = Checker(transcript, sources or {}, repositories, aliases, budget)
+        checker = Checker(transcript, sources, repositories, aliases, budget)
         for c in claims:
             checker.apply(c)
             completed += 1

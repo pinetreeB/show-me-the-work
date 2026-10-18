@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections import Counter
 import time
 from typing import Callable
 
@@ -37,6 +38,7 @@ class Claim:
     quote: str = ""
     quote_code: bool = False
     binding_candidates: tuple[str, ...] = ()
+    repository_contexts: tuple[str, ...] = ()
     ordinal: bool = False
     context: str = ""
     entity: str = ""
@@ -127,5 +129,8 @@ def summarize(claims: list[Claim], *, timed_out: bool, unchecked_count: int,
             "author_marked_review": [c.as_dict() for c in checked
                                       if c.exempt and c.verdict not in {"match", "range_only"}],
             "warnings": warnings,
+            "verdict_reason_counts": {
+                verdict: dict(sorted(Counter(c.reason_code for c in checked if c.verdict == verdict).items()))
+                for verdict in ("match", "mismatch", "absent", "unverifiable", "range_only")},
             "summary": {v: sum(c.verdict == v for c in checked)
                         for v in ("match", "mismatch", "absent", "unverifiable", "range_only")}}

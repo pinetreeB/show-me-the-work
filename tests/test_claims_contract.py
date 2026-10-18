@@ -88,7 +88,7 @@ def git_repo(tmp_path):
     return root, sha
 
 
-@pytest.mark.parametrize('variant,expected', [('full', 'match'), ('short', 'match'), ('missing', 'absent'), ('blob', 'mismatch')])
+@pytest.mark.parametrize('variant,expected', [('full', 'match'), ('short', 'match'), ('missing', 'unverifiable'), ('blob', 'mismatch')])
 def test_k3_commit_object_type(tmp_path, git_repo, variant, expected):
     root, sha = git_repo
     if variant == 'short':
@@ -383,8 +383,9 @@ def test_aux_default_brain_layout_and_id(tmp_path):
 
 def test_schema_fields_and_atomic_claims(tmp_path):
     result = check(tmp_path, '`engine.py:1` 함수 `first_name`, `second_name`, 8줄', 'def first_name(): pass')
-    assert len(result['claims']) == 5
-    assert [c['verdict'] for c in only(result, 'K1')] == ['match', 'mismatch']
+    assert len(result['claims']) == 4
+    assert [c['verdict'] for c in only(result, 'K1')] == ['range_only']
+    assert [c['verdict'] for c in only(result, 'K4')] == ['match', 'absent']
     for c in result['claims']:
         assert {'report_line', 'text', 'check_type', 'verdict', 'author_marked', 'exempt', 'source', 'reason', 'reason_code'} <= c.keys()
         assert c['report_line'] == 1

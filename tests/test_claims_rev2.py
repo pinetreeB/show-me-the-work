@@ -25,7 +25,8 @@ def inspect(tmp_path, report, source='def realToken(): pass\nsecond source line\
 @pytest.mark.parametrize('token,verdict', [('realToken', 'match'), ('wrongToken', 'mismatch')])
 def test_r1_locations_have_content(tmp_path, location, token, verdict):
     result = inspect(tmp_path, f'`widget.py` {location} `{token}`')
-    assert atoms(result, 'K1')[0]['verdict'] == verdict
+    assert atoms(result, 'K1')[0]['verdict'] == 'range_only'
+    assert atoms(result, 'K4')[0]['verdict'] == ('match' if verdict == 'match' else 'absent')
 
 
 @pytest.mark.parametrize('text', ['총 12줄', '`L12name`', 'version12행', '"text says 12행 here"', '`widget.py` 12 lines'])
@@ -83,7 +84,10 @@ def test_r2_full_and_partial_observations(tmp_path, partial, verdict):
     '| `widget.py` | 1행 `wrongToken` |', '`widget.py` L1\n`wrongToken`',
     '`widget.py` 1행\n```py\ndef wrongToken(): pass\n```'])
 def test_r3_inline_next_line_and_fence(tmp_path, report):
-    assert atoms(inspect(tmp_path, report), 'K1')[0]['verdict'] == 'mismatch'
+    result = inspect(tmp_path, report)
+    assert atoms(result, 'K1')[0]['verdict'] == ('mismatch' if '```' in report else 'range_only')
+    if '```' not in report:
+        assert atoms(result, 'K4')[0]['verdict'] == 'absent'
 
 
 def test_r3_scope_does_not_attach_another_parenthesis(tmp_path):
