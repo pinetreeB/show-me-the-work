@@ -283,8 +283,6 @@ def explicit_quote_source(line: str, pos: int, paths, ref_spans) -> tuple[tuple[
     """Recognize a source citation immediately introducing the quote, not mentions."""
     start, _ = quote_span(line, pos)
     last_ref = max([start, *[b for a, b, _ in ref_spans if start <= a and b <= pos]])
-    if not any(start <= a and b <= pos for a, b, _ in ref_spans):
-        return (), False
     def direct_tail(end):
         tail = line[end:pos]
         tail = re.sub(r'§\s*[\w.-]+', '', tail)
@@ -294,10 +292,26 @@ def explicit_quote_source(line: str, pos: int, paths, ref_spans) -> tuple[tuple[
     names = tuple(dict.fromkeys(path for a, b, path in paths
                                 if last_ref <= a and b <= pos and direct_tail(b)))
     gap = masked(line[last_ref:pos])
-    declaration = bool(names or re.search(
-        r'(?:§\s*[\w.-]+|(?:지시서|문서|설명서|보고서|가이드|출처)\s*(?:에서|에\s*따르면))'
-        r'[\s)*_:：]*$', gap, re.I))
+    # A section marker or generic 'document says' is not a new source.
+    named = re.search(r'(?<![\w§])([A-Za-z가-힣_][\w.-]*)\s*(?:§\s*[\w.-]+\s*)?(?:에서는|에서|에\s*따르면|에\s*의하면)'
+                      r'[\s)*_:：]*$', gap, re.I)
+    # Ordinary locations ('in the branch/code') are not document names.
+    title = named[1] if named else ''
+    named_document = bool(re.fullmatch(
+        r'.+(?:지시서|문서|설명서|보고서|가이드|지침|계획서|기준서|정책|안내서)', title))
+    declaration = bool(names or named_document)
     return names, declaration
+
+
+def preceding_quote_sources(line: str, pos: int, ref_spans) -> tuple[str, ...]:
+    """The nearest preceding item with references, across empty item boundaries."""
+    start, _ = sentence_span(line, pos, cells=False)
+    local_start, _ = quote_span(line, pos)
+    prior = [(a, c.path) for a, b, c in ref_spans if start <= a and b <= local_start]
+    if not prior:
+        return ()
+    scope = quote_span(line, prior[-1][0])
+    return tuple(dict.fromkeys(path for a, path in prior if quote_span(line, a) == scope))
 
 
 def adjacent_snippet(line: str, span: tuple[int, int], snippet: tuple) -> bool:
@@ -655,11 +669,11 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         quote_origins = {}
         for snippet in snippets:
             origins, declared = explicit_quote_source(line, snippet[0], paths, ref_spans)
-            if (not declared and binding_boundaries(line) and ref_spans
+            if (not declared and (binding_boundaries(line) or line.lstrip().startswith('|'))
                     and not any(same_quote_scope(line, snippet[0], a) for a, _, _ in ref_spans)
                     and not any(quote_span(line, snippet[0])[0] <= a <= snippet[0]
                                 for a, _, _ in paths)):
-                origins, declared = (), True
+                origins, declared = preceding_quote_sources(line, snippet[0], ref_spans), True
             if not declared:
                 continue
             quote_origins[snippet[0]] = origins

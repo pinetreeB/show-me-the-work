@@ -54,7 +54,7 @@ def test_adjacent_wrong_quote_without_boundary_is_still_fail(tmp_path):
     assert result["status"] == "FAIL"
 
 
-@pytest.mark.parametrize("source", ["`brief.md`에서", "지시서(`brief.md` §제한)에서", "문서 §제한에서"])
+@pytest.mark.parametrize("source", ["`brief.md`에서", "지시서(`brief.md` §제한)에서"])
 def test_new_explicit_source_does_not_borrow_earlier_range(tmp_path, source):
     report = '| `alpha.py:1` 요약; ' + source + ' "다시 켜지 않는다"고 명시함. |'
     result = inspect_files(tmp_path, report, {"alpha.py": "VALUE = 7\n", "brief.md": "다시 켜지 않는다\n"})
@@ -62,12 +62,18 @@ def test_new_explicit_source_does_not_borrow_earlier_range(tmp_path, source):
     assert any(c["check_type"] == "K5" for c in result["claims"])
 
 
-def test_unscoped_quote_after_enumeration_is_retained_unknown(tmp_path):
-    report = '| ① `alpha.py:1` 설명 ② "there is no such text" |'
-    result = inspect_files(tmp_path, report, {"alpha.py": "VALUE = 7\n"})
+@pytest.mark.parametrize("prefix,expected", [
+    ("`alpha.py:1`", "FAIL"),
+    ("`alpha.py:1` 및 `beta.py:1`", "INCOMPLETE"),
+])
+def test_unscoped_quote_uses_unique_candidate_or_stays_ambiguous(tmp_path, prefix, expected):
+    result = inspect_files(tmp_path, '| ① ' + prefix + ' 설명 ② "there is no such text" |',
+                           {"alpha.py": "VALUE = 7\n", "beta.py": "VALUE = 8\n"})
     quotes = [c for c in result["claims"] if c["check_type"] == "K5"]
-    assert quotes and all(c["verdict"] == "unverifiable" for c in quotes)
-    assert result["status"] != "FAIL"
+    assert quotes
+    assert result["status"] == expected
+    assert all(c["reason_code"] == ("quote_mismatch" if expected == "FAIL" else "binding_ambiguous")
+               for c in quotes)
 
 
 def test_enumeration_characters_inside_quote_are_literal_not_boundaries(tmp_path):
