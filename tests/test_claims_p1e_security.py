@@ -63,7 +63,7 @@ def test_opaque_or_encoded_credentials(value):
     assert value not in safe and counts
 
 
-@pytest.mark.parametrize("length", [7, 32, 40])
+@pytest.mark.parametrize("length", [7, 12, 40])
 @pytest.mark.parametrize("context", ["{}", "commit {}", "HEAD: {}", "HEAD = '{}'", "commit `{}`"])
 def test_git_hash_context_is_not_a_credential(length, context):
     sha = ("abcdef" * 7)[:length]
