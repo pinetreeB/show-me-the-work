@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 
 TICK = re.compile(r'`([^`\n]+)`')
@@ -109,3 +110,21 @@ def quote_in_text(quote: str, text: str, *, prose: bool) -> bool:
             return False
         cursor = offset + len(part)
     return bool(parts)
+
+
+@lru_cache(maxsize=4096)
+def binding_boundaries(line: str) -> tuple[int, ...]:
+    """Explicit item/HTML boundaries outside literal code and quotations."""
+    return tuple(m.start() for m in re.finditer(
+        r"[①-⑳]|(?<!\w)\(\d+\)(?=\s|[A-Za-z가-힣])|<br\s*/?>", masked(line), re.I))
+
+
+def quote_span(line: str, pos: int) -> tuple[int, int]:
+    start, end = sentence_span(line, pos)
+    cuts = [start, *[n for n in binding_boundaries(line) if start < n < end], end]
+    return (max(n for n in cuts if n <= pos),
+            min((n for n in cuts if n > pos), default=end))
+
+
+def same_quote_scope(line: str, a: int, b: int) -> bool:
+    return same_scope(line, a, b) and quote_span(line, a) == quote_span(line, b)

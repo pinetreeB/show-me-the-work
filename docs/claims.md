@@ -280,3 +280,5 @@ manifest는 파일 SHA256·UTF-8 바이트/문자 수·가림 수·항목 id와 
 
 - P1E: claims 공통 CLI 진입점에서 stdout/stderr를 UTF-8로 맞춘다. check와 assist의 select-only/dry-run/verify 모두 환경변수·Windows 코드페이지에 의존하지 않는다.
 - P1E 패킷 표시: 발췌 path의 Windows/macOS/Linux 사용자 홈 부분만 ~/로 축약한다. claim/context/발췌 본문은 이 표시 변환으로 바꾸지 않으며, 원 경로는 manifest.source_path_hashes의 SHA256(항목 id·ref별)으로만 기록한다.
+
+- P1E 결합 경계: 인용/코드 안의 리터럴을 제외한 ①②③·(1)(2)·<br>·표 셀 경계를 넘어 K1에 인용을 붙이지 않는다. 앞 범위 뒤에 다른 파일·§·출처 서술이 나타나면 그 출처로 대조하거나 binding_ambiguous 미확인으로 보존한다. 같은 항목의 틀린 인용은 계속 FAIL이다.

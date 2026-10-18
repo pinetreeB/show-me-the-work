@@ -4,8 +4,8 @@ import re
 from dataclasses import replace
 
 from .model import Budget, Claim
-from .markup import (QUOTE, TICK, bind_path, cell_spans, masked,
-                     parent_span, same_scope, sentence_span)
+from .markup import (QUOTE, TICK, bind_path, binding_boundaries, cell_spans, masked,
+                     parent_span, quote_span, same_quote_scope, same_scope, sentence_span)
 
 
 EXT = r'(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|csv|tsv|go|rs|html|css)'
@@ -154,7 +154,7 @@ def source_only_binding(line: str, pos: int, path: str, paths) -> bool:
 
 
 def quote_scope(line: str, a: int, b: int) -> bool:
-    if not same_scope(line, a, b):
+    if not same_quote_scope(line, a, b):
         return False
     first, second = parent_span(line, a), parent_span(line, b)
     if first == second:
@@ -247,6 +247,28 @@ def malformed_metrics(line: str, paths: list[tuple[int, int, str]]):
             unit = '줄'
         if metric_context(line, match.start(), match.end(), paths, unit):
             yield match, unit
+
+
+
+def explicit_quote_source(line: str, pos: int, paths, ref_spans) -> tuple[tuple[str, ...], bool]:
+    """Recognize a source citation immediately introducing the quote, not mentions."""
+    start, _ = quote_span(line, pos)
+    last_ref = max([start, *[b for a, b, _ in ref_spans if start <= a and b <= pos]])
+    if not any(start <= a and b <= pos for a, b, _ in ref_spans):
+        return (), False
+    def direct_tail(end):
+        tail = line[end:pos]
+        tail = re.sub(r'§\s*[\w.-]+', '', tail)
+        tail = re.sub(r'에서는|에서|에\s*따르면|에\s*의하면|의\s*(?:인용|원문|내용)|'
+                      r'\b(?:says|states|according\s+to)\b', '', tail, flags=re.I)
+        return bool(re.fullmatch(r'[\s`*_:：,，;()\[\]{}-]*', tail))
+    names = tuple(dict.fromkeys(path for a, b, path in paths
+                                if last_ref <= a and b <= pos and direct_tail(b)))
+    gap = masked(line[last_ref:pos])
+    declaration = bool(names or re.search(
+        r'(?:§\s*[\w.-]+|(?:지시서|문서|설명서|보고서|가이드|출처)\s*(?:에서|에\s*따르면))'
+        r'[\s)*_:：]*$', gap, re.I))
+    return names, declaration
 
 
 def adjacent_snippet(line: str, span: tuple[int, int], snippet: tuple) -> bool:
@@ -539,13 +561,18 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if re.search(r'번역\s*:', sentence(line, m.start())):
                 continue
             value = next(g for g in m.groups() if g is not None)
-            explicitly_ordered = bool(any(same_scope(line, m.start(), a) for a, _, _ in ref_spans)
+            explicitly_ordered = bool(any(same_quote_scope(line, m.start(), a) for a, _, _ in ref_spans)
                                       and explicitly_ordered_quotes(line, quote_matches, len(ref_spans)))
             if not value.strip() or len(value) < 8 and not explicitly_ordered:
                 continue
             quoted.append((m.start(), value))
             snippets.append((m.start(), m.end(), value, m.group(), False))
             quote_path, ambiguous = binding(m.start())
+            if binding_boundaries(line):
+                left, right = quote_span(line, m.start())
+                local_paths = tuple(dict.fromkeys(path for a, b, path in paths if left <= a and b <= right))
+                quote_path = local_paths[0] if len(local_paths) == 1 else ''
+                ambiguous = local_paths if len(local_paths) > 1 else ()
             urls = list(URL.finditer(line))
             if not quote_path and len(urls) == 1:
                 quote_path = urls[0].group().rstrip('.,;)]}')
@@ -573,6 +600,25 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if (numbered_snippet(m.group(1))
                     or code_snippet(m.group(1)) and (len(m.group(1)) >= 8 or ordered_snippet)):
                 snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
+        quote_origins = {}
+        for snippet in snippets:
+            origins, declared = explicit_quote_source(line, snippet[0], paths, ref_spans)
+            if (not declared and binding_boundaries(line) and ref_spans
+                    and not any(same_quote_scope(line, snippet[0], a) for a, _, _ in ref_spans)
+                    and not any(quote_span(line, snippet[0])[0] <= a <= snippet[0]
+                                for a, _, _ in paths)):
+                origins, declared = (), True
+            if not declared:
+                continue
+            quote_origins[snippet[0]] = origins
+            claim = quote_claims.get(snippet[0])
+            if claim is None:
+                claim = add('K5', snippet[3], snippet[0], path='', quote=snippet[2], quote_code=snippet[4])
+                quote_claims[snippet[0]] = claim
+            claim.path = origins[0] if len(origins) == 1 else ''
+            claim.binding_candidates = origins if len(origins) > 1 else ()
+            if not origins:
+                claim.contextual_reason = 'binding_ambiguous'
         attached: dict[int, list[tuple]] = {}
         grouped_snippets = set()
         # Build actual consecutive reference lists, not every earlier reference
@@ -606,7 +652,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if all(numbered):
                 continue  # Explicit numbered snippets use the exact-range path below.
             before_quotes = masked(line[spans[-1][1]:local[0][0]])
-            after_quotes = line[local[-1][1]:sentence_span(line, spans[0][0])[1]]
+            after_quotes = line[local[-1][1]:quote_span(line, spans[0][0])[1]]
             ordered = (re.search(r'각각|\brespectively\b', before_quotes, re.I)
                        or re.match(r'\s*[,，]?\s*respectively\b', after_quotes, re.I))
             if len(local) == len(group) and ordered:
@@ -639,8 +685,11 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if snippet[0] in grouped_snippets:
                 continue
             pos = snippet[0]
-            possible = [(a, b, c) for a, b, c in ref_spans if same_scope(line, pos, a) and adjacent_snippet(line, (a, b), snippet)
+            possible = [(a, b, c) for a, b, c in ref_spans if same_quote_scope(line, pos, a) and adjacent_snippet(line, (a, b), snippet)
                         and not (snippet[0] <= a < snippet[1])]
+            if pos in quote_origins:
+                possible = [ref for ref in possible if len(quote_origins[pos]) == 1
+                            and ref[2].path == quote_origins[pos][0]]
             if possible:
                 numbered_position = re.match(r'\s*(?:line\s+)?(\d+):', snippet[2], re.I)
                 if numbered_position:
