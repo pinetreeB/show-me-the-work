@@ -12,6 +12,8 @@ EXT = r'(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|
 PATH = re.compile(r'(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>+-]+[\\/])*[\w.@-]+\.' + EXT + r'\b', re.I)
 REFERENCE = re.compile(r'(?P<path>(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>()+-]+[\\/])*[\w.@-]+\.' + EXT + r'):(?:L)?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?', re.I)
 REFERENCE_TAIL = re.compile(r',\s*L?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?(?![\w.]|\s*(?:B\b|bytes?\b|KB\b|MB\b|개|건|회|%))', re.I)
+INHERITED_REFERENCE = re.compile(
+    r'(?<![\w:]):L?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?(?![\w:/-]|\.\d)')
 SINGLE_LINE = re.compile(r'(?<![\w.])(?P<n>\d+)\s*줄(?!짜리)')
 LOCATION = re.compile(r'(?<![\w.])(?:L(?P<l>\d+)(?:\s*[-–~]\s*L?(?P<le>\d+))?|(?:line\s+|줄\s+)(?P<p>\d+)(?:\s*[-–~]\s*(?P<pe>\d+))?|(?P<a>\d+)\s*[-–~]\s*(?P<b>\d+)\s*(?:행|줄)|(?P<n>\d+)\s*(?:행|번째\s*줄))(?![A-Za-z0-9_])', re.I)
 NUMBER = re.compile(r'(?<![\w.-])(?:`|\*\*|__)?(\d[\d,]*(?:\.\d+)?)(?:`|\*\*|__)?\s*(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z0-9])', re.I)
@@ -249,6 +251,28 @@ def malformed_metrics(line: str, paths: list[tuple[int, int, str]]):
             yield match, unit
 
 
+
+
+def immediate_reference_gap(line: str, before: tuple[int, int], after: tuple[int, int]) -> bool:
+    """Only a connector and optional quoted/parenthesized annotation may intervene."""
+    if not same_quote_scope(line, before[0], after[0]):
+        return False
+    if sentence_span(line, before[0], cells=False) != sentence_span(line, after[0], cells=False):
+        return False
+    start, end = before[1], after[0]
+    if line[start:start+1] == '`':
+        start += 1
+    if end and line[end-1:end] == '`':
+        end -= 1
+    gap = line[start:end]
+    if paths_in(gap):
+        return False
+    visible = masked(gap)
+    while True:
+        visible, count = re.subn(r'\([^()]*\)', '', visible)
+        if not count:
+            break
+    return re.sub(r'\s+', '', visible) in {',', '，', '및', ',및', '，및'}
 
 def explicit_quote_source(line: str, pos: int, paths, ref_spans) -> tuple[tuple[str, ...], bool]:
     """Recognize a source citation immediately introducing the quote, not mentions."""
@@ -511,6 +535,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
 
         refs = []
         ref_spans = []
+        empty_path_refs = set()
         reference_groups = []
         for m in REFERENCE.finditer(line):
             c = add('K1', m.group(), m.start(), path=m.group('path'),
@@ -529,6 +554,28 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 cursor = tail.end()
             if len(group) > 1:
                 reference_groups.append(group)
+        # Empty-path :N[-M] references inherit only an immediately preceding
+        # file reference. Colons in times, ratios, ports and quoted data do not.
+        ticks_for_refs = list(TICK.finditer(line))
+        quotes_for_refs = list(QUOTE.finditer(line))
+        for tail in INHERITED_REFERENCE.finditer(line):
+            tick = next((t for t in ticks_for_refs if t.start() < tail.start() < t.end()), None)
+            if tick is not None:
+                if tick.group(1).strip() != tail.group():
+                    continue
+            elif any(q.start() <= tail.start() < q.end() for q in quotes_for_refs):
+                continue
+            previous = max((span for span in ref_spans if span[1] <= tail.start() and span[2].path),
+                           key=lambda span: span[1], default=None)
+            if previous is None or not immediate_reference_gap(line, previous[:2], tail.span()):
+                continue
+            c = add('K1', previous[2].path + ' … ' + tail.group(), tail.start(),
+                    path=previous[2].path, start=int(tail.group('start')),
+                    end=int(tail.group('end') or tail.group('start')))
+            c.inherited_binding = True
+            empty_path_refs.add(id(c))
+            refs.append(c)
+            ref_spans.append((tail.start(), tail.end(), c))
         quoted_spans = [(m.start(), m.end()) for m in QUOTE.finditer(line)]
         for m in LOCATION.finditer(line):
             if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans):
@@ -631,6 +678,10 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             cursor = index + 1
             while cursor < len(ref_spans):
                 start, next_end, other = ref_spans[cursor]
+                # An empty-path range owns its following quote; treating it as
+                # an any-of list could rescue a wrong-line quote from its parent.
+                if id(first) in empty_path_refs or id(other) in empty_path_refs:
+                    break
                 gap = line[end:start]
                 gap = re.sub(r'및|와|과|\band\b', '', gap, flags=re.I)
                 if not quote_scope(line, a, start) or not re.fullmatch(
