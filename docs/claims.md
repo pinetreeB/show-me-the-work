@@ -252,3 +252,6 @@ runtime must be measured on independently labelled reports before operational us
 - Phase1 §0: 열린 후보 묶음의 K5는 원래 파일 전체·모든 판에서 인용을 검사한다. K1 줄 결합 및 복수 인용의 any-of 지지는 binding_ambiguous로 남기며 확실한 범위 초과는 보존한다.
 - Phase1 §0: 괄호 출처의 계측 면제는 다른 대상 후보가 있을 때만, 보고 주체 판별은 동사형만 인정한다. 괄호 속 인용은 자체 참조가 없으면 바깥 참조 묶음 전체를 사용한다.
 - Phase1 §0: 저장소 보조 검색은 소스 확장자 화이트리스트와 docs/reviews 제외를 적용한다. 데이터·문서·패치 파일은 found_outside_scope 근거가 아니다. K9의 같은 계열 항목이 하나뿐인 경우는 자체 라벨과 구별하지 못하는 알려진 한계다.
+
+- Phase1 A: paraphrased_quote는 코드 인용의 한 호출 내 말줄임(R-ell), 실제 클래스 소유 속성의 한정자(R-qual), 같은 들여쓰기 수준의 타입 주석 생략(R-ann)을 구문으로 확인했을 때의 unverifiable이다. match나 PASS 근거가 아니다.
+- R-ell은 고정 이름·값·조각 순서를 보존하고 서로 다른/중첩 호출의 인자를 합치지 않는다. X(...)만 있거나 의미 있는 조각이 3자 미만이면 적용하지 않는다. R-qual은 직접 소유한 속성, R-ann은 동일 수준의 동일 RHS에만 적용한다. 현재 구조 검증은 Python 구문으로 해석 가능한 코드에 한정한다.

@@ -10,10 +10,11 @@ import json
 import subprocess
 from typing import NamedTuple
 
-from .extract import ITEM, extract
+from .extract import ITEM, REFERENCE, REFERENCE_TAIL, extract
 from .markup import cell_spans, normalized_quote, quote_fragments, quote_in_text
 from .model import Budget, Claim, DeadlineExceeded, Evidence, Transcript, summarize
 from .paths import matches_path, normalize_path, normalize_url
+from .paraphrase import code_ellipsis, paraphrase_rule
 from .sources import Repositories, content_lines, file_lines, local_source
 from .transcripts import discover_agy, load_measurement_pointer, load_view_pointer, read_transcript, resolve_agy
 
@@ -113,6 +114,13 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
         return Result('unverifiable', '명령 성공 제어 정보는 파일 원문이 아님', code='no_read_of_file')
     if e.problem:
         return Result('unverifiable', e.problem, code=e.problem_code or 'read_failed')
+    if c.check_type in {'K4', 'K6'}:
+        quote = c.text[1:-1] if c.text.startswith(chr(96)) and c.text.endswith(chr(96)) else c.text
+        if re.match(r'^[A-Za-z_]\w*\.[A-Za-z_]\w*\s*[:=]', quote):
+            rule = paraphrase_rule(quote, e)
+            if rule == 'R-qual':
+                return Result('unverifiable', '클래스 소유 속성의 한정자 표기 차이(R-qual)',
+                              quote, 'paraphrased_quote')
     if c.check_type == 'K1' or c.check_type == 'K5' and c.start:
         if c.start < 1 or c.end < c.start:
             return Result('mismatch', '유효하지 않은 줄 범위', 'range', 'invalid_range')
@@ -131,14 +139,25 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
             pairs = [(int(match.group(1)), match.group(2)) for match in numbered]
             if any(not c.start <= n <= c.end for n, _ in pairs):
                 return Result('mismatch', '번호 붙은 인용이 명시한 줄 범위 밖', text, 'quote_range_mismatch')
+            literal = [normalized_quote(quote) in normalized_quote(e.lines[n]) for n, quote in pairs]
+            rules = [paraphrase_rule(quote, e, n, n) if not matches else ''
+                     for (n, quote), matches in zip(pairs, literal)]
+            if any(rules) and all(matches or rule for matches, rule in zip(literal, rules)):
+                return Result('unverifiable', '번호 인용의 코드 표기 차이(' + ', '.join(sorted(set(rules)-{''})) + ')',
+                              text, 'paraphrased_quote')
             okay = all(normalized_quote(quote) in normalized_quote(e.lines[n]) for n, quote in pairs)
             return Result('match' if okay else 'mismatch', '줄 번호 접두사를 제외한 코드 인용 ' + ('일치' if okay else '불일치'),
                           '\n'.join(e.lines[n] for n, _ in pairs), 'quote_match' if okay else 'quote_mismatch')
-        prose = not c.quote_code
+        prose = not c.quote_code and not code_ellipsis(c.quote)
         if c.check_type == 'K1' and c.candidate_quotes and any(
                 quote_in_text(quote, text, prose=not code) for quote, code in c.candidate_quotes):
             return Result('unverifiable', '후보 인용 중 일부만 줄에 결합되어 대응 관계 미확정',
                           text, 'binding_ambiguous')
+        if not quote_in_text(c.quote, text, prose=False):
+            rule = paraphrase_rule(c.quote, e, c.start, c.end)
+            if rule:
+                return Result('unverifiable', f'코드 인용 표기 차이({rule}); 리터럴 일치로 확정하지 않음',
+                              text, 'paraphrased_quote')
         if not quote_in_text(c.quote, text, prose=prose):
             return Result('mismatch', f'대응 줄 원문과 인용 불일치: {text[:240]}', text, 'quote_mismatch')
         return Result('match', '파일 줄 범위·인용 일치', text, 'quote_match')
@@ -168,8 +187,15 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
             return Result('absent', '토큰 언급은 있으나 정의·설정 키는 없음', 'no definition', 'definition_missing')
         return missing(e, dirty)
     if c.check_type == 'K5':
+        observed_text = '\n'.join(e.lines[n] for n in sorted(e.lines))
+        if not quote_in_text(c.quote, observed_text, prose=False):
+            rule = paraphrase_rule(c.quote, e)
+            if rule:
+                return Result('unverifiable', f'코드 인용 표기 차이({rule}); 리터럴 일치로 확정하지 않음',
+                              observed_text, 'paraphrased_quote')
         dirty = False
-        parts = quote_fragments(c.quote, prose=not c.quote_code)
+        prose = not c.quote_code and not code_ellipsis(c.quote)
+        parts = quote_fragments(c.quote, prose=prose)
         if not parts:
             return Result('unverifiable', '대조할 인용 조각 없음', code='quote_empty')
         part_index = 0
@@ -177,7 +203,7 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
         window = ''
         for n, line in content_lines(e, budget):
             dirty |= '\ufffd' in line
-            window = window + ' ' + normalized_quote(line, prose=not c.quote_code)
+            window = window + ' ' + normalized_quote(line, prose=prose)
             while part_index < len(parts):
                 needle = parts[part_index]
                 offset = window.find(needle)
@@ -239,6 +265,21 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
         if unique == [c_value]:
             return Result('match', '연결 엔터티 값 일치', str(unique), 'value_match')
         if values:
+            quote = c.text[1:-1] if c.text.startswith(chr(96)) and c.text.endswith(chr(96)) else c.text
+            ranges = []
+            if c.unit == 'value':
+                for reference in REFERENCE.finditer(c.context):
+                    if reference.group('path') != c.path:
+                        continue
+                    ranges.append((int(reference.group('start')), int(reference.group('end') or reference.group('start'))))
+                    cursor = reference.end()
+                    while tail := REFERENCE_TAIL.match(c.context, cursor):
+                        ranges.append((int(tail.group('start')), int(tail.group('end') or tail.group('start'))))
+                        cursor = tail.end()
+                if any(paraphrase_rule(quote, e, start, end) == 'R-ann'
+                       for start, end in ranges or [(0, 0)]):
+                    return Result('unverifiable', '타입 주석 생략(R-ann)으로 인한 값 표기 차이',
+                                  str(unique), 'paraphrased_quote')
             return Result('mismatch', f'연결 엔터티 값 불일치: {values[:8]}', str(unique), 'value_mismatch')
         return missing(e, dirty) if not entity_seen else Result('unverifiable', '대응 단위 값 미확보', code='measurement_missing')
     if c.check_type == 'K9':
@@ -526,6 +567,9 @@ class Checker:
             c.verdict, c.reason, c.reason_code = (
                 'mismatch', f"읽은 {proof['version_count']}판과 {proof['candidate_count']}개 후보 범위 어디에도 인용 없음",
                 'quote_mismatch')
+        elif any(row['reason_code'] == 'paraphrased_quote' for row in proof['matrix']):
+            c.verdict, c.reason, c.reason_code = (
+                'unverifiable', '후보 범위에 코드 표기 변형만 확인됨', 'paraphrased_quote')
         else:
             c.verdict, c.reason, c.reason_code = (
                 'unverifiable', '후보 범위 일부 미확보 또는 인용 결합 미확정', 'binding_ambiguous')
@@ -747,6 +791,8 @@ class Checker:
             c.verdict, c.reason = 'unverifiable', '필요 범위 미확보 또는 여러 관측·동명 파일의 결론/내용이 다름'
             unresolved = [r for r, _ in results if r.verdict == 'unverifiable']
             c.reason_code = unresolved[0].code if unresolved else 'observation_conflict'
+            if c.reason_code == 'paraphrased_quote':
+                c.reason = unresolved[0].reason
         else:
             c.verdict, c.reason = results[0][0][:2]
             c.reason_code = results[0][0].code
