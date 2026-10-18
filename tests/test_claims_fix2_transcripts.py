@@ -51,20 +51,25 @@ def test_literal_self_modification_excludes_only_later_target_reads(tmp_path, co
     assert run(report, agy=str(transcript))['status'] == 'PASS'
 
 
-@pytest.mark.parametrize('command', [
-    "Set-Content -Path $target -Value 'new'",
-    'printf new > $target',
-    'printf new | tee $target',
-    'printf new > `get_target`',
+@pytest.mark.parametrize(('command', 'global_exclusion'), [
+    ("Set-Content -Path $target -Value 'new'", False),
+    ('printf new > $target', True),
+    ('printf new | tee $target', False),
+    ('printf new > `get_target`', False),
 ])
-def test_dynamic_write_target_excludes_later_file_reads(tmp_path, command):
+def test_dynamic_write_target_excludes_later_file_reads(tmp_path, command, global_exclusion):
     report, transcript = make_case(tmp_path, '`engine.py` 함수 `new_fn`', [
         agy_call('run_command', CommandLine=command), generic('done'),
         agy_call('run_command', CommandLine='cat C:/sample/engine.py'), generic('def new_fn(): pass'),
     ])
     parsed = read_transcript(transcript, 'agy', report, report.read_text(encoding='utf-8'), {}, Budget(10))
-    assert not parsed.evidence
-    assert run(report, agy=str(transcript))['status'] == 'INCOMPLETE'
+    if global_exclusion:
+        assert not parsed.evidence
+        assert parsed.warnings == ['전역 쓰기 제외(호출 순서 1)로 이후 파일 근거 1건 제외']
+        assert run(report, agy=str(transcript))['status'] == 'INCOMPLETE'
+    else:
+        assert [e.text for e in parsed.evidence] == ['def new_fn(): pass']
+        assert run(report, agy=str(transcript))['status'] == 'PASS'
 
 
 @pytest.mark.parametrize('command', [

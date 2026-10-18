@@ -28,15 +28,20 @@ def test_fix2_comma_only_metrics_raise_clear_input_error(report):
         claims(report)
 
 
-@pytest.mark.parametrize('report', [
-    '`engine.py`에는 `argparse` 의존이 없다.',
-    '`engine.py`에 `new_helper` 함수를 추가할 것을 권고한다.',
-    '`engine.py`에서 `future_helper`를 가정하면 된다.',
-    '`engine.py`에는 `optional_helper`를 권장하지 않는다.',
-    '`engine.py` would use `future_helper` if enabled.',
+@pytest.mark.parametrize(('report', 'negated'), [
+    ('`engine.py`에는 `argparse` 의존이 없다.', None),
+    ('`engine.py`에 `new_helper` 함수를 추가할 것을 권고한다.', True),
+    ('`engine.py`에서 `future_helper`를 가정하면 된다.', False),
+    ('`engine.py`에는 `optional_helper`를 권장하지 않는다.', True),
+    ('`engine.py` would use `future_helper` if enabled.', False),
 ])
-def test_fix2_negated_recommended_and_hypothetical_identifiers_are_not_k4(report):
-    assert 'K4' not in kinds(report)
+def test_fix2_negated_recommended_and_hypothetical_identifiers_are_not_k4(report, negated):
+    found = [claim for claim in claims(report) if claim.check_type == 'K4']
+    if negated is None:
+        assert found == []
+        return
+    assert len(found) == 1
+    assert found[0].negated_context is negated
 
 
 @pytest.mark.parametrize('token', ['synthrepo', 'pytest', 'PASS', 'view_file', 'owner', 'enabled', 'file'])

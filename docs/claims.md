@@ -43,7 +43,9 @@ Rev2 also recognizes Korean/English line positions (`12행`, `12~14줄`, `L12`,
 file can be inherited from the containing sentence, parentheses, table row, list
 item, or preceding heading. Multiple candidates are never resolved by list order.
 Line references bind adjacent quoted snippets or the following code block, including
-one intervening blank line. Two blank lines or intervening prose break that link. Valid
+one intervening blank line. Two blank lines or intervening prose break that link.
+A proposal or recommendation immediately before the fence also leaves the reference
+as `range_only`; proposed code is not a quotation of the existing source. Valid
 references without quoted content have verdict `range_only`: they are not matches
 and do not affect other claims' status. A report with only these neutral references
 is INCOMPLETE because it has no substantive checked claim.
@@ -70,12 +72,15 @@ references to that display path; conflicting `--source-file` mappings are errors
 Prose quotations normalize whitespace, quote styles, Markdown emphasis, backticks
 and link formatting on both sides. Ellipses (`…` or `...`) split a prose quotation
 into nonempty fragments that must occur in order, without reusing the same source
-characters. Code blocks and numbered code quotations retain
+characters. Ellipsis matching requires at least one normalized fragment of eight
+characters; weaker fragments keep the literal comparison. Code blocks and numbered code quotations retain
 their operators and formatting. File-linked identifiers use token boundaries;
 unlinked identifiers still require both a code-like shape and explicit code context.
 Inherited paths do not turn general words, tool names or repository names into code
-claims. Negative, hypothetical and recommendation contexts are not K4 existence
-claims. Context words come from prose outside paths and quoted tokens; a filename
+claims. A K4 existence claim in a directly related negative or recommendation
+context remains `unverifiable` with `negated_context`, rather than disappearing.
+Ordinary factual wording such as an added function, a call without errors, or use
+under an `if` condition does not suppress the claim. Context words come from prose outside paths and quoted tokens; a filename
 such as `config.py` cannot supply its own code context. Without a supplied transcript, a repository search miss for an unlinked
 identifier remains unverified; search scopes list only the inputs actually searched.
 Setting limits are not file sizes. Entity values with multiple possible values
@@ -101,9 +106,15 @@ conditional marker as control evidence. Marker/exit metadata never establishes a
 file identifier or quotation. This also applies to syntax-check commands without
 file-content output. An asynchronous marker requires its linked completed task log;
 missing/failed results and post-write self-reads retain their exclusion rules.
+Self-modification detection recognizes only the enumerated forms.
 Recognized shell writes include in-place sed/perl edits, git apply, patch, tee,
-PowerShell Set-Content/Out-File and output redirection. Their subsequent file reads
-cannot serve as independent evidence. Dynamic write targets remain conservative.
+PowerShell Set-Content/Out-File and output redirection.
+Reads of explicit write targets after the write cannot serve as independent evidence.
+Null-device redirection, descriptor duplication and arrows are not file writes;
+patch applicators must occur in command position, not in filenames or quoted text.
+Only actual patch applicators and variable-target redirections may exclude all
+subsequent file reads; warnings report how many reads this exclusion affected.
+Other unresolved writes do not erase the rest of the conversation's evidence.
 
 Plain text/code and `.docx` paragraphs and tables are supported. Unsupported Word
 regions (headers, notes, text boxes, revisions) prevent an absence conclusion when

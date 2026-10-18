@@ -44,6 +44,7 @@ class Claim:
     context: str = ""
     entity: str = ""
     definition: bool = False
+    negated_context: bool = False
     author_marked: bool = False
     current: bool = False
     revision: str = ""

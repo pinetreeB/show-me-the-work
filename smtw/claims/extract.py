@@ -17,10 +17,9 @@ LOCATION = re.compile(r'(?<![\w.])(?:L(?P<l>\d+)(?:\s*[-–~]\s*L?(?P<le>\d+))?|
 NUMBER = re.compile(r'(?<![\w.])(?:`|\*\*|__)?(\d[\d,]*(?:\.\d+)?)(?:`|\*\*|__)?\s*(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z0-9])', re.I)
 IDENTIFIER = re.compile(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?\Z')
 CONTEXT = re.compile(r'함수|변수|설정\s*키|메서드|필드|\b키\b|\b(?:function|method|variable|config|field)\b', re.I)
-NEGATED_OR_TENTATIVE = re.compile(r'없|제거|삭제|않|추가|권고|권장|제안|가정|다른\s*(?:모듈|파일)|\b(?:no|not|should|propos\w*|hypothetical|if|would|other\s+(?:module|file))\b', re.I)
 STATUS_WORD = re.compile(r'(?:PASS|FAIL|INCOMPLETE|ERROR|RUNNING)\Z', re.I)
 TOOL_OR_REPOSITORY = re.compile(r'(?:\w*(?:repo|repository|project)|(?:pytest|unittest|git|python|node|npm|pnpm|pip|cargo|docker|view_file|run_command|read_file|write_to_file))\Z', re.I)
-HEX_SHA = re.compile(r'(?<![\w])[0-9a-f]{7,40}(?![\w])', re.I)
+HEX_SHA = re.compile(r'(?<![\w])(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![\w])', re.I)
 ITEM = re.compile(r'(?<![\w/\\.-])(?:F\d+-[A-Z]\d+|[RDB]\d+(?:-[A-Z]\d+)?|§\s*\d+(?:\.\d+)*|#\d+|항목\s*\d+)(?![\w.-])')
 URL = re.compile(r'https?://[^\s<>`"\u201d]+')
 
@@ -89,6 +88,32 @@ def general_identifier(value: str) -> bool:
 
 def touches_hex_sha(line: str, start: int, end: int) -> bool:
     return any(match.start() < end and start < match.end() for match in HEX_SHA.finditer(line))
+
+
+def negated_context(line: str, span: tuple[int, int]) -> bool:
+    """Recognize only a claim's own narrow negative or recommendation phrasing."""
+    before, after = line[:span[0]], line[span[1]:]
+    if re.search(r'\bno\s*$', before, re.I) or re.search(r'\bhas\s+no\s+(?:function\s*)?$', before, re.I):
+        return True
+    if re.match(r'\s*(?:(?:is|are|was|were|do|does|did)\s+not|not\s+used|should\s+not\s+be\s+used)\b', after, re.I):
+        return True
+    if re.match(r'\s*(?:은|는|이|가|을|를)?\s*'
+                r'(?:(?:의존|함수|메서드|필드|설정\s*키)\s*(?:이|가)?\s*)?'
+                r'(?:없다|없음)(?!\w)', after):
+        return True
+    if re.match(r'\s*(?:은|는|을|를)?\s*(?:(?:함수|메서드)?를?\s*호출하지\s*않는다|쓰지\s*않는다|사용하지\s*않는다|않는다)(?!\w)', after):
+        return True
+    if re.match(r'\s*(?:을|를)?\s*(?:호출(?:이|을)?\s*)?제거(?:한다|됨|했다|되었다|됐다|해야\s*한다)?(?!\w)', after):
+        return True
+    return bool(re.match(r'\s*(?:을|를)?\s*(?:(?:함수|메서드|필드|설정\s*키)를?\s*)?'
+                         r'(?:추가할\s*것을\s*)?(?:권장|권고)(?:하지\s*않는다|한다|됨|했다)?(?!\w)', after))
+
+
+def proposed_or_recommended(context: str) -> bool:
+    prose = list(masked(context))
+    for start, end, _ in paths_in(context):
+        prose[start:end] = ' ' * (end-start)
+    return bool(re.search(r'바꿔야|수정\s*제안|제안|권장|권고|\b(?:should|proposed|recommended)\b', ''.join(prose), re.I))
 
 
 def malformed_metric(line: str, paths: list[tuple[int, int, str]]) -> bool:
@@ -190,7 +215,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             else:
                 # A single blank line before a fence is ordinary Markdown layout.
                 fence_claim = (previous_refs[-1] if previous_refs
-                               and line_no - previous_refs[-1].report_line <= 2 else None)
+                               and line_no - previous_refs[-1].report_line <= 2
+                               and not proposed_or_recommended(previous_refs[-1].context) else None)
             fenced = not fenced
             continue
         if fenced:
@@ -383,14 +409,16 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 prose_chars[a:b] = ' ' * (b-a)
             prose = ''.join(prose_chars)
             code_context = bool(CONTEXT.search(prose))
-            if NEGATED_OR_TENTATIVE.search(prose) or general_identifier(value) and not code_context:
+            if general_identifier(value) and not code_context:
                 continue
             if not path and not candidates and not (is_code and code_context):
                 continue
             if not (is_code or code_context):
                 continue
             definition = bool(re.search(r'정의|설정\s*키|필드|\b키\b|\bfunction\b|함수', prose, re.I))
-            add('K4', m.group(), m.start(), value=value.removesuffix('()'), definition=definition)
+            add('K4', m.group(), m.start(), value=value.removesuffix('()'), definition=definition,
+                negated_context=negated_context(context, (m.start() - sentence_span(line, m.start())[0],
+                                                           m.end() - sentence_span(line, m.start())[0])))
         for m in NUMBER.finditer(line):
             if any(a <= m.start() < b for a, b, _ in paths + ref_spans):
                 continue

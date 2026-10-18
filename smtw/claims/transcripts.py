@@ -15,13 +15,65 @@ from .sources import content_lines, decode, file_lines
 
 FILE_TOKEN = re.compile(r'''(?:[A-Za-z]:[\\/]|/|\.?\.?[/\\])?[^\s`"'<>;|{}=]+\.(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|csv|tsv)(?:@[\da-f]+)?''', re.I)
 READ_COMMAND = re.compile(r'\b(?:Get-Content|Get-Item|Select-String|cat|type|head|tail|sed|rg|grep|wc|stat|git|readFileSync|readFile|read_text|read_bytes|open)\b', re.I)
-WRITE_COMMAND = re.compile(r'\b(?:writeFileSync|writeFile|write_text|write_bytes|WriteAllText|WriteAllLines|Set-Content|Add-Content|Out-File|apply_patch|Remove-Item|Move-Item|git\s+apply|patch|sed\s+[^\n;|]*-[^\s;|]*i|perl\b(?=[^\n;|]*\s-\S*i\S*))\b|\bopen\s*\([^\n]+,[\s]*["\'][wax]|(?:^|[;&|])\s*(?:rm|mv|cp|tee)\s|(?<![<>=])(?:&>|(?:\d+)?>>?)\s*["\'`\w./\\$%]', re.I)
+WRITE_COMMAND = re.compile(r'\b(?:writeFileSync|writeFile|write_text|write_bytes|WriteAllText|WriteAllLines|Set-Content|Add-Content|Out-File|apply_patch|Remove-Item|Move-Item|sed\s+[^\n;|]*-[^\s;|]*i|perl\b(?=[^\n;|]*\s-\S*i\S*))\b|\bopen\s*\([^\n]+,[\s]*["\'][wax]|(?:^|[;&|])\s*(?:rm|mv|cp|tee)\s', re.I)
+REDIRECT = re.compile(r'(?:(?<![<>=-])(?:\d+)?>>?|(?<![<>=\-\d])&>)')
+PATCH_APPLICATOR = re.compile(r'(?:^|[;\n]|&&|\|\|?)\s*(?:git\s+apply|patch)(?=\s|$)', re.I)
 GENERATED = re.compile(r'\b(?:echo|Write-Output)\b|\bprint\s*\(|console\.log|stdout\.write', re.I)
 GENERATED_LITERAL = re.compile(r'''(?:\bprint|console\.log|stdout\.write)\s*\(\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)''', re.I)
 TRUNCATED = re.compile(r'<truncated|\[.{0,12}truncated|output (?:has been )?truncated|Warning: truncated output|\.\.\.\s*\d+ (?:tokens|chars).*truncated', re.I)
 NUMBERED = re.compile(r'^\s*(?:line\s+)?(\d+): ?(.*)$', re.I)
 BROWSER_READ = re.compile(r'navigate|snapshot|fetch|(?:browser|mcp|page).*read|read.*(?:page|url)', re.I)
 SEARCH_TOOL = re.compile(r'search|query|find', re.I)
+
+
+def shell_code(command: str) -> str:
+    """Mask quoted shell text so operators inside it cannot become syntax."""
+    masked = list(command)
+    quote = ''
+    escaped = False
+    for index, char in enumerate(command):
+        if quote:
+            masked[index] = ' '
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == quote:
+                quote = ''
+        elif char in {'"', "'", '`'}:
+            quote = char
+            masked[index] = ' '
+    return ''.join(masked)
+
+
+def redirect_target(command: str, start: int) -> str:
+    rest = command[start:].lstrip()
+    if not rest:
+        return ''
+    if rest[0] in {'"', "'"}:
+        end = rest.find(rest[0], 1)
+        return rest[1:end] if end >= 0 else rest[1:]
+    return re.split(r'[\s;|]+', rest, maxsplit=1)[0]
+
+
+def redirect_is_sink(target: str) -> bool:
+    return target.lower() in {'$null', '/dev/null', 'nul'} or bool(re.fullmatch(r'&\d+', target))
+
+
+def redirect_is_variable(target: str) -> bool:
+    return bool(re.fullmatch(r'\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})', target))
+
+
+def patch_applicator(command: str) -> bool:
+    return bool(PATCH_APPLICATOR.search(shell_code(command)))
+
+
+def command_has_write(command: str) -> bool:
+    if WRITE_COMMAND.search(command) or patch_applicator(command):
+        return True
+    code = shell_code(command)
+    return any(not redirect_is_sink(redirect_target(command, match.end()))
+               for match in REDIRECT.finditer(code))
 
 
 def success_marker(command: str) -> tuple[str, str]:
@@ -66,7 +118,7 @@ class Call:
     @property
     def write(self):
         return bool(re.search(r'write|replace|edit|apply_patch|delete|move', self.name, re.I)
-                    or WRITE_COMMAND.search(self.command))
+                    or command_has_write(self.command))
 
     @property
     def read(self):
@@ -111,16 +163,12 @@ def command_write_targets(call: Call) -> tuple[list[str], bool]:
     command, _ = success_marker(call.command)
     if not command:
         return ([call.path] if call.path else [], False)
-    if re.search(r'\b(?:git\s+apply|patch)\b', command, re.I):
+    if patch_applicator(command):
         return [], True
     targets = []
 
-    unresolved = False
-
     def add(value: str) -> None:
-        nonlocal unresolved
         if not value or re.search(r'\$|%[^%]+%|`|\$\(', value):
-            unresolved = True
             return
         value = value.strip().strip('"\'(),')
         if value and value not in targets:
@@ -139,15 +187,21 @@ def command_write_targets(call: Call) -> tuple[list[str], bool]:
         for token in re.findall(r'"[^"]*"|\'[^\']*\'|\S+', match.group(1)):
             if not token.startswith('-'):
                 add(token)
-    for match in re.finditer(r'(?<![<>=])(?:&>|(?:\d+)?>>?)\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s;|&]+))', command):
-        value = next(value for value in match.groups() if value is not None)
-        if not value.startswith('&'):
-            add(value)
+    dynamic_redirect = False
+    code = shell_code(command)
+    for match in REDIRECT.finditer(code):
+        value = redirect_target(command, match.end())
+        if redirect_is_sink(value):
+            continue
+        if redirect_is_variable(value):
+            dynamic_redirect = True
+            continue
+        add(value)
     if targets:
-        return targets, unresolved
+        return targets, dynamic_redirect
     # Existing literal API writes and direct file operations remain path-bound.
     paths = call_paths(call)
-    return paths, unresolved or not bool(paths)
+    return paths, dynamic_redirect
 
 
 def observed_path(value: str, cwd: str) -> str:
@@ -528,6 +582,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
     codex_calls: dict[str, list[Call]] = {}
     writes: dict[str, int] = {}
     unresolved_write_orders: list[int] = []
+    globally_excluded_evidence: dict[int, int] = {}
     report_targets = {normalize_path(str(report), aliases)}
     report_writes: list[int] = []
     completions: dict[str, int] = {}
@@ -562,9 +617,14 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
         for e in observations:
             e.path = observed_path(e.path, call.cwd)
             normalized = normalize_path(e.path, aliases)
-            if (normalized in report_targets
-                    or normalized in writes and writes[normalized] <= call.order
-                    or e.path and any(order <= call.order for order in unresolved_write_orders)):
+            locally_excluded = (normalized in report_targets
+                                or normalized in writes and writes[normalized] <= call.order)
+            if locally_excluded:
+                continue
+            global_orders = [order for order in unresolved_write_orders if order <= call.order]
+            if e.path and global_orders:
+                trigger = max(global_orders)
+                globally_excluded_evidence[trigger] = globally_excluded_evidence.get(trigger, 0) + 1
                 continue
             result.evidence.append(e)
 
@@ -667,6 +727,8 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                 e.problem_code = 'async_incomplete' if code is None else 'read_failed'
         filtered.append(e)
     result.evidence = filtered
+    for order, count in sorted(globally_excluded_evidence.items()):
+        result.warnings.append(f'전역 쓰기 제외(호출 순서 {order})로 이후 파일 근거 {count}건 제외')
     if not recognized:
         result.valid = False
         result.warnings.append(f'지원하는 {kind} 도구 호출 없음 (형식 {result.version})')

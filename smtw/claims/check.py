@@ -369,6 +369,11 @@ class Checker:
 
     def apply(self, c: Claim):
         self.budget.check()
+        if c.negated_context:
+            c.verdict, c.reason_code = 'unverifiable', 'negated_context'
+            c.reason = '부정·권고 문맥의 식별자 존재는 확정하지 않음'
+            c.source = {'path': c.path, 'search_scope': []}
+            return
         if c.binding_candidates:
             c.reason, c.reason_code = '같은 문맥에 연결 파일 후보가 여러 개', 'binding_ambiguous'
             c.source = {'binding_candidates': list(c.binding_candidates)}

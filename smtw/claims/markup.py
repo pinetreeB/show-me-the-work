@@ -90,7 +90,11 @@ def normalized_quote(value: str, *, prose: bool = False) -> str:
 def quote_fragments(value: str, *, prose: bool) -> list[str]:
     # Ellipses in prose denote omission; literal code keeps its operators.
     parts = re.split(r'…|\.{3}', value) if prose else [value]
-    return [text for part in parts if (text := normalized_quote(part, prose=prose))]
+    fragments = [text for part in parts if (text := normalized_quote(part, prose=prose))]
+    if len(parts) > 1 and fragments and max(map(len, fragments)) < 8:
+        # Weak fragments keep the literal comparison instead of becoming wildcards.
+        return [normalized_quote(value, prose=prose)]
+    return fragments
 
 
 def quote_in_text(quote: str, text: str, *, prose: bool) -> bool:
