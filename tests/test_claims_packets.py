@@ -75,9 +75,9 @@ def test_redact_claim_and_context_before_truncating():
 
 
 def test_caps_manifest_and_numbered_lines(tmp_path):
-    items = [candidate(id=f"item-{i}", claim="x" * 900, before="b" * 400, after="a" * 400)
+    items = [candidate(id=f"item-{i}", claim="claim words " * 90, before="before words " * 40, after="after words " * 40)
              for i in range(20)]
-    sources = [source("\n".join(str(i) + "x" * 200 for i in range(30)))]
+    sources = [source("\n".join(str(i) + " source words" * 20 for i in range(30)))]
     packets, summary = packetize(items, sources)
     assert summary["sent_count"] == 20 and len(packets) > 1
     for packet in packets:
