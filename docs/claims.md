@@ -195,13 +195,20 @@ files (`pointer_missing`), pending tasks (`async_incomplete`), and timeouts
 (`timed_out`). Text output supplies the same locations and search scopes in Korean.
 The following uncertainty codes retain the extracted claim and never count as a match:
 
-- `binding_ambiguous`: multiple line references and quotations lack a definite one-to-one correspondence; explicit `각각`/`respectively` lists can be checked in order.
-- `reported_claim`: a number or value attributes an earlier claim to another report; a correction introduced by `실제`/`actually` remains checkable, as do literal K1/K5 quotations.
-- `inherited_binding`: a range or value disagrees with a file inherited from context, without an explicit local file binding.
-- `found_outside_scope`: a name missing from linked reads occurs in a supplied repository at its designated commit (HEAD only when no commit was supplied).
+- `binding_ambiguous`: multiple line references and quotations lack a definite one-to-one correspondence; explicit `각각`/`respectively` lists can be checked in order. A candidate range beyond the known file boundary, or a quote absent from every observed candidate range, remains a definite mismatch; an unobserved candidate preserves uncertainty.
+- `reported_claim`: a number or value attributes an earlier claim to an explicit third party and precedes a contrast such as `실제`/`actually`; first-person and the current report's own statements remain checkable. Literal K1/K5 quotations also remain checkable.
+- `inherited_binding`: a range or value disagrees with a file inherited from a section or paragraph that also names another file; a single-file section remains checkable.
+- `found_outside_scope`: a name missing from linked reads occurs in code at a supplied repository's designated commit (HEAD only when no commit was supplied). The source records commit, file, line, and whether the hit is a definition or code mention; documentation, string, and comment-only hits do not count.
 - `repository_search_incomplete`: repository lookup failed or could not honor the claim's time, so absence cannot be confirmed.
 - `proposed_name`: the atom names a proposed, hypothetical, or future addition rather than an existing definition.
 - `item_token_only`: a review/item label followed only by a backtick token, number, or date does not establish an item description; explicit file/ordinal identifier row mappings remain supported.
+
+A single literal directly following a list of candidate references is represented as
+one K5 candidate-group atom, while each K1 keeps only its own range claim. The group
+matches when any fully observed candidate contains the quote and mismatches once when
+every fully observed candidate range rejects it. Missing, partial, prose-separated,
+placeholder, or unordered multi-quote bindings remain `binding_ambiguous`; distinct
+unordered quotations remain distinct unverifiable atoms.
 
 Before a K4/K6 missing-name verdict, fixed-string `git grep` searches the supplied
 repository scope. A hit lowers the verdict to unverified; it does not verify a
@@ -209,6 +216,11 @@ definition or value. This does not relax explicit value mismatches, missing
 definitions in a file, or literal quotation mismatches. Search errors also remain
 unverified. Past/present factual statements about added or defined names continue
 to be checked for absence.
+Repository-only hits intentionally remain `found_outside_scope`; `token_match` is
+reserved for a token observed in directly linked file content.
+General `before`/`after` wording does not skip repository search. Only an explicit
+revision that conflicts with the configured repository commit is skipped, and the
+skip reason is recorded in the claim source.
 
 `verdict_reason_counts` adds a deterministic nested summary, keyed first by verdict
 and then by `reason_code`; each verdict subtotal equals the corresponding `summary`

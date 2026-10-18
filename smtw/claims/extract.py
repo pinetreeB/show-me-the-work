@@ -4,7 +4,7 @@ import re
 from dataclasses import replace
 
 from .model import Budget, Claim
-from .markup import (QUOTE, TICK, bind_path, cell_spans, masked, normalized_quote,
+from .markup import (QUOTE, TICK, bind_path, cell_spans, masked,
                      parent_span, same_scope, sentence_span)
 
 
@@ -73,6 +73,8 @@ def code_snippet(value: str) -> bool:
     """A lone identifier (including f()) is a file-level K4 claim, not a quote."""
     if IDENTIFIER.fullmatch(value):
         return False
+    if re.fullmatch(r':\d+(?:\s*,\s*:\d+)+', value):
+        return False
     symbols = re.findall(r'->|=>|==|!=|<=|>=|[=()"\x27$;{}\[\]:,+*/]', value)
     return len(symbols) >= 2 and bool(re.search(r'\s|[(),;:{}\[\]]', value))
 
@@ -125,20 +127,51 @@ def proposed_or_recommended(context: str) -> bool:
 
 
 def reported_claim(line: str, pos: int) -> bool:
-    """Attribution ends at a correction; the correction remains checkable."""
+    """Only third-party claims before an explicit correction are attributed."""
     a, b = sentence_span(line, pos)
     visible = masked(line)
-    origin = a
-    for marker in re.finditer(r'실제(?:로)?|사실은|\b(?:actually|in fact|but|whereas)\b', visible[a:b], re.I):
-        start, end = origin + marker.start(), origin + marker.end()
-        if end <= pos:
-            a = end
-        elif start > pos:
-            b = start
-            break
-    before, after = visible[a:pos], visible[pos:b]
-    return bool(re.search(r'(?:이전|기존|옛|지난)\s*(?:보고|주장)|\b(?:claimed|reported)\b', before, re.I)
-                or re.search(r'(?:이?라고|라며)\s*(?:주장|보고|적|기록|썼)', after))
+    sentence_text = visible[a:b]
+    relative = pos - a
+    contrasts = list(re.finditer(
+        r'실제(?:로)?|사실은|(?:했|였|었|이)지만|하지만|그러나|\b(?:actually|in fact|but|whereas)\b',
+        sentence_text, re.I,
+    ))
+    correction = next((marker for marker in contrasts if marker.start() > relative), None)
+    if correction is None:
+        return False
+    attributed = sentence_text[:correction.start()]
+    if re.search(
+        r'(?<![가-힣\w])(?:저는|제가|나는|내가|우리는|본\s*보고서(?:는|가)?|이\s*보고서(?:는|가)?|현재\s*보고서(?:는|가)?)'
+        r'(?:[^.;]{0,80})?(?:주장|보고|적|기록|썼)|'
+        r'\b(?:I|we|the\s+report|this\s+report|our\s+report|my\s+report|current\s+report)\b'
+        r'(?:[^.;]{0,80})?\b(?:claimed|reported|said)\b',
+        attributed, re.I,
+    ):
+        return False
+    third_party = bool(re.search(
+        r'(?:이전|기존|옛|지난|old|earlier|previous)\s*(?:보고서?|주장|report|claim)|'
+        r'(?<![가-힣\w])보고서(?:가|이|는|은)\s*(?:[^.;]{0,80})?(?:주장|보고|적|기록|썼)|'
+        r'\b(?:reviewer|they|he|she)\b\s+(?:[^.;]{0,80})?(?:claimed|reported|said)',
+        attributed, re.I,
+    ) or re.search(r'\b(?!I\b|We\b|The\b|This\b|Our\b|My\b|Current\b)[A-Z][A-Za-z0-9_-]+\s+(?:[^.;]{0,80})?'
+                     r'(?:claimed|reported|said)\b', attributed)
+        or re.search(r'(?<![가-힣\w])(?!(?:저|제|나|내|우리|본\s*보고서|이\s*보고서))'
+                     r'(?:X|검토자|리뷰어|작성자|[가-힣]{2,})'
+                     r'(?:가|이|는|은)\s*(?:[^.;]{0,80})?'
+                     r'(?:주장|보고|적|기록|썼)', attributed))
+    return third_party
+
+
+def explicitly_ordered_quotes(line: str, quote_matches: list[re.Match], ref_count: int) -> bool:
+    """A short quote is evidence only when the ordering marker binds the quote list."""
+    if ref_count < 2 or len(quote_matches) != ref_count:
+        return False
+    first, last = quote_matches[0], quote_matches[-1]
+    before = line[:first.start()]
+    if re.search(r'(?:각각|\brespectively\b)[^.!?;]*$', before, re.I):
+        return True
+    after = line[last.end():]
+    return bool(re.match(r'\s*[,，]?\s*respectively\b', after, re.I))
 
 
 def proposed_name(context: str, span: tuple[int, int]) -> bool:
@@ -204,6 +237,10 @@ def metric_context(line: str, start: int, end: int, paths, unit: str, header: st
         return False
     if unit == '줄':
         if re.search(r'\d+\s*lines?\b', local, re.I) or reported_claim(line, start):
+            return True
+        correction_prefix = masked(line[a:start])
+        if re.search(r'(?:실제(?:로)?|사실은|\b(?:actually|in fact)\b)[^.;]{0,24}$',
+                     correction_prefix, re.I):
             return True
         if re.search(r'줄\s*수|행\s*수|\blines?\b', header, re.I):
             return True
@@ -313,8 +350,16 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             bound, candidates = binding(pos)
             explicit = kwargs.pop('path', None)
             path = bound if explicit is None else explicit
-            inherited_binding = bool(path and explicit is None and not any(
-                p == path and (same_scope(line, pos, start) or row) for start, _, p in paths))
+            locally_bound = any(p == path and (same_scope(line, pos, start) or row)
+                                for start, _, p in paths)
+            inherited_context = paragraph_contexts.get(line_no, line)
+            contextual_paths = ({p.replace('\\', '/').casefold()
+                                 for _, _, p in paths_in(inherited_context)}
+                                | {p.replace('\\', '/').casefold() for p in heading_paths})
+            inherited_binding = bool(
+                path and explicit is None and not locally_bound
+                and any(p != path.replace('\\', '/').casefold() for p in contextual_paths)
+            )
             contextual_reason = kwargs.pop('contextual_reason', '')
             if kind in {'K1', 'K2', 'K6'} and reported_claim(line, pos):
                 contextual_reason = 'reported_claim'
@@ -372,13 +417,17 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         ticks = list(TICK.finditer(line))
         quoted = []
         snippets = []
-        for m in QUOTE.finditer(line):
+        quote_claims = {}
+        quote_matches = list(QUOTE.finditer(line))
+        for m in quote_matches:
             if any(t.start() <= m.start() < t.end() for t in ticks):
                 continue
             if re.search(r'번역\s*:', sentence(line, m.start())):
                 continue
             value = next(g for g in m.groups() if g is not None)
-            if not value.strip() or len(value) < 8 and not any(same_scope(line, m.start(), a) for a, _, _ in ref_spans):
+            explicitly_ordered = bool(any(same_scope(line, m.start(), a) for a, _, _ in ref_spans)
+                                      and explicitly_ordered_quotes(line, quote_matches, len(ref_spans)))
+            if not value.strip() or len(value) < 8 and not explicitly_ordered:
                 continue
             quoted.append((m.start(), value))
             snippets.append((m.start(), m.end(), value, m.group(), False))
@@ -388,6 +437,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 quote_path = urls[0].group().rstrip('.,;)]}')
             c = add('K5', m.group(), m.start(), path=quote_path, quote=value)
             c.binding_candidates = ambiguous
+            quote_claims[m.start()] = c
         if line.lstrip().startswith('>'):
             value = re.sub(r'^\s*>\s?', '', line)
             if len(value) >= 8 and not re.search(r'번역\s*:', value):
@@ -401,10 +451,13 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if not c.path and not c.binding_candidates:
                 c.path = previous_path or heading_path
             snippets.append((0, len(line), numbered.group(2), line.strip(), True))
+        snippet_ticks = [m for m in ticks if numbered_snippet(m.group(1)) or code_snippet(m.group(1))]
         for m in ticks:
             if paths_in(m.group(1)) or REFERENCE.search(m.group(1)) or LOCATION.fullmatch(m.group(1)) or re.fullmatch(r'[\d,.]+', m.group(1)):
                 continue
-            if numbered_snippet(m.group(1)) or code_snippet(m.group(1)):
+            ordered_snippet = explicitly_ordered_quotes(line, snippet_ticks, len(ref_spans))
+            if (numbered_snippet(m.group(1))
+                    or code_snippet(m.group(1)) and (len(m.group(1)) >= 8 or ordered_snippet)):
                 snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
         attached: dict[int, list[tuple]] = {}
         grouped_snippets = set()
@@ -426,18 +479,32 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             numbered = [re.match(r'\s*(?:line\s+)?(\d+):', s[2], re.I) for s in local]
             if all(numbered):
                 continue  # Explicit numbered snippets use the exact-range path below.
-            grouped_snippets.update(s[0] for s in local)
             before_quotes = masked(line[spans[-1][1]:local[0][0]])
             after_quotes = line[local[-1][1]:sentence_span(line, spans[0][0])[1]]
             ordered = (re.search(r'각각|\brespectively\b', before_quotes, re.I)
                        or re.match(r'\s*[,，]?\s*respectively\b', after_quotes, re.I))
             if len(local) == len(group) and ordered:
+                grouped_snippets.update(s[0] for s in local)
                 for c, snippet in zip(group, local):
                     attached.setdefault(id(c), []).append(snippet)
             else:
-                for c in group:
-                    c.contextual_reason = c.contextual_reason or 'binding_ambiguous'
-                    c.text += ' ' + ' '.join(s[3] for s in local)
+                ranges = tuple((member.path, member.start, member.end) for member in group)
+                direct_gap = bool(re.fullmatch(r'[\s`*:：,，;()\[\]{}=→·/-]*',
+                                               line[spans[-1][1]:local[0][0]]))
+                closed = bool(len(local) == 1 and direct_gap
+                              and not (local[0][4] and '...' in local[0][2]))
+                grouped_snippets.update(s[0] for s in local)
+                for snippet in local:
+                    group_claim = quote_claims.get(snippet[0])
+                    if group_claim is None:
+                        group_claim = add('K5', snippet[3], snippet[0], path='', quote=snippet[2],
+                                          quote_code=snippet[4])
+                    group_claim.path = ''
+                    group_claim.binding_candidates = ()
+                    group_claim.candidate_ranges = ranges
+                    group_claim.candidate_quotes = ((snippet[2], snippet[4]),)
+                    group_claim.candidate_group_closed = closed
+                    group_claim.contextual_reason = '' if closed else 'binding_ambiguous'
         for snippet in snippets:
             if snippet[0] in grouped_snippets:
                 continue
@@ -570,7 +637,13 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if any(a <= start < b for a, b, _ in paths):
                 continue
             path, candidates = binding(start)
-            paired = [(t.group(1), t.group()) for t in ticks if t.start() >= end and not paths_in(t.group(1)) and (IDENTIFIER.fullmatch(t.group(1)) or re.fullmatch(r'[\da-f]{7,40}', t.group(1), re.I))]
+            short_item_ticks = [t for t in ticks if t.start() >= end and not paths_in(t.group(1))]
+            ordered_pairing = explicitly_ordered_quotes(line, short_item_ticks, len(item_matches))
+            paired = [(t.group(1), t.group()) for t in ticks
+                      if t.start() >= end and not paths_in(t.group(1))
+                      and (len(t.group(1)) >= 8 or ordered_pairing)
+                      and (IDENTIFIER.fullmatch(t.group(1))
+                           or re.fullmatch(r'[\da-f]{7,40}', t.group(1), re.I))]
             paired += [(q, q) for p, q in quoted if p >= end]
             for sha in re.finditer(r'(?<!\w)[\da-f]{7,40}(?!\w)', line[end:], re.I):
                 if not any(sha.group() == v for v, _ in paired):

@@ -20,14 +20,14 @@ def atoms(result, kind):
 
 @pytest.mark.parametrize('report,expected', [
     ('`notes.md:1, 3`에 각각 "alpha"·"beta"', ['match', 'match']),
-    ('`notes.md:1, 3` "alpha"', ['unverifiable', 'unverifiable']),
-    ('`notes.md:1, 3` "alpha"·"beta"', ['unverifiable', 'unverifiable']),
+    ('`notes.md:1, 3` "alpha"', ['range_only', 'range_only']),
+    ('`notes.md:1, 3` "alpha"·"beta"', ['range_only', 'range_only']),
     ('`notes.md:1, 3`에 각각 "beta"·"alpha"', ['mismatch', 'mismatch']),
     ('`notes.md:1` · `notes.md:3`에 각각 "alpha"·"beta"', ['match', 'match']),
-    ('`notes.md:1` · `notes.md:3` "alpha"', ['unverifiable', 'unverifiable']),
+    ('`notes.md:1` · `notes.md:3` "alpha"', ['range_only', 'range_only']),
     ('L1 · `notes.md:3`에 각각 "alpha"·"beta"', ['match', 'match']),
-    ('`notes.md:1, 3` "alpha"·"beta"; 다음 작업은 각각 처리한다.', ['unverifiable', 'unverifiable']),
-    ('`notes.md:1, 3` "alpha"·"beta", 다음 작업은 각각 처리한다.', ['unverifiable', 'unverifiable']),
+    ('`notes.md:1, 3` "alpha"·"beta"; 다음 작업은 각각 처리한다.', ['range_only', 'range_only']),
+    ('`notes.md:1, 3` "alpha"·"beta", 다음 작업은 각각 처리한다.', ['range_only', 'range_only']),
     ('`notes.md:1, 3` "alpha"·"beta", respectively.', ['match', 'match']),
 ])
 def test_multiple_references_keep_each_claim(tmp_path, report, expected):
@@ -37,6 +37,8 @@ def test_multiple_references_keep_each_claim(tmp_path, report, expected):
     if 'unverifiable' in expected:
         assert all(c['reason_code'] == 'binding_ambiguous' for c in claims)
         assert result['status'] == 'INCOMPLETE'
+    if 'range_only' in expected:
+        assert result['status'] == 'INCOMPLETE'
     if 'mismatch' in expected:
         assert result['status'] == 'FAIL'
 
@@ -44,7 +46,7 @@ def test_multiple_references_keep_each_claim(tmp_path, report, expected):
 @pytest.mark.parametrize('quotes,marker,expected', [
     ('"alpha"·"beta"', '각각', 'match'),
     ('"beta"·"alpha"', '각각', 'mismatch'),
-    ('"alpha"·"beta"', '', 'unverifiable'),
+    ('"alpha"·"beta"', '', 'range_only'),
 ])
 def test_multiple_explicit_files_share_only_certain_ordered_bindings(tmp_path, quotes, marker, expected):
     report, transcript = make_case(tmp_path, f'`alpha.md:1` · `beta.md:1`에 {marker} {quotes}', [
@@ -62,8 +64,8 @@ def test_multiple_explicit_files_share_only_certain_ordered_bindings(tmp_path, q
 
 @pytest.mark.parametrize('report', [
     '`notes.md` 이전 보고는 총 53줄이라고 주장했지만 실제 총 3줄이다.',
-    '`notes.md` was reported as 53 lines, but actually 3 lines.',
-    '`notes.md` claimed 53 lines; actually `notes.md` has 3 lines.',
+    'They reported that `notes.md` has 53 lines, but actually it has 3 lines.',
+    'The old report claimed `notes.md` has 53 lines, but actually it has 3 lines.',
 ])
 def test_reported_metrics_leave_actual_claim_checkable(tmp_path, report):
     result = inspect(tmp_path, report, 'alpha\nbeta\ngamma')
@@ -100,7 +102,7 @@ def test_tool_versions_do_not_become_new_entity_value_claims(tmp_path, descripti
 
 
 def test_reported_count_does_not_suppress_wrong_correction(tmp_path):
-    result = inspect(tmp_path, '`notes.md` reported 53 lines but actually 99 lines.')
+    result = inspect(tmp_path, 'The old report reported `notes.md` as 53 lines but actually 99 lines.')
     claims = atoms(result, 'K2')
     assert claims[0]['reason_code'] == 'reported_claim'
     assert claims[1]['verdict'] == 'mismatch'
@@ -118,11 +120,11 @@ def test_reported_context_never_hides_a_tampered_literal_quote(tmp_path, report,
 
 
 @pytest.mark.parametrize('claim,kind', [('L1-L248', 'K1'), ('총 120줄짜리', 'K2'), ('크기 964 bytes', 'K2')])
-def test_inherited_metrics_do_not_invent_a_binding(tmp_path, claim, kind):
+def test_single_file_heading_keeps_checkable_binding(tmp_path, claim, kind):
     result = inspect(tmp_path, '### `notes.md`\n' + claim)
-    assert atoms(result, kind)[0]['reason_code'] == 'inherited_binding'
-    assert atoms(result, kind)[0]['verdict'] == 'unverifiable'
-    assert result['status'] == 'INCOMPLETE'
+    assert atoms(result, kind)[0]['reason_code'] in {'range_exceeded', 'value_mismatch'}
+    assert atoms(result, kind)[0]['verdict'] == 'mismatch'
+    assert result['status'] == 'FAIL'
 
 
 @pytest.mark.parametrize('report,kind', [('`notes.md:248`', 'K1'), ('`notes.md`는 120줄', 'K2'),
@@ -208,12 +210,17 @@ def test_factual_fabrications_are_not_proposals(tmp_path, wording):
     assert result['status'] == 'FAIL'
 
 
-@pytest.mark.parametrize('report', ['R1 `git`', 'R4-N1 `raw`', '#129 20261018'])
-def test_item_token_only_is_not_a_description(tmp_path, report):
+@pytest.mark.parametrize('report', ['R1 `git`', 'R4-N1 `raw`'])
+def test_short_item_token_does_not_create_a_k9_atom(tmp_path, report):
     result = inspect(tmp_path, '`notes.md` ' + report, '# R1\nnever log secrets\n')
+    assert not atoms(result, 'K9')
+    assert result['status'] == 'INCOMPLETE'
+
+
+def test_item_date_is_retained_as_unverifiable(tmp_path):
+    result = inspect(tmp_path, '`notes.md` #129 20261018', '# R1\nnever log secrets\n')
     claims = atoms(result, 'K9')
     assert claims and all(c['reason_code'] == 'item_token_only' for c in claims)
-    assert result['status'] == 'INCOMPLETE'
 
 
 @pytest.mark.parametrize('description', ['R1: "always log secrets"', 'R1 always log secrets'])

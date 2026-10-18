@@ -367,8 +367,70 @@ class Checker:
                      (e.revision.startswith(c.revision) or c.revision.startswith(e.revision))]
         return fixed or observed
 
+    def resolve_ambiguous_reference(self, c: Claim) -> bool:
+        """Resolve one literal quote over a closed set of candidate ranges."""
+        if c.check_type != 'K5' or not c.candidate_ranges or not c.candidate_group_closed:
+            return False
+        matrix = []
+        results = []
+        every_candidate_observed = True
+        every_observation_complete = True
+        quote, quote_code = c.candidate_quotes[0]
+        for path, start, end in c.candidate_ranges:
+            candidate = replace(c, path=path, start=start, end=end, quote=quote, quote_code=quote_code,
+                                contextual_reason='', candidate_ranges=(), candidate_quotes=(),
+                                candidate_group_closed=False)
+            observations = self.select(candidate)
+            every_candidate_observed &= bool(observations)
+            for evidence in observations:
+                every_observation_complete &= evidence.complete and not evidence.problem
+                result = check_one(candidate, evidence, self.budget)
+                results.append(result)
+                matrix.append({'path': path, 'range': [start, end], 'quote': quote,
+                               'verdict': result.verdict, 'reason_code': result.code,
+                               'observation': evidence.metadata()})
+        source = {'candidate_ranges': [[path, start, end] for path, start, end in c.candidate_ranges],
+                  'candidate_quotes': [quote for quote, _ in c.candidate_quotes],
+                  'matrix': matrix}
+        if any(result.verdict == 'match' for result in results):
+            c.verdict, c.reason, c.reason_code = (
+                'match', '후보 줄·범위 중 한 곳에서 인용 일치', 'quote_match')
+            c.source = source
+            return True
+        if (every_candidate_observed and every_observation_complete and results
+                and all(result.verdict == 'mismatch' and result.code == 'quote_mismatch'
+                        for result in results)):
+            c.verdict, c.reason, c.reason_code = (
+                'mismatch', '모든 후보 줄·범위에서 인용 불일치', 'quote_mismatch')
+            c.source = source
+            return True
+        c.verdict, c.reason, c.reason_code = (
+            'unverifiable', '후보 범위 일부 미확보 또는 인용 결합 미확정', 'binding_ambiguous')
+        c.source = source
+        return True
+
+    def needs_repository_lookup(self, c: Claim) -> bool:
+        """Plan only identifier lookups that apply() can actually consume."""
+        if (c.check_type not in {'K4', 'K6'} or c.contextual_reason or c.malformed_number
+                or c.negated_context or c.binding_candidates):
+            return False
+        if c.path:
+            observations = self.select(c)
+            if not observations:
+                return False
+            results = [check_one(c, evidence, self.budget) for evidence in observations]
+            return bool(results) and all(result.verdict == 'absent' and result.code == 'not_found'
+                                         for result in results)
+        if c.check_type != 'K4':
+            return False
+        results = [check_one(c, evidence, self.budget) for evidence in self.transcript.evidence
+                   if not evidence.control_only and (not evidence.after_report or c.current)]
+        return not any(result.verdict == 'match' for result in results)
+
     def apply(self, c: Claim):
         self.budget.check()
+        if c.check_type == 'K5' and c.candidate_group_closed and self.resolve_ambiguous_reference(c):
+            return
         if c.contextual_reason and not (c.contextual_reason == 'reported_claim' and c.check_type == 'K1' and c.quote):
             c.verdict, c.reason_code = 'unverifiable', c.contextual_reason
             c.reason = {
@@ -378,6 +440,9 @@ class Checker:
                 'item_token_only': '항목 번호 뒤 토큰·숫자만으로 항목 설명을 확정하지 않음',
             }[c.contextual_reason]
             c.source = {'path': c.path, 'location': f'보고서:{c.report_line}', 'search_scope': []}
+            if c.candidate_ranges:
+                c.source['candidate_ranges'] = [list(candidate) for candidate in c.candidate_ranges]
+                c.source['candidate_quotes'] = [quote for quote, _ in c.candidate_quotes]
             return
         if c.malformed_number:
             c.verdict, c.reason_code = 'unverifiable', 'malformed_number'
@@ -472,15 +537,17 @@ class Checker:
                 c.verdict, c.reason, c.reason_code = result.verdict, result.reason, result.code
                 c.source = e.metadata()
                 return
-            hit, complete, scopes = self.repos.identifier(c.value, revision=c.revision, when=c.when)
+            hit, complete, scopes, hits = self.repos.identifier(c.value, revision=c.revision, when=c.when)
             # git grep proves mention, not definition.
             reads_complete = all(r[0] != 'unverifiable' for r, _ in results)
             has_transcript = bool(self.transcript.version)
             c.verdict = 'absent' if complete and not hit and reads_complete and self.transcript.valid and has_transcript else 'unverifiable'
             searched = (['대화 읽기 결과'] if has_transcript else []) + scopes
             c.reason = '연결 파일 없는 식별자: ' + (' + '.join(searched) or '검색 근거 미확보')
-            c.source = {'search_scope': searched, 'existence': 'mention'}
-            c.reason_code = ('found_outside_scope' if hit else 'not_found' if c.verdict == 'absent'
+            c.source = {'search_scope': searched, 'existence': 'mention',
+                        'repository_hits': hits}
+            c.reason_code = ('found_outside_scope' if hit else 'repository_search_incomplete' if not complete
+                             else 'not_found' if c.verdict == 'absent'
                              else 'partial_range' if has_transcript else 'transcript_missing')
             return
         if not observations:
@@ -565,11 +632,14 @@ class Checker:
             c.reason = '상속한 파일과 범위·값의 연결 미확정'
         if c.verdict == 'absent' and c.check_type in {'K4', 'K6'} and c.reason_code == 'not_found' and self.repos.roots:
             token = c.value if c.check_type == 'K4' else c.entity
-            hit, complete, scopes = self.repos.identifier(token, revision=c.revision, when=c.when)
+            hit, complete, scopes, hits = self.repos.identifier(token, revision=c.revision, when=c.when)
             c.source['repository_search_scope'] = scopes
+            c.source['repository_hits'] = hits
             if hit:
                 c.verdict, c.reason_code = 'unverifiable', 'found_outside_scope'
-                c.reason = '연결 읽기에는 없으나 지정 저장소 검색에서 이름 확인'
+                hit_kind = '정의' if any(item.get('kind') == 'definition' for item in hits) else '코드 언급'
+                c.reason = f'연결 읽기에는 없으나 지정 저장소 검색에서 {hit_kind} 확인'
+                c.source['repository_hit_kind'] = 'definition' if hit_kind == '정의' else 'mention'
             elif not complete:
                 c.verdict, c.reason_code = 'unverifiable', 'repository_search_incomplete'
                 c.reason = '부재 확정 전 지정 저장소 검색을 완료하지 못함'
@@ -621,6 +691,10 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
         repositories = Repositories(repos or [], commits or {}, aliases, budget)
         repositories.preload_commits([c.value for c in claims if c.check_type == 'K3'])
         checker = Checker(transcript, sources, repositories, aliases, budget)
+        repositories.preload_identifiers([
+            (c.value if c.check_type == 'K4' else c.entity, c.revision, c.when)
+            for c in claims if checker.needs_repository_lookup(c)
+        ])
         for c in claims:
             checker.apply(c)
             completed += 1

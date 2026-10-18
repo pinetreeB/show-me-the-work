@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import re
 import subprocess
@@ -15,6 +16,7 @@ TEXT_SUFFIXES = {'.md', '.txt', '.json', '.jsonl', '.tsv', '.csv', '.py', '.js',
                  '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.sh', '.ps1', '.toml',
                  '.yaml', '.yml', '.xml', '.html', '.css', '.sql', '.go', '.rs',
                  '.java', '.c', '.h', '.cpp', '.cs', '.log', '.ini', '.cfg', '.bat'}
+DOCUMENT_SUFFIXES = {'.md', '.txt', '.log', '.csv', '.tsv', '.docx'}
 
 
 def decode(data: bytes) -> str:
@@ -256,19 +258,210 @@ class Repositories:
                               else ('mismatch', 'commit 아닌 객체'))
                 self.cache[('sha', str(root), sha)] = answer
 
-    def identifier(self, token: str, *, revision: str = '', when: str = '') -> tuple[bool, bool, list[str]]:
-        found, complete, scopes = False, bool(self.roots), []
+    @staticmethod
+    def _identifier_hit(path: str, line_number: int, line: str, token: str,
+                        revision: str, word: re.Pattern, definition: re.Pattern,
+                        suffix: str) -> dict | None:
+        if suffix in DOCUMENT_SUFFIXES:
+            return None
+        stripped = line.lstrip()
+        if stripped.startswith(('#', '//', '/*', '*', '<!--', ';')):
+            return None
+        if token not in line or not word.search(line):
+            return None
+        is_definition = bool(definition.search(line))
+        if not is_definition and not re.search(r'[=(){}\[\];:]|\b(?:return|import|from|new|if|for|while)\b', line):
+            return None
+        return {'path': path, 'line': line_number, 'revision': revision,
+                'kind': 'definition' if is_definition else 'mention'}
+
+    def _mask_noncode(self, text: str, suffix: str) -> list[str]:
+        """Mask strings and comments while preserving source line positions."""
+        python_like = suffix in {'.py', '.sh', '.ps1', '.yaml', '.yml', '.toml'}
+        slash_comments = suffix in {'.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.java',
+                                    '.c', '.h', '.cpp', '.cs', '.go', '.rs', '.css'}
+        result = list(text)
+        quote = ''
+        block_comment = False
+        escaped = False
+        index = 0
+        next_budget_check = 0
+        while index < len(text):
+            if index >= next_budget_check:
+                self.budget.check()
+                next_budget_check = index + 65536
+            if block_comment:
+                if text.startswith('*/', index):
+                    result[index:index+2] = '  '
+                    block_comment = False
+                    index += 2
+                else:
+                    if text[index] != '\n':
+                        result[index] = ' '
+                    index += 1
+                continue
+            if quote:
+                if quote in {'\"\"\"', "'''"} and text.startswith(quote, index):
+                    result[index:index+3] = '   '
+                    quote = ''
+                    index += 3
+                    continue
+                char = text[index]
+                if escaped:
+                    escaped = False
+                elif char == '\\':
+                    escaped = True
+                elif quote in {'\"', "'", '`'} and char == quote:
+                    quote = ''
+                if char != '\n':
+                    result[index] = ' '
+                index += 1
+                continue
+            if python_like and text.startswith(('\"\"\"', "'''"), index):
+                quote = text[index:index+3]
+                result[index:index+3] = '   '
+                index += 3
+                continue
+            if slash_comments and text.startswith('/*', index):
+                block_comment = True
+                result[index:index+2] = '  '
+                index += 2
+                continue
+            if text[index] in {'\"', "'"}:
+                delimiter = text[index]
+                closing = index + 1
+                while closing < len(text):
+                    if text[closing] == '\n':
+                        closing = -1
+                        break
+                    if text[closing] == delimiter and text[closing-1] != '\\':
+                        break
+                    closing += 1
+                if closing > index and closing < len(text) and re.match(r'[ \t]*:', text[closing+1:]):
+                    result[index] = result[closing] = ' '
+                    index = closing + 1
+                    continue
+            if python_like and text[index] == '#' or slash_comments and text.startswith('//', index):
+                while index < len(text) and text[index] != '\n':
+                    result[index] = ' '
+                    index += 1
+                continue
+            if text[index] in {'\"', "'"} or slash_comments and text[index] == '`':
+                quote = text[index]
+                result[index] = ' '
+            index += 1
+        return ''.join(result).splitlines()
+
+    def _preload_masked_files(self, root: Path, revision: str, paths: list[str]) -> bool:
+        paths = [path for path in dict.fromkeys(paths)
+                 if ('masked_lines', str(root), revision, path) not in self.cache]
+        if not paths:
+            return True
+        self.budget.check()
+        result = subprocess.run(
+            ['git', '-C', str(root), 'cat-file', '--batch'],
+            input=''.join(f'{revision}:{path}\n' for path in paths).encode('utf-8'),
+            capture_output=True, timeout=self.budget.remaining(),
+        )
+        data, offset = result.stdout, 0
+        complete = result.returncode == 0
+        for path in paths:
+            end = data.find(b'\n', offset)
+            if end < 0:
+                complete = False
+                break
+            header = decode(data[offset:end]).rsplit(' ', 2)
+            offset = end + 1
+            if len(header) != 3 or header[1] != 'blob' or not header[2].isdigit():
+                complete = False
+                continue
+            size = int(header[2])
+            blob = data[offset:offset+size]
+            offset += size + 1
+            self.cache[('masked_lines', str(root), revision, path)] = self._mask_noncode(
+                decode(blob), Path(path).suffix.lower())
+        return complete and all(('masked_lines', str(root), revision, path) in self.cache
+                                for path in paths)
+
+    def preload_identifiers(self, requests: list[tuple[str, str, str]]) -> None:
+        """Run one fixed-string, word-boundary grep per repository revision."""
+        plans = []
         for root in self.roots:
             fixed = self.commits.get(normalize_path(str(root)), 'HEAD')
-            if when or revision and not (fixed.startswith(revision) or revision.startswith(fixed)):
+            tokens = list(dict.fromkeys(
+                token for token, revision, _ in requests
+                if token and (not revision or fixed.startswith(revision) or revision.startswith(fixed))
+            ))
+            tokens = [token for token in tokens if ('grep', str(root), fixed, token) not in self.cache]
+            if not tokens:
+                continue
+            args = ['grep', '-n', '-w', '-F']
+            for token in tokens:
+                args.extend(('-e', token))
+            exclusions = tuple(f':(exclude)*{suffix}' for suffix in sorted(DOCUMENT_SUFFIXES))
+            plans.append((root, fixed, tokens, (*args, fixed, '--', *exclusions)))
+        if not plans:
+            return
+        with ThreadPoolExecutor(max_workers=min(8, len(plans))) as pool:
+            futures = [pool.submit(self.git, root, *args) for root, _, _, args in plans]
+            results = [future.result() for future in futures]
+        for (root, fixed, tokens, _), result in zip(plans, results):
+            hits = {token: [] for token in tokens}
+            word_patterns = {
+                token: re.compile(r'(?<![A-Za-z0-9_$])' + re.escape(token) + r'(?![A-Za-z0-9_$])')
+                for token in tokens
+            }
+            definition_patterns = {
+                token: re.compile(
+                    r'\b(?:def|class|function|const|let|var)\s+' + re.escape(token) + r'\b|'
+                    + word_patterns[token].pattern + r'\s*(?::[^:=\n]+)?(?:=|:)')
+                for token in tokens
+            }
+            parsed_rows: list[tuple[str, int, str, str]] = []
+            if result.returncode == 0:
+                for row in decode(result.stdout).splitlines():
+                    parts = row.split(':', 3)
+                    if len(parts) != 4 or not parts[2].isdigit():
+                        continue
+                    _, path, line_number, raw_line = parts
+                    suffix = Path(path).suffix.lower()
+                    if suffix not in DOCUMENT_SUFFIXES:
+                        parsed_rows.append((path, int(line_number), raw_line, suffix))
+                blobs_complete = self._preload_masked_files(
+                    root, fixed, [path for path, _, _, _ in parsed_rows])
+                for path, line_number, _, suffix in parsed_rows:
+                    lines = self.cache.get(('masked_lines', str(root), fixed, path), [])
+                    line = lines[line_number-1] if line_number <= len(lines) else ''
+                    for token in tokens:
+                        if token not in line:
+                            continue
+                        hit = self._identifier_hit(
+                            path, line_number, line, token, fixed,
+                            word_patterns[token], definition_patterns[token], suffix)
+                        if hit:
+                            hits[token].append(hit)
+            else:
+                blobs_complete = result.returncode == 1
+            complete = result.returncode in (0, 1) and blobs_complete
+            for token in tokens:
+                definitions = [hit for hit in hits[token] if hit['kind'] == 'definition']
+                selected = definitions or hits[token]
+                self.cache[('grep', str(root), fixed, token)] = (bool(selected), complete, selected)
+
+    def identifier(self, token: str, *, revision: str = '', when: str = '') -> tuple[bool, bool, list[str], list[dict]]:
+        found, complete, scopes, locations = False, bool(self.roots), [], []
+        for root in self.roots:
+            fixed = self.commits.get(normalize_path(str(root)), 'HEAD')
+            if revision and not (fixed.startswith(revision) or revision.startswith(fixed)):
                 complete = False
+                scopes.append(f'{root}@{fixed}: 명시 revision {revision} 불일치로 건너뜀')
                 continue
             key = ('grep', str(root), fixed, token)
             if key not in self.cache:
-                r = self.git(root, 'grep', '-q', '-w', '-F', '-e', token, fixed, '--')
-                self.cache[key] = (r.returncode == 0, r.returncode in (0, 1))
-            hit, ok = self.cache[key]
+                self.preload_identifiers([(token, revision, when)])
+            hit, ok, hits = self.cache.get(key, (False, False, []))
             found |= hit
             complete &= ok
+            locations.extend(hits)
             scopes.append(f'{root}@{fixed} git grep -w -F')
-        return found, complete, scopes
+        return found, complete, scopes, locations
