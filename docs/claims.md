@@ -52,6 +52,13 @@ code-shaped fragments with at least two code symbols plus whitespace or separato
 Single identifiers, including `name()` and dotted names, remain K4 file-level token
 claims. Backticks separated from a position by explanatory prose are not line quotes.
 Explicit quotation marks and immediately following code blocks remain checked.
+Comma-separated references such as `engine.py:2, 5-7` create one K1 atom per
+position/range. A standalone backtick position such as `5줄`, or `5줄에서/의/은`,
+is not a file line count. Counts require size context: `총`, `전체`, parentheses,
+`줄짜리`, a line-count column, or a number directly following the file name.
+Date-shaped eight-digit numbers are not short SHAs without an explicit commit,
+SHA or hash prefix. Quote delimiters are paired before the eight-character K5
+threshold is applied, preventing short quotations from reversing quote boundaries.
 
 `--default-file "display-path=actual-file"` explicitly supplies one default source
 for otherwise unbound line positions and numbered quotations. It does not replace
@@ -65,6 +72,10 @@ their operators and formatting. File-linked identifiers use token boundaries;
 unlinked identifiers still require both a code-like shape and explicit code context.
 Setting limits are not file sizes. Entity values with multiple possible values
 remain unverified.
+Numbers described as file contents are entity values, not dimensions of that file.
+JSON array/object values are compared structurally; incomplete values or duplicate
+JSON keys remain unverified. Prose substring matching is applied before truncating
+the search window, including quotations near the beginning of a long source line.
 
 Evidence comes from linked read-tool outputs, never user messages, final answers,
 write arguments, generated echo output, report rereads or post-write rereads of
@@ -77,6 +88,11 @@ do not discard the preceding read. The marker is removed from evidence content;
 unconditional or dynamic echo commands remain excluded. Successful browser/MCP
 navigate, read, snapshot and fetch results can establish URL visits when the result
 identifies the page. Search results and argument-only URLs cannot establish visits.
+An explicit command claim such as `` `SYNTAX_OK` (exit 0) `` can use the actual
+conditional marker as control evidence. Marker/exit metadata never establishes a
+file identifier or quotation. This also applies to syntax-check commands without
+file-content output. An asynchronous marker requires its linked completed task log;
+missing/failed results and post-write self-reads retain their exclusion rules.
 
 Plain text/code and `.docx` paragraphs and tables are supported. Unsupported Word
 regions (headers, notes, text boxes, revisions) prevent an absence conclusion when
@@ -91,6 +107,9 @@ tolerance is added.
 An explicitly displayed empty final view-file line also establishes content lines
 as `Total Lines - 1`, including partial views. Linked PowerShell content counts and
 `wc` measurements retain their distinct count conventions.
+Linked view-file exports and completed measurement logs are loaded on demand.
+An empty or whitespace-only final display line establishes `Total Lines - 1`;
+missing or differently bound auxiliary files cannot establish a measurement.
 K2 uses transcript observations whenever that file was read in the eligible evidence
 window. Missing measurements, failed reads or unresolved explicit times remain
 unverified; current files, source snapshots and fixed commits cannot replace those

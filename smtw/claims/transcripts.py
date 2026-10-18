@@ -10,7 +10,7 @@ import re
 
 from .model import Budget, Evidence, Transcript, line_counts
 from .paths import matches_path, normalize_path, normalize_url
-from .sources import decode
+from .sources import content_lines, decode, file_lines
 
 
 FILE_TOKEN = re.compile(r'''(?:[A-Za-z]:[\\/]|/|\.?\.?[/\\])?[^\s`"'<>;|{}=]+\.(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|csv|tsv)(?:@[\da-f]+)?''', re.I)
@@ -76,7 +76,7 @@ class Call:
             return True
         if BROWSER_READ.search(self.name) and not SEARCH_TOOL.search(self.name):
             return True
-        command, _ = success_marker(self.command)
+        command, marker = success_marker(self.command)
         if re.search(r'\b(?:echo|Write-Output|printf)\b', command, re.I):
             return False
         if GENERATED_LITERAL.search(command):
@@ -85,7 +85,7 @@ class Call:
             return False
         if re.search(r'view_file|read_file|read_url|open_url|grep|search|fetch', self.name, re.I):
             return True
-        return bool(READ_COMMAND.search(self.command))
+        return bool(READ_COMMAND.search(self.command) or marker)
 
 
 def call_paths(call: Call) -> list[str]:
@@ -308,11 +308,17 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
         return []
     budget.check()
     command, marker = success_marker(call.command)
+    observed_marker = ''
+    if exit_code is None:
+        status = re.search(r'(?:Process exited with code|Exit code:|exited with code)\s*(-?\d+)', body, re.I)
+        if status:
+            exit_code = int(status.group(1))
     if marker:
         # A success marker is control data, never quoted file content.
         rows = body.splitlines(keepends=True)
         markers = [i for i, row in enumerate(rows) if row.strip('\r\n') == marker]
         if markers:
+            observed_marker = marker
             rows.pop(markers[-1])
             body = ''.join(rows)
     if BROWSER_READ.search(call.name) and not SEARCH_TOOL.search(call.name) and not re.search(r'read_url|open_url', call.name, re.I):
@@ -329,7 +335,10 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
         e_url = '' if SEARCH_TOOL.search(call.name) else call.url
     paths = call_paths(call)
     e = Evidence(path=call.path, url=e_url, command=call.command, cwd=call.cwd,
-                 tool=call.name, origin=origin, order=call.order, timestamp=call.timestamp)
+                 tool=call.name, origin=origin, order=call.order, timestamp=call.timestamp,
+                 conditional_marker=marker, success_marker=observed_marker,
+                 control_only=bool(marker and not READ_COMMAND.search(command)),
+                 exit_code=0 if observed_marker and exit_code is None else exit_code)
     if exit_code not in (None, 0) or re.search(r'^(?:Error:|Error executing|File not found|Access denied)|"isError"\s*:\s*true|"success"\s*:\s*false|"status"\s*:\s*"(?:ERROR|FAILED)"', body, re.M | re.I):
         e.problem = '읽기 도구 실패'
         e.problem_code = 'read_failed'
@@ -367,8 +376,8 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
                 text = '\n'.join(e.lines.values())
                 e.counts = line_counts(text)
                 e.counts['L_view'] = e.total_lines
-            elif e.total_lines in e.lines and e.lines[e.total_lines] == '':
-                e.counts = {'L_lines': max(0, e.total_lines - 1), 'L_view': e.total_lines}
+            if e.total_lines in e.lines and not e.lines[e.total_lines].strip():
+                e.counts.update(L_lines=max(0, e.total_lines - 1), L_view=e.total_lines)
         e.text = '\n'.join(e.lines.values())
     elif call.command and numbered and len(paths) == 1:
         e.path, e.lines = paths[0], numbered
@@ -577,6 +586,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
         e.after_report = e.order > cutoff
         if e.task_id:
             code = completions.get(e.task_id)
+            e.exit_code = code
             if code == 0 and e.aux_path:
                 e.complete = True
                 if e.problem == '비동기 완료 정보 미확보':
@@ -591,6 +601,56 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
         result.valid = False
         result.warnings.append(f'지원하는 {kind} 도구 호출 없음 (형식 {result.version})')
     return result
+
+
+def load_view_pointer(e: Evidence, budget: Budget) -> None:
+    """Load a linked view-file export only when a file claim actually needs it."""
+    if e.view_loaded or not e.aux_path or 'view_file' not in e.tool or e.problem:
+        return
+    lines = {}
+    for _, text in file_lines(Path(e.aux_path), budget):
+        header = re.match(r'File Path:\s*`?([^`\r\n]+)', text)
+        if header and normalize_path(header.group(1)) != normalize_path(e.path):
+            e.problem, e.problem_code = '보조 view_file 경로 불일치', 'binding_ambiguous'
+        for attr, label in [('total_lines', 'Total Lines'), ('total_bytes', 'Total Bytes')]:
+            value = re.match(label + r':\s*([\d,]+)', text)
+            if value:
+                setattr(e, attr, int(value.group(1).replace(',', '')))
+        numbered = NUMBERED.match(text)
+        if numbered:
+            lines[int(numbered.group(1))] = numbered.group(2)
+        if TRUNCATED.search(text):
+            e.problem, e.problem_code = '잘린 보조 view_file 출력', 'partial_range'
+    e.lines = dict(sorted(lines.items()))
+    e.complete = not e.problem and e.total_lines is not None and set(lines) == set(range(1, e.total_lines+1))
+    if e.complete:
+        e.counts = line_counts('\n'.join(e.lines.values()))
+        e.counts['L_view'] = e.total_lines
+    if e.total_lines in lines and not lines[e.total_lines].strip():
+        e.counts.update(L_lines=max(0, e.total_lines-1), L_view=e.total_lines)
+    e.view_loaded = True
+
+
+def load_measurement_pointer(e: Evidence, budget: Budget) -> None:
+    if e.measure_loaded or not e.aux_path or not e.complete or e.problem:
+        return
+    command, _ = success_marker(e.command)
+    kind = ('L_nl' if re.search(r'\bwc\s+-l\b', command) else
+            'L_lines' if re.search(r'\bGet-Content\b', command, re.I) and re.search(r'\.(?:Count|Length)\b|Measure-Object\s+-Line', command, re.I) else
+            'bytes' if re.search(r'\bwc\s+-c\b|\bstat\s+[^;\n]*%s|\bGet-Item\b[^;\n]*\.Length', command, re.I) else '')
+    if not kind:
+        return
+    measured = []
+    for _, text in content_lines(e, budget):
+        match = re.fullmatch(r'\s*(\d+)(?:\s+(\S+))?\s*', text)
+        if match and (not match.group(2) or matches_path(match.group(2), e.path) or matches_path(e.path, match.group(2))):
+            measured.append(int(match.group(1)))
+    if len(measured) == 1:
+        if kind == 'bytes':
+            e.total_bytes = measured[0]
+        else:
+            e.counts[kind] = measured[0]
+    e.measure_loaded = True
 
 
 def resolve_agy(value: str, brain_root: Path) -> Path:

@@ -6,6 +6,7 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 import re
+import json
 import subprocess
 from typing import NamedTuple
 
@@ -13,8 +14,8 @@ from .extract import extract
 from .markup import cell_spans, normalized_quote
 from .model import Budget, Claim, DeadlineExceeded, Evidence, Transcript, summarize
 from .paths import matches_path, normalize_path, normalize_url
-from .sources import Repositories, content_lines, local_source
-from .transcripts import discover_agy, read_transcript, resolve_agy
+from .sources import Repositories, content_lines, file_lines, local_source
+from .transcripts import discover_agy, load_measurement_pointer, load_view_pointer, read_transcript, resolve_agy
 
 
 @lru_cache(maxsize=1024)
@@ -42,8 +43,53 @@ def missing(e: Evidence, dirty: bool = False) -> Result:
     return Result('absent', '완전히 확보한 검색 범위에 대상 없음', 'absent', 'not_found')
 
 
+def value_text(value) -> str:
+    if isinstance(value, (list, dict, bool)) or value is None:
+        return json.dumps(value, ensure_ascii=False, separators=(',', ':'), sort_keys=True)
+    return str(value)
+
+
+def expected_value(value: str) -> str:
+    if value.lstrip().startswith(('[', '{')):
+        try:
+            return value_text(json.loads(value))
+        except ValueError:
+            pass
+    return value
+
+
+def json_entity_value(c: Claim, e: Evidence, budget: Budget) -> Result | None:
+    if not e.complete or c.unit != 'value' or not e.path.lower().endswith('.json'):
+        return None
+    text = '\n'.join(line for _, line in content_lines(e, budget))
+    values, duplicates = [], []
+    def pairs(items):
+        seen = set()
+        for key, _ in items:
+            if key in seen:
+                duplicates.append(key)
+            seen.add(key)
+        values.extend(value_text(value) for key, value in items if key == c.entity)
+        return dict(items)
+    try:
+        json.loads(text, object_pairs_hook=pairs)
+    except ValueError:
+        return None
+    if duplicates or len(set(values)) > 1:
+        return Result('unverifiable', 'JSON 키·값 후보가 여러 개', code='binding_ambiguous')
+    if not values:
+        return missing(e, '\ufffd' in text)
+    if '\ufffd' in values[0]:
+        return Result('unverifiable', 'JSON 엔터티 값 손상', code='decode_damage')
+    okay = values[0] == expected_value(c.value)
+    return Result('match' if okay else 'mismatch', 'JSON 엔터티 값 ' + ('일치' if okay else '불일치'),
+                  values[0], 'value_match' if okay else 'value_mismatch')
+
+
 def line_values(c: Claim, e: Evidence) -> Result:
-    counts = e.counts
+    counts = dict(e.counts)
+    if e.total_lines is not None and 'L_lines' not in counts and e.total_lines in e.lines and not e.lines[e.total_lines].strip():
+        counts.update(L_lines=max(0, e.total_lines-1), L_view=e.total_lines)
     if 'wc -l' in c.context:
         values = [counts['L_nl']] if 'L_nl' in counts else []
     elif 'Total Lines' in c.context:
@@ -60,6 +106,8 @@ def line_values(c: Claim, e: Evidence) -> Result:
 
 
 def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
+    if e.control_only:
+        return Result('unverifiable', '명령 성공 제어 정보는 파일 원문이 아님', code='no_read_of_file')
     if e.problem:
         return Result('unverifiable', e.problem, code=e.problem_code or 'read_failed')
     if c.check_type == 'K1' or c.check_type == 'K5' and c.start:
@@ -83,11 +131,11 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
             okay = all(normalized_quote(quote) in normalized_quote(e.lines[n]) for n, quote in pairs)
             return Result('match' if okay else 'mismatch', '줄 번호 접두사를 제외한 코드 인용 ' + ('일치' if okay else '불일치'),
                           '\n'.join(e.lines[n] for n, _ in pairs), 'quote_match' if okay else 'quote_mismatch')
-        prose = c.check_type == 'K5' and not c.quote_code
+        prose = not c.quote_code
         if normalized_quote(c.quote, prose=prose) not in normalized_quote(text, prose=prose):
             return Result('mismatch', f'대응 줄 원문과 인용 불일치: {text[:240]}', text, 'quote_mismatch')
         return Result('match', '파일 줄 범위·인용 일치', text, 'quote_match')
-    if c.check_type in {'K2', 'K6'} and c.unit == '줄':
+    if c.check_type in {'K2', 'K6'} and c.unit == '줄' and (c.check_type == 'K2' or not c.entity):
         return line_values(c, e)
     if c.check_type == 'K2':
         multiplier = {'b': 1, 'byte': 1, 'bytes': 1, '바이트': 1,
@@ -118,9 +166,10 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
         window = ''
         for n, line in content_lines(e, budget):
             dirty |= '\ufffd' in line
-            window = (window + ' ' + normalized_quote(line, prose=not c.quote_code))[-max(4096, len(needle)*2):]
+            window = window + ' ' + normalized_quote(line, prose=not c.quote_code)
             if needle in window and '\ufffd' not in window[window.find(needle):window.find(needle)+len(needle)]:
                 return Result('match', f'원문 인용 확인 ({e.locations.get(n, str(n)+"행")})', needle, 'quote_match')
+            window = window[-max(4096, len(needle)*2):]
         result = missing(e, dirty)
         if result.verdict == 'absent':
             return Result('mismatch', '연결 원문의 글자와 인용 불일치', 'quote mismatch', 'quote_mismatch')
@@ -128,7 +177,11 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
     if c.check_type == 'K6':
         if not c.entity:
             return Result('unverifiable', '숫자 엔터티 연결 없음', code='binding_ambiguous')
+        structured = json_entity_value(c, e, budget)
+        if structured is not None:
+            return structured
         dirty, entity_seen = False, False
+        incomplete_value = False
         values = []
         for n, line in content_lines(e, budget):
             if c.entity and not boundary(c.entity).search(line):
@@ -138,18 +191,29 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
                 continue
             entity_seen = True
             if c.unit == 'value':
-                key = re.search(r'["\']?' + re.escape(c.entity) + r'["\']?\s*[:=]\s*["\']?([^,;\n"\'}]+)', line)
+                key = re.search(r'["\']?' + re.escape(c.entity) + r'["\']?\s*[:=]\s*(.+)', line)
                 if key:
-                    values.append(key.group(1).strip())
+                    raw = key.group(1).strip()
+                    try:
+                        value, _ = json.JSONDecoder().raw_decode(raw)
+                        values.append(value_text(value))
+                    except ValueError:
+                        if raw.startswith(('[', '{')):
+                            incomplete_value = True
+                        else:
+                            values.append(re.split(r'[,;\n"\'}]', raw.strip('"\''))[0].strip())
             else:
                 unit = re.escape(c.unit)
                 values += re.findall(r'([\d,]+(?:\.\d+)?)\s*' + unit + r'(?!\w)', line)
         if dirty:
             return Result('unverifiable', '연결 엔터티의 원문 손상', code='decode_damage')
-        unique = sorted(set(v.replace(',', '') for v in values))
+        if incomplete_value:
+            return Result('unverifiable', '구조화된 엔터티 값 전체 미확보', code='partial_range')
+        c_value = expected_value(c.value) if c.unit == 'value' else c.value
+        unique = sorted(set(v if c.unit == 'value' else v.replace(',', '') for v in values))
         if len(unique) > 1:
             return Result('unverifiable', '연결 엔터티에 대응하는 값이 여러 개', code='binding_ambiguous')
-        if unique == [c.value]:
+        if unique == [c_value]:
             return Result('match', '연결 엔터티 값 일치', str(unique), 'value_match')
         if values:
             return Result('mismatch', f'연결 엔터티 값 불일치: {values[:8]}', str(unique), 'value_mismatch')
@@ -239,10 +303,14 @@ class Checker:
 
     def select(self, c: Claim) -> list[Evidence]:
         observed = [e for e in self.transcript.evidence
-                    if (c.current or not e.after_report)
+                    if not e.control_only and (c.current or not e.after_report)
                     and c.path and (matches_path(c.path, e.path, self.aliases)
                                     or c.path.startswith(('https://', 'http://')) and normalize_url(c.path) == normalize_url(e.url))]
         file_reads = observed
+        for e in observed:
+            load_view_pointer(e, self.budget)
+            if c.check_type == 'K2':
+                load_measurement_pointer(e, self.budget)
         if c.revision:
             observed = [e for e in observed if e.revision and
                         (e.revision.startswith(c.revision) or c.revision.startswith(e.revision))]
@@ -285,6 +353,29 @@ class Checker:
         if c.binding_candidates:
             c.reason, c.reason_code = '같은 문맥에 연결 파일 후보가 여러 개', 'binding_ambiguous'
             c.source = {'binding_candidates': list(c.binding_candidates)}
+            return
+        if c.command_exit is not None:
+            relevant = [e for e in self.transcript.evidence if e.conditional_marker and
+                        (c.current or not e.after_report) and (not c.path or matches_path(c.path, e.path, self.aliases))]
+            for e in relevant:
+                if e.problem or e.exit_code != 0:
+                    continue
+                marker = e.success_marker
+                if not marker and e.complete and e.aux_path:
+                    last = ''
+                    for _, text in file_lines(Path(e.aux_path), self.budget):
+                        if text.strip() and not re.search(r'(?:Exit code:|exited with code)\s*-?\d+', text, re.I):
+                            last = text
+                    if last == e.conditional_marker:
+                        marker = last
+                if marker == c.value and '\ufffd' not in marker:
+                    c.verdict = 'match' if c.command_exit == 0 else 'mismatch'
+                    c.reason_code = 'command_marker_match' if c.command_exit == 0 else 'command_exit_mismatch'
+                    c.reason = '조건부 성공 표식과 종료 코드 대조'
+                    c.source = {**e.metadata(), 'success_marker': marker}
+                    return
+            c.reason, c.reason_code = '연결된 명령 성공 표식 미확보', 'command_result_missing'
+            c.source = {'observations': [e.metadata() for e in relevant]}
             return
         if c.check_type == 'K7':
             total, part = int(c.value), int(c.entity)
@@ -334,7 +425,7 @@ class Checker:
         if not c.path and c.check_type == 'K4':
             results = []
             for e in self.transcript.evidence:
-                if not e.after_report or c.current:
+                if not e.control_only and (not e.after_report or c.current):
                     results.append((check_one(c, e, self.budget), e))
             found = next(((r, e) for r, e in results if r[0] == 'match'), None)
             if found:
@@ -376,7 +467,7 @@ class Checker:
                 and all(k not in f.counts or f.counts[k] == v for k, v in e.counts.items())
                 for f in full))]
         results = [(check_one(c, e, self.budget), e) for e in observations]
-        line_metric = c.check_type in {'K2', 'K6'} and c.unit == '줄'
+        line_metric = c.check_type in {'K2', 'K6'} and c.unit == '줄' and (c.check_type == 'K2' or not c.entity)
         if c.check_type == 'K2' and any(r.verdict != 'unverifiable' for r, _ in results):
             results = [(r, e) for r, e in results if r.code != 'measurement_missing']
         c.source = {'observations': [e.metadata() for _, e in results],

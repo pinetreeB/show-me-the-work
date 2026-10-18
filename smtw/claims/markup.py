@@ -5,7 +5,7 @@ import re
 
 
 TICK = re.compile(r'`([^`\n]+)`')
-QUOTE = re.compile(r'“([^”\n]{8,})”|"([^"\n]{8,})"|‘([^’\n]{8,})’|(?<!\w)\x27([^\x27\n]{8,})\x27(?!\w)')
+QUOTE = re.compile(r'“([^”\n]*?)”|"((?:\\.|[^"\\\n])*?)"|‘([^’\n]*?)’|(?<!\w)\x27((?:\\.|[^\x27\\\n])*?)\x27')
 
 
 def protected_spans(line: str) -> list[tuple[int, int]]:

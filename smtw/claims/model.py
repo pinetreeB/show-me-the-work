@@ -39,6 +39,7 @@ class Claim:
     quote_code: bool = False
     binding_candidates: tuple[str, ...] = ()
     repository_contexts: tuple[str, ...] = ()
+    command_exit: int | None = None
     ordinal: bool = False
     context: str = ""
     entity: str = ""
@@ -84,6 +85,12 @@ class Evidence:
     problem_code: str = ""
     aux_path: str = ""
     task_id: str = ""
+    conditional_marker: str = ""
+    success_marker: str = ""
+    exit_code: int | None = None
+    view_loaded: bool = False
+    measure_loaded: bool = False
+    control_only: bool = False
     after_report: bool = False
     unsupported: bool = False
     locations: dict[int, str] = field(default_factory=dict)
@@ -97,6 +104,9 @@ class Evidence:
                 "range": [min(self.lines), max(self.lines)] if self.lines else [],
                 "total_lines": self.total_lines, "total_bytes": self.total_bytes,
                 "aux_path": self.aux_path,
+                "conditional_marker": self.conditional_marker, "success_marker": self.success_marker,
+                "exit_code": self.exit_code,
+                "control_only": self.control_only,
                 "search_scope": self.path or self.url or self.command or self.origin}
 
 

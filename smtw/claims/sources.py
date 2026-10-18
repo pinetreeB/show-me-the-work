@@ -40,7 +40,18 @@ def content_lines(e: Evidence, budget: Budget) -> Iterator[tuple[int, str]]:
             budget.check()
             yield n, text
     elif e.aux_path:
-        yield from file_lines(Path(e.aux_path), budget)
+        pending = []
+        for n, text in file_lines(Path(e.aux_path), budget):
+            if e.conditional_marker and text == e.conditional_marker:
+                yield from pending
+                pending = [(n, text)]
+            elif pending and (not text.strip() or re.search(r'(?:Exit code:|exited with code)\s*-?\d+', text, re.I)):
+                pending.append((n, text))
+            else:
+                yield from pending
+                pending = []
+                yield n, text
+        # A trailing conditional marker and exit footer are control data.
     else:
         for n, text in enumerate(e.text.splitlines(), 1):
             budget.check()

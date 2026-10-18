@@ -11,6 +11,8 @@ from .markup import (QUOTE, TICK, bind_path, cell_spans, normalized_quote,
 EXT = r'(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|csv|tsv|go|rs|html|css)'
 PATH = re.compile(r'(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>+-]+[\\/])*[\w.@-]+\.' + EXT + r'\b', re.I)
 REFERENCE = re.compile(r'(?P<path>(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>()+-]+[\\/])*[\w.@-]+\.' + EXT + r'):(?:L)?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?', re.I)
+REFERENCE_TAIL = re.compile(r',\s*L?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?(?![\w.]|\s*(?:B\b|bytes?\b|KB\b|MB\b|개|건|회|%))', re.I)
+SINGLE_LINE = re.compile(r'(?<![\w.])(?P<n>\d+)\s*줄(?!짜리)')
 LOCATION = re.compile(r'(?<![\w.])(?:L(?P<l>\d+)(?:\s*[-–~]\s*L?(?P<le>\d+))?|(?:line\s+|줄\s+)(?P<p>\d+)(?:\s*[-–~]\s*(?P<pe>\d+))?|(?P<a>\d+)\s*[-–~]\s*(?P<b>\d+)\s*(?:행|줄)|(?P<n>\d+)\s*(?:행|번째\s*줄))(?![A-Za-z0-9_])', re.I)
 NUMBER = re.compile(r'(?<![\w.])(?:`|\*\*|__)?([\d,]+(?:\.\d+)?)(?:`|\*\*|__)?\s*(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z])', re.I)
 IDENTIFIER = re.compile(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?\Z')
@@ -38,7 +40,7 @@ def paths_in(line: str) -> list[tuple[int, int, str]]:
     for m in TICK.finditer(line):
         value = m.group(1)
         # Preserve spaces and parentheses in explicitly quoted paths.
-        path = re.sub(r':L?\d+(?:[-–~]L?\d+)?$', '', value)
+        path = re.sub(r':L?\d+(?:\s*[-–~]\s*L?\d+)?(?:,\s*L?\d+(?:\s*[-–~]\s*L?\d+)?)*$', '', value)
         if re.search(r'\.' + EXT + r'$', path, re.I) and not re.search(r'\s[=;]|https?://', path):
             result.append((m.start(), m.end(), path))
             covered.append((m.start(), m.end()))
@@ -97,6 +99,36 @@ def paragraphs(lines: list[str]) -> dict[int, str]:
             flush()
     flush()
     return result
+
+
+def metric_context(line: str, start: int, end: int, paths, unit: str, header: str = '') -> bool:
+    """Distinguish a file's dimensions from positions and values stored inside it."""
+    a, b = sentence_span(line, start)
+    visible = list(line)
+    for x, y, _ in paths:
+        visible[x:y] = ' ' * (y-x)
+    local = ''.join(visible[a:b])
+    if re.search(r'파일\s*(?:안|내용)|안의|내부|저장된|담긴|내용|기록|레코드|배열|필드|키의?\s*값|\b(?:content|record|array|field)\b', local, re.I):
+        return False
+    if unit == '줄':
+        if re.search(r'줄\s*수|행\s*수|\blines?\b', header, re.I):
+            return True
+        if re.search(r'총|전체|줄\s*수|행\s*수|Total Lines|wc\s+-l|Get-Content|\btotal\b|line\s*count', local, re.I):
+            return True
+        if line[end:].startswith('짜리') or line[max(0,end-2):end] == '짜리':
+            return True
+        parent = parent_span(line, start)
+        if parent and re.fullmatch(r'\s*[`*_]*[\d,]+[`*_]*\s*줄[`*_]*\s*', line[parent[0]:parent[1]]):
+            return True
+        tick = next((m for m in TICK.finditer(line) if m.start() <= start < m.end()), None)
+        if tick and re.fullmatch(r'\d+\s*줄', tick.group(1)):
+            return False
+        if re.match(r'[`*_]*(?:에서|의|은)', line[end:]):
+            return False
+    elif re.search(r'크기|용량|file\s*size', local, re.I):
+        return True
+    before = [(x, y) for x, y, _ in paths if y <= start and same_scope(line, x, start)]
+    return bool(before and re.fullmatch(r'[\s`*_:(（=\[\]-]*', line[before[-1][1]:start]))
 
 
 def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
@@ -199,6 +231,14 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     start=int(m.group('start')), end=int(m.group('end') or m.group('start')))
             refs.append(c)
             ref_spans.append((m.start(), m.end(), c))
+            cursor = m.end()
+            while tail := REFERENCE_TAIL.match(line, cursor):
+                c = add('K1', m.group('path') + ' … ' + tail.group().lstrip(', '), tail.start(),
+                        path=m.group('path'), start=int(tail.group('start')),
+                        end=int(tail.group('end') or tail.group('start')))
+                refs.append(c)
+                ref_spans.append((tail.start(), tail.end(), c))
+                cursor = tail.end()
         quoted_spans = [(m.start(), m.end()) for m in QUOTE.finditer(line)]
         for m in LOCATION.finditer(line):
             if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans):
@@ -208,6 +248,17 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             c = add('K1', m.group(), m.start(), start=int(start), end=int(end))
             refs.append(c)
             ref_spans.append((m.start(), m.end(), c))
+        for m in SINGLE_LINE.finditer(line):
+            if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans):
+                continue
+            header = next((table_headers[i] for i, (a,b) in enumerate(cell_spans(line)) if row and a <= m.start() < b and i < len(table_headers)), '')
+            if metric_context(line, m.start(), m.end(), paths, '줄', header):
+                continue
+            in_tick = any(t.start() <= m.start() < t.end() and re.fullmatch(r'\d+\s*줄', t.group(1)) for t in TICK.finditer(line))
+            if in_tick or re.match(r'[`*_]*(?:에서|의|은)', line[m.end():]):
+                c = add('K1', m.group(), m.start(), start=int(m.group('n')), end=int(m.group('n')))
+                refs.append(c)
+                ref_spans.append((m.start(), m.end(), c))
         ticks = list(TICK.finditer(line))
         quoted = []
         snippets = []
@@ -217,6 +268,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if re.search(r'번역\s*:', sentence(line, m.start())):
                 continue
             value = next(g for g in m.groups() if g is not None)
+            if len(value) < 8 or not value.strip():
+                continue
             quoted.append((m.start(), value))
             snippets.append((m.start(), m.end(), value, m.group(), False))
             quote_path, ambiguous = binding(m.start())
@@ -249,16 +302,21 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             possible = [(a, b, c) for a, b, c in ref_spans if same_scope(line, pos, a) and adjacent_snippet(line, (a, b), snippet)
                         and not (snippet[0] <= a < snippet[1])]
             if possible:
+                numbered_position = re.match(r'\s*(?:line\s+)?(\d+):', snippet[2], re.I)
+                if numbered_position:
+                    exact = [r for r in possible if r[2].start <= int(numbered_position.group(1)) <= r[2].end]
+                    possible = exact or possible
                 preceding = [r for r in possible if r[1] <= pos]
                 selected = preceding[-1] if preceding else possible[0]
                 attached.setdefault(id(selected[2]), []).append(snippet)
         for c in refs:
+            reference_text = c.text
             for index, snippet in enumerate(attached.get(id(c), [])):
                 target = c if index == 0 else replace(c)
                 if index:
                     claims.append(target)
                 target.quote, target.quote_code = snippet[2], snippet[4]
-                target.text = next(line[a:b] for a, b, original in ref_spans if original is c) + ' ' + snippet[3]
+                target.text = reference_text + ' ' + snippet[3]
         if not refs and previous_refs and snippets:
             for c in previous_refs:
                 if c.report_line == line_no-1 and not c.quote and (
@@ -269,7 +327,12 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             value = m.group(1)
             if re.match(r'(?:[A-Za-z]:[\\/]|file://|https?://)', value) or '/' in value or '\\' in value:
                 continue
-            if REFERENCE.search(value) or paths_in(value) or LOCATION.fullmatch(value) or re.fullmatch(r'[0-9a-f]{7,40}', value, re.I):
+            if REFERENCE.search(value) or paths_in(value) or LOCATION.fullmatch(value) or SINGLE_LINE.fullmatch(value) or re.fullmatch(r'[0-9a-f]{7,40}', value, re.I):
+                continue
+            exit_claim = re.search(r'\b(?:exit(?:\s+code)?|rc)\s*[:=]?\s*(-?\d+)\b|종료\s*(?:코드)?\s*[:=]?\s*(-?\d+)', sentence(line, m.start()), re.I)
+            if exit_claim and re.fullmatch(r'[\w .:-]+', value):
+                add('K4', m.group(), m.start(), value=value,
+                    command_exit=int(next(g for g in exit_claim.groups() if g is not None)))
                 continue
             kv = re.fullmatch(r'([A-Za-z_$][\w.$]*)\s*[:=]\s*["\u201c]?([^"\u201d]+?)["\u201d]?', value)
             bound, candidates = binding(m.start())
@@ -292,7 +355,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 continue
             path, candidates = binding(m.start())
             local = sentence(line, m.start())
-            nearby = [t.group(1) for t in ticks if t.end() <= m.start() and IDENTIFIER.fullmatch(t.group(1)) and same_scope(line, t.start(), m.start())]
+            nearby = [t.group(1) for t in ticks if t.end() <= m.start() and IDENTIFIER.fullmatch(t.group(1)) and not paths_in(t.group(1)) and same_scope(line, t.start(), m.start())]
             entity = nearby[-1] if nearby else ''
             key = re.search(r'([A-Za-z_$][\w.$]*)\s*[:=]\s*$', line[:m.start()])
             if key:
@@ -303,7 +366,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if unit.lower() in {'line', 'lines'}:
                 unit = '줄'
             setting = bool(key or re.search(r'제한|한도|최대|최소|\blimit\b|\bmax(?:imum)?\b|\bmin(?:imum)?\b|설정값', local, re.I))
-            file_metric = bool(path or candidates) and not setting and unit.lower() in {'줄', 'b', 'bytes', 'byte', '바이트', 'kb', 'mb', 'kib', 'mib'}
+            header = next((table_headers[i] for i, (a,b) in enumerate(cell_spans(line)) if row and a <= m.start() < b and i < len(table_headers)), '')
+            file_metric = bool(path or candidates) and not setting and not entity and unit.lower() in {'줄', 'b', 'bytes', 'byte', '바이트', 'kb', 'mb', 'kib', 'mib'} and metric_context(line, m.start(), m.end(), paths, unit, header)
             if not file_metric and not entity:
                 continue
             add('K2' if file_metric else 'K6', m.group(), m.start(), value=m.group(1).replace(',', ''), unit=unit, entity=entity)
@@ -317,6 +381,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 if number and metric and (path or candidates) and not re.search(r'제한|설정|한도', header):
                     add('K2', value, a, value=number.group(1).replace(',', ''), unit=metric)
         for m in re.finditer(r'(?<![\w])[0-9a-f]{7,40}(?![\w])', line, re.I):
+            if re.fullmatch(r'20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])', m.group()) and not re.search(r'(?:\bcommit|\bSHA|해시|커밋)\s*[:=]?\s*`?$', line[:m.start()], re.I):
+                continue
             nearby = sentence(line, m.start())
             in_tick = any(t.start() <= m.start() < t.end() for t in ticks)
             if len(m.group()) == 40 or in_tick or re.search(r'commit|커밋|HEAD|해시|SHA|revision|리비전|parent|부모|대상|\bbase\b|\btarget\b|\bmerge\b', nearby, re.I):
