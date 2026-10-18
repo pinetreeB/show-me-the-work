@@ -192,6 +192,11 @@ def reported_claim(line: str, pos: int) -> bool:
     if correction is None:
         return False
     attributed = sentence_text[:correction.start()]
+    # "적은" is also the adjective "little/few". A reporting verb requires
+    # an author/report subject or a quoted assertion ending in -라고/-다고.
+    attributed = re.sub(
+        r'(?<![가-힣])(?:코드|분량|내용|수|양|비용|메모리)(?:가|이|는|은)\s+적은',
+        lambda match: " " * len(match.group()), attributed)
     if re.search(
         r'(?<![가-힣\w])(?:저는|제가|나는|내가|우리는|본\s*보고서(?:는|가)?|이\s*보고서(?:는|가)?|현재\s*보고서(?:는|가)?)'
         r'(?:[^.;]{0,80})?(?:주장했|보고했|적었|적혀|적은|기록했|썼)|'
@@ -749,6 +754,22 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 preceding = [r for r in possible if r[1] <= pos]
                 selected = preceding[-1] if preceding else possible[0]
                 attached.setdefault(id(selected[2]), []).append(snippet)
+        # D5: code separated from references by descriptive text still owns
+        # an atom. Try the original file as a whole, without inventing a range.
+        attached_positions = {s[0] for group in attached.values() for s in group}
+        for snippet in snippets:
+            pos = snippet[0]
+            if (not snippet[4] or pos in grouped_snippets or pos in attached_positions
+                    or pos in quote_claims or not refs):
+                continue
+            local_paths = tuple(dict.fromkeys(path for a, _, path in paths
+                                               if same_quote_scope(line, pos, a)))
+            claim = add('K5', snippet[3], pos, path=local_paths[0] if len(local_paths) == 1 else '',
+                        quote=snippet[2], quote_code=True, unattached_quote=True)
+            quote_claims[pos] = claim
+            if len(local_paths) != 1:
+                claim.contextual_reason = 'binding_ambiguous'
+                claim.binding_candidates = local_paths
         for c in refs:
             reference_text = c.text
             candidates = attached.get(id(c), [])

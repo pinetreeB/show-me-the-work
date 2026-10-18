@@ -48,7 +48,8 @@ def test_only_sent_redacted_excerpts_and_ref_are_used(tmp_path):
         result = verify_judgments([{**row, "evidence_quote": quote, "evidence_ref": ref}], items)
         assert not result["items"] and result["counts"]["quote_not_in_excerpt"] == 1
     result = verify_judgments([{**row, "evidence_quote": "[REDACTED:password]", "evidence_ref": 1}], items)
-    assert result["counts"]["quote_verified"] == 1
+    assert result["counts"]["quote_verified"] == 0
+    assert result["counts"]["quote_not_in_excerpt"] == 1
 
 
 @pytest.mark.parametrize("quote,verified", [

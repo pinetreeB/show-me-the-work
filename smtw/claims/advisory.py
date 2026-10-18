@@ -110,7 +110,8 @@ def verify_judgments(judgments, sent: dict[str, dict]) -> dict:
         excerpt = next((e for e in sent[row["id"]]["excerpts"] if e["ref"] == ref), None)
         # Source line numbers are presentation metadata, not quote evidence.
         content = re.sub(r"(?m)^\d+: ?", "", excerpt["text"]) if excerpt else ""
-        if not content or not quote_in_text(quote, content, prose=True):
+        if (len(quote.strip()) < 8 or "[REDACTED:" in quote.upper()
+                or not content or not quote_in_text(quote, content, prose=True)):
             counts["quote_not_in_excerpt"] += 1
             counts["not_enough_evidence"] += 1
             continue

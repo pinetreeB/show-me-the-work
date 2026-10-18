@@ -149,8 +149,9 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
             return Result('match' if okay else 'mismatch', '줄 번호 접두사를 제외한 코드 인용 ' + ('일치' if okay else '불일치'),
                           '\n'.join(e.lines[n] for n, _ in pairs), 'quote_match' if okay else 'quote_mismatch')
         prose = not c.quote_code and not code_ellipsis(c.quote)
-        if c.check_type == 'K1' and c.candidate_quotes and any(
-                quote_in_text(quote, text, prose=not code) for quote, code in c.candidate_quotes):
+        if (c.check_type == 'K1' and not quote_in_text(c.quote, text, prose=prose)
+                and c.candidate_quotes and any(
+                quote_in_text(quote, text, prose=not code) for quote, code in c.candidate_quotes)):
             return Result('unverifiable', '후보 인용 중 일부만 줄에 결합되어 대응 관계 미확정',
                           text, 'binding_ambiguous')
         if not quote_in_text(c.quote, text, prose=False):
@@ -595,6 +596,22 @@ class Checker:
 
     def apply(self, c: Claim):
         self.budget.check()
+        if c.check_type == 'K5' and c.unattached_quote:
+            # A detached snippet has a possible file, not a proven citation.
+            # Positive whole-file evidence is useful; failure cannot prove a
+            # false quote until its binding is known.
+            candidate = replace(c, unattached_quote=False, contextual_reason='')
+            self.apply(candidate)
+            c.source = {**candidate.source, 'whole_file_unattached_quote': True,
+                        'comparison_verdict': candidate.verdict,
+                        'comparison_reason_code': candidate.reason_code}
+            if candidate.verdict == 'match':
+                c.verdict, c.reason, c.reason_code = candidate.verdict, candidate.reason, candidate.reason_code
+            else:
+                c.verdict, c.reason, c.reason_code = (
+                    'unverifiable', '떨어진 코드 인용의 파일 전체 대조로 결합을 확정하지 못함',
+                    'binding_ambiguous')
+            return
         if c.check_type == 'K5' and c.candidate_ranges and self.resolve_ambiguous_reference(c):
             return
         if c.contextual_reason and not (c.check_type == 'K1' and (

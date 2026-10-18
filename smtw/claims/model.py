@@ -41,6 +41,7 @@ class Claim:
     candidate_ranges: tuple[tuple[str, int, int], ...] = ()
     candidate_quotes: tuple[tuple[str, bool], ...] = ()
     candidate_group_closed: bool = False
+    unattached_quote: bool = False
     repository_contexts: tuple[str, ...] = ()
     command_exit: int | None = None
     ordinal: bool = False

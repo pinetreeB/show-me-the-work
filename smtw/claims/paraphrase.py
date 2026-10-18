@@ -6,7 +6,7 @@ from functools import lru_cache
 import re
 import textwrap
 
-from .markup import masked, normalized_quote, quote_in_text
+from .markup import masked, normalized_quote
 from .model import Evidence
 
 _HOLE = "__smtw_paraphrase_omission__"
@@ -175,7 +175,7 @@ def paraphrase_rule(quote: str, evidence: Evidence, start: int = 0, end: int = 0
                     if (isinstance(target, ast.Name) and target.id == rest_target.id
                             and _in_range(node, base, start, end)):
                         segment = ast.get_source_segment(text, node) or ""
-                        if quote_in_text(rest, segment, prose=False):
+                        if normalized_quote(rest) == normalized_quote(segment):
                             return "R-qual"
         if assignment is not None and assignment.lineno == assignment.end_lineno:
             name = assignment.targets[0].id

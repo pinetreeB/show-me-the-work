@@ -66,8 +66,8 @@ def test_open_group_checks_all_observed_versions(tmp_path):
 ])
 def test_multiple_quotes_cannot_turn_wrong_line_binding_into_pass(tmp_path, report):
     result = inspect(tmp_path, report, NOTES)
-    assert all(c['verdict'] == 'unverifiable' and c['reason_code'] == 'binding_ambiguous'
-               for c in atoms(result, 'K1'))
+    assert sorted((c['verdict'], c['reason_code']) for c in atoms(result, 'K1')) == [
+        ('match', 'quote_match'), ('unverifiable', 'binding_ambiguous')]
     assert result['status'] == 'INCOMPLETE'
 
 
@@ -144,7 +144,7 @@ def test_two_code_quotes_keep_ambiguous_binding_instead_of_skipping_second(tmp_p
                      'if value > 10:\n    return "too large"\nreturn "ok"\n', 'logic.py')
     assert result['status'] == 'INCOMPLETE'
     assert len(atoms(result, 'K1')) == 2
-    assert all(c['reason_code'] == 'binding_ambiguous' for c in atoms(result, 'K1'))
+    assert sorted(c['reason_code'] for c in atoms(result, 'K1')) == ['binding_ambiguous', 'quote_match']
 
 
 def test_separate_reference_descriptions_do_not_form_a_candidate_list(tmp_path):
