@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from multiprocessing.connection import Client, Connection
+import os
 import sys
 
 
@@ -10,6 +11,9 @@ def _send(channel: Connection, status: str, **details: str) -> None:
 
 
 def main() -> int:
+    if os.environ.get("BLOCK_COUNTER_WORKER_EXIT_BEFORE_CONNECT"):
+        print("forced exit before counter barrier", file=sys.stderr)
+        return 23
     channel = Client((sys.argv[1], int(sys.argv[2])), authkey=bytes.fromhex(sys.argv[3]))
     try:
         channel.send_bytes(sys.argv[4].encode("ascii"))

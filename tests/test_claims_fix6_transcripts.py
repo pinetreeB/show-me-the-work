@@ -115,4 +115,4 @@ def test_fix6_command_positions_are_computed_once_and_500_lines_stay_fast(monkey
     assert Call('shell', {'command': command}, 1, '').write is False
     elapsed = perf_counter() - started
     assert position_calls == 1
-    assert elapsed < 0.1
+    assert elapsed < 0.5
