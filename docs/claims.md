@@ -236,3 +236,6 @@ command naming exactly one file is accepted as a partial read, never as proof of
 whole-file absence. Numeric claims without an explicit entity and semantic item
 equivalence are intentionally unverified or unextracted. Precision/recall and
 runtime must be measured on independently labelled reports before operational use.
+
+- FIX8a2: `quote_mismatch`는 개별 후보 및 같은 파일의 인접·겹친 후보 연결 범위를 모두 대조한다. 각각의 개수 불일치도 후보 전체 부재는 확정하며, 괄호 안 인용은 바깥 참조 묶음과 구분한다.
+- FIX8a2: 긴 줄은 전체 원문을 비교하며 K1의 결합 후보 인용 중 하나라도 일치하면 `quote_match`; 출처 괄호만으로 계측 대상을 정한 경우 `inherited_binding`, 명시된 남의 날조 서술은 `reported_claim`으로 보존한다. 식별자 안 `-1B` 등은 크기 원자가 아니다.

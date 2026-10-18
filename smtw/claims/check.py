@@ -135,6 +135,9 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
             return Result('match' if okay else 'mismatch', '줄 번호 접두사를 제외한 코드 인용 ' + ('일치' if okay else '불일치'),
                           '\n'.join(e.lines[n] for n, _ in pairs), 'quote_match' if okay else 'quote_mismatch')
         prose = not c.quote_code
+        if c.check_type == 'K1' and c.candidate_quotes and any(
+                quote_in_text(quote, text, prose=not code) for quote, code in c.candidate_quotes):
+            return Result('match', '결합 후보 인용 중 하나가 해당 줄에 일치', text, 'quote_match')
         if not quote_in_text(c.quote, text, prose=prose):
             return Result('mismatch', f'대응 줄 원문과 인용 불일치: {text[:240]}', text, 'quote_mismatch')
         return Result('match', '파일 줄 범위·인용 일치', text, 'quote_match')
@@ -367,6 +370,26 @@ class Checker:
                      (e.revision.startswith(c.revision) or c.revision.startswith(e.revision))]
         return fixed or observed
 
+    def quote_candidate_ranges(self, c: Claim) -> tuple[tuple[str, int, int], ...]:
+        """Keep individual ranges and add only same-file connected unions."""
+        ranges = list(c.candidate_ranges)
+        by_path = defaultdict(list)
+        for path, start, end in ranges:
+            if 1 <= start <= end:
+                by_path[normalize_path(path, self.aliases)].append((path, start, end))
+        for spans in by_path.values():
+            path, start, end = sorted(spans, key=lambda span: (span[1], span[2]))[0]
+            for _, next_start, next_end in sorted(spans, key=lambda span: (span[1], span[2]))[1:]:
+                if next_start <= end + 1:
+                    end = max(end, next_end)
+                else:
+                    if (path, start, end) not in ranges:
+                        ranges.append((path, start, end))
+                    start, end = next_start, next_end
+            if (path, start, end) not in ranges:
+                ranges.append((path, start, end))
+        return tuple(ranges)
+
     def resolve_ambiguous_reference(self, c: Claim) -> bool:
         """Resolve one literal quote over a closed set of candidate ranges."""
         if c.check_type != 'K5' or not c.candidate_ranges or not c.candidate_group_closed:
@@ -376,7 +399,7 @@ class Checker:
         every_candidate_observed = True
         every_observation_complete = True
         quote, quote_code = c.candidate_quotes[0]
-        for path, start, end in c.candidate_ranges:
+        for path, start, end in self.quote_candidate_ranges(c):
             candidate = replace(c, path=path, start=start, end=end, quote=quote, quote_code=quote_code,
                                 contextual_reason='', candidate_ranges=(), candidate_quotes=(),
                                 candidate_group_closed=False)
@@ -391,6 +414,7 @@ class Checker:
                                'observation': evidence.metadata()})
         source = {'candidate_ranges': [[path, start, end] for path, start, end in c.candidate_ranges],
                   'candidate_quotes': [quote for quote, _ in c.candidate_quotes],
+                  'joined_candidate_ranges': [list(r) for r in self.quote_candidate_ranges(c) if r not in c.candidate_ranges],
                   'matrix': matrix}
         if any(result.verdict == 'match' for result in results):
             c.verdict, c.reason, c.reason_code = (

@@ -98,6 +98,8 @@ def quote_fragments(value: str, *, prose: bool) -> list[str]:
 
 
 def quote_in_text(quote: str, text: str, *, prose: bool) -> bool:
+    if quote and quote in text and '\ufffd' not in quote:
+        return True
     parts = quote_fragments(quote, prose=prose)
     text = normalized_quote(text, prose=prose)
     cursor = 0

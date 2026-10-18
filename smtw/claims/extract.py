@@ -14,7 +14,7 @@ REFERENCE = re.compile(r'(?P<path>(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>()+
 REFERENCE_TAIL = re.compile(r',\s*L?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?(?![\w.]|\s*(?:B\b|bytes?\b|KB\b|MB\b|개|건|회|%))', re.I)
 SINGLE_LINE = re.compile(r'(?<![\w.])(?P<n>\d+)\s*줄(?!짜리)')
 LOCATION = re.compile(r'(?<![\w.])(?:L(?P<l>\d+)(?:\s*[-–~]\s*L?(?P<le>\d+))?|(?:line\s+|줄\s+)(?P<p>\d+)(?:\s*[-–~]\s*(?P<pe>\d+))?|(?P<a>\d+)\s*[-–~]\s*(?P<b>\d+)\s*(?:행|줄)|(?P<n>\d+)\s*(?:행|번째\s*줄))(?![A-Za-z0-9_])', re.I)
-NUMBER = re.compile(r'(?<![\w.])(?:`|\*\*|__)?(\d[\d,]*(?:\.\d+)?)(?:`|\*\*|__)?\s*(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z0-9])', re.I)
+NUMBER = re.compile(r'(?<![\w.-])(?:`|\*\*|__)?(\d[\d,]*(?:\.\d+)?)(?:`|\*\*|__)?\s*(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z0-9])', re.I)
 IDENTIFIER = re.compile(r'[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?\Z')
 CONTEXT = re.compile(r'함수|변수|설정\s*키|메서드|필드|\b키\b|\b(?:function|method|variable|config|field)\b', re.I)
 STATUS_WORD = re.compile(r'(?:PASS|FAIL|INCOMPLETE|ERROR|RUNNING)\Z', re.I)
@@ -126,12 +126,41 @@ def proposed_or_recommended(context: str) -> bool:
     return bool(re.search(r'바꿔야|수정\s*제안|제안|권장|권고|\b(?:should|proposed|recommended)\b', ''.join(prose), re.I))
 
 
+def source_only_binding(line: str, pos: int, path: str, paths) -> bool:
+    """A trailing parenthetical citation is evidence, not the measured target."""
+    mentions = [(a, b) for a, b, candidate in paths if candidate == path]
+    if not mentions:
+        return False
+    sentence_end = sentence_span(line, pos)[1]
+    for a, _ in mentions:
+        parent = parent_span(line, a)
+        if (not parent or parent[0] <= pos <= parent[1] or a <= pos
+                or not REFERENCE.search(line[parent[0]:parent[1]])
+                or line[parent[1]+1:sentence_end].strip(' .。;!')):
+            return False
+    return True
+
+
+def quote_scope(line: str, a: int, b: int) -> bool:
+    return same_scope(line, a, b) and parent_span(line, a) == parent_span(line, b)
+
+
 def reported_claim(line: str, pos: int) -> bool:
     """Only third-party claims before an explicit correction are attributed."""
     a, b = sentence_span(line, pos)
     visible = masked(line)
     sentence_text = visible[a:b]
     relative = pos - a
+    # Explicitly attributed fabrication is a reported assertion, including a
+    # review-round label followed by a source citation. Self claims stay checked.
+    fabrication = re.search(r'날조|지어(?:냄|냈|낸)|\bfabricated\b', sentence_text, re.I)
+    cited = any(source_only_binding(line, pos, path, paths_in(line))
+                for _, _, path in paths_in(line))
+    attributed_fabrication = re.search(
+        r'(?:이전|기존|옛)\s*(?:보고|주장)|검토자|리뷰어|\b(?:they|reviewer|old report)\b|\d+차',
+        sentence_text, re.I)
+    if fabrication and fabrication.start() > relative and cited and attributed_fabrication:
+        return True
     contrasts = list(re.finditer(
         r'실제(?:로)?|사실은|(?:했|였|었|이)지만|하지만|그러나|\b(?:actually|in fact|but|whereas)\b',
         sentence_text, re.I,
@@ -203,7 +232,9 @@ def adjacent_snippet(line: str, span: tuple[int, int], snippet: tuple) -> bool:
     if not snippet[4] or numbered_snippet(snippet[2]):
         return True
     a, b = span
-    gap = line[b:snippet[0]] if b <= snippet[0] else line[snippet[1]:a]
+    visible = masked(line)
+    gap = visible[b:snippet[0]] if b <= snippet[0] else visible[snippet[1]:a]
+    gap = re.sub(r'실측|원문|인용|\b(?:actual|quote)\b', '', gap, flags=re.I)
     return bool(re.fullmatch(r'[\s`*:：,，;()\[\]{}=→-]*', gap))
 
 
@@ -360,6 +391,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 path and explicit is None and not locally_bound
                 and any(p != path.replace('\\', '/').casefold() for p in contextual_paths)
             )
+            inherited_binding |= bool(kind == 'K2' and path and source_only_binding(line, pos, path, paths))
             contextual_reason = kwargs.pop('contextual_reason', '')
             if kind in {'K1', 'K2', 'K6'} and reported_claim(line, pos):
                 contextual_reason = 'reported_claim'
@@ -465,14 +497,14 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         for a, _, c in ref_spans:
             if any(any(c is member for member in group) for group in reference_groups):
                 continue
-            local = [s for s in snippets if same_scope(line, a, s[0])]
+            local = [s for s in snippets if quote_scope(line, a, s[0])]
             group = [other for x, y, other in ref_spans
-                     if same_scope(line, a, x) and local and y <= local[0][0]]
+                     if quote_scope(line, a, x) and local and y <= local[0][0]]
             if len(group) > 1:
                 reference_groups.append(group)
         for group in reference_groups:
             spans = [(a, b) for a, b, c in ref_spans if any(c is member for member in group)]
-            local = [s for s in snippets if s[0] >= spans[-1][1] and same_scope(line, s[0], spans[0][0])
+            local = [s for s in snippets if s[0] >= spans[-1][1] and quote_scope(line, s[0], spans[0][0])
                      and not any(spans[-1][1] <= a < s[0] for a, _, c in ref_spans if all(c is not member for member in group))]
             if not local:
                 continue
@@ -491,8 +523,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 ranges = tuple((member.path, member.start, member.end) for member in group)
                 direct_gap = bool(re.fullmatch(r'[\s`*:：,，;()\[\]{}=→·/-]*',
                                                line[spans[-1][1]:local[0][0]]))
-                closed = bool(len(local) == 1 and direct_gap
-                              and not (local[0][4] and '...' in local[0][2]))
+                closed = bool((ordered or len(local) == 1 and direct_gap)
+                              and not any(s[4] and '...' in s[2] for s in local))
                 grouped_snippets.update(s[0] for s in local)
                 for snippet in local:
                     group_claim = quote_claims.get(snippet[0])
@@ -521,7 +553,10 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 attached.setdefault(id(selected[2]), []).append(snippet)
         for c in refs:
             reference_text = c.text
-            for index, snippet in enumerate(attached.get(id(c), [])):
+            candidates = attached.get(id(c), [])
+            if len(candidates) > 1 and not any(numbered_snippet(s[2]) for s in candidates):
+                c.candidate_quotes = tuple((s[2], s[4]) for s in candidates)
+            for index, snippet in enumerate(candidates):
                 target = c if index == 0 else replace(c)
                 if index:
                     claims.append(target)
