@@ -124,6 +124,37 @@ def proposed_or_recommended(context: str) -> bool:
     return bool(re.search(r'바꿔야|수정\s*제안|제안|권장|권고|\b(?:should|proposed|recommended)\b', ''.join(prose), re.I))
 
 
+def reported_claim(line: str, pos: int) -> bool:
+    """Attribution ends at a correction; the correction remains checkable."""
+    a, b = sentence_span(line, pos)
+    visible = masked(line)
+    origin = a
+    for marker in re.finditer(r'실제(?:로)?|사실은|\b(?:actually|in fact|but|whereas)\b', visible[a:b], re.I):
+        start, end = origin + marker.start(), origin + marker.end()
+        if end <= pos:
+            a = end
+        elif start > pos:
+            b = start
+            break
+    before, after = visible[a:pos], visible[pos:b]
+    return bool(re.search(r'(?:이전|기존|옛|지난)\s*(?:보고|주장)|\b(?:claimed|reported)\b', before, re.I)
+                or re.search(r'(?:이?라고|라며)\s*(?:주장|보고|적|기록|썼)', after))
+
+
+def proposed_name(context: str, span: tuple[int, int]) -> bool:
+    """Only the named atom's proposal syntax, never a sentence-wide cue."""
+    before, after = masked(context[:span[0]]), context[span[1]:]
+    before = re.split(r'[,;]|\bbut\b|하지만|그러나', before, flags=re.I)[-1]
+    noun = r'\s*(?:[은는이가을를]\s*)?(?:(?:클래스|상수|함수|메서드|필드|설정\s*키)[은는이가을를]?\s*)?'
+    if re.match(noun + r'(?:(?:새로\s*)?(?:추가|도입|신설)(?:하면|해야|할|하려)|(?:새로\s*)?제안|필요하|가정하면)', after):
+        return True
+    if re.search(r'새로\s*$', before) and re.match(noun + r'(?:추가|도입|신설)한다', after):
+        return True
+    return bool(re.search(r'(?:제안|신설|도입할)\s*[:：]?\s*$', before)
+                or re.search(r'\b(?:(?:will|should|must|would|could)\s+(?:add|introduce|create|use)|'
+                             r'consider\s+adding|propose\s+(?:adding|introducing))\s+(?:(?:a|new|function|class|constant)\s+)*$', before, re.I))
+
+
 def malformed_metrics(line: str, paths: list[tuple[int, int, str]]):
     """Yield only comma-only file metrics; ordinary comma prose remains prose."""
     for match in re.finditer(r'(?<![\w.])(?:`|\*\*|__)?(?P<number>,+)(?:`|\*\*|__)?\s*'
@@ -172,6 +203,8 @@ def metric_context(line: str, start: int, end: int, paths, unit: str, header: st
     if re.search(r'파일\s*(?:안|내용)|안의|내부|저장된|담긴|내용|기록|레코드|배열|필드|키의?\s*값|\b(?:content|record|array|field)\b', local, re.I):
         return False
     if unit == '줄':
+        if re.search(r'\d+\s*lines?\b', local, re.I) or reported_claim(line, start):
+            return True
         if re.search(r'줄\s*수|행\s*수|\blines?\b', header, re.I):
             return True
         if re.search(r'총|전체|줄\s*수|행\s*수|Total Lines|wc\s+-l|Get-Content|\btotal\b|line\s*count', local, re.I):
@@ -189,7 +222,7 @@ def metric_context(line: str, start: int, end: int, paths, unit: str, header: st
     elif re.search(r'크기|용량|file\s*size', local, re.I):
         return True
     before = [(x, y) for x, y, _ in paths if y <= start and same_scope(line, x, start)]
-    return bool(before and re.fullmatch(r'[\s`*_:(（=\[\]-]*', line[before[-1][1]:start]))
+    return bool(before and re.fullmatch(r'[\s`*_:(（=\[\]-]*(?:(?:은|는|총)\s*)*', line[before[-1][1]:start]))
 
 
 def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
@@ -279,10 +312,17 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 when = stamp.group()
             bound, candidates = binding(pos)
             explicit = kwargs.pop('path', None)
+            path = bound if explicit is None else explicit
+            inherited_binding = bool(path and explicit is None and not any(
+                p == path and (same_scope(line, pos, start) or row) for start, _, p in paths))
+            contextual_reason = kwargs.pop('contextual_reason', '')
+            if kind in {'K1', 'K2', 'K6'} and reported_claim(line, pos):
+                contextual_reason = 'reported_claim'
             c = Claim(line_no, text, kind, path=bound if explicit is None else explicit,
                       binding_candidates=candidates if explicit is None else (),
                       repository_contexts=(context, line, paragraph_contexts.get(line_no, line)) if kind == 'K3' else (),
                       context=context, author_marked=marked(context),
+                      contextual_reason=contextual_reason, inherited_binding=inherited_binding,
                       current=bool(re.search(r'현재\s*(?:HEAD|파일|상태)|지금\s*파일|current\s+HEAD', scope, re.I)),
                       revision=rev.group(1) if rev else '', when=when, **kwargs)
             claims.append(c)
@@ -290,11 +330,13 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
 
         refs = []
         ref_spans = []
+        reference_groups = []
         for m in REFERENCE.finditer(line):
             c = add('K1', m.group(), m.start(), path=m.group('path'),
                     start=int(m.group('start')), end=int(m.group('end') or m.group('start')))
             refs.append(c)
             ref_spans.append((m.start(), m.end(), c))
+            group = [c]
             cursor = m.end()
             while tail := REFERENCE_TAIL.match(line, cursor):
                 c = add('K1', m.group('path') + ' … ' + tail.group().lstrip(', '), tail.start(),
@@ -302,7 +344,10 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                         end=int(tail.group('end') or tail.group('start')))
                 refs.append(c)
                 ref_spans.append((tail.start(), tail.end(), c))
+                group.append(c)
                 cursor = tail.end()
+            if len(group) > 1:
+                reference_groups.append(group)
         quoted_spans = [(m.start(), m.end()) for m in QUOTE.finditer(line)]
         for m in LOCATION.finditer(line):
             if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans):
@@ -323,6 +368,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 c = add('K1', m.group(), m.start(), start=int(m.group('n')), end=int(m.group('n')))
                 refs.append(c)
                 ref_spans.append((m.start(), m.end(), c))
+        ref_spans.sort(key=lambda span: span[0])
         ticks = list(TICK.finditer(line))
         quoted = []
         snippets = []
@@ -332,7 +378,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if re.search(r'번역\s*:', sentence(line, m.start())):
                 continue
             value = next(g for g in m.groups() if g is not None)
-            if len(value) < 8 or not value.strip():
+            if not value.strip() or len(value) < 8 and not any(same_scope(line, m.start(), a) for a, _, _ in ref_spans):
                 continue
             quoted.append((m.start(), value))
             snippets.append((m.start(), m.end(), value, m.group(), False))
@@ -361,7 +407,40 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if numbered_snippet(m.group(1)) or code_snippet(m.group(1)):
                 snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
         attached: dict[int, list[tuple]] = {}
+        grouped_snippets = set()
+        # The same list may repeat the filename instead of using comma tails.
+        for a, _, c in ref_spans:
+            if any(any(c is member for member in group) for group in reference_groups):
+                continue
+            local = [s for s in snippets if same_scope(line, a, s[0])]
+            group = [other for x, y, other in ref_spans
+                     if same_scope(line, a, x) and local and y <= local[0][0]]
+            if len(group) > 1:
+                reference_groups.append(group)
+        for group in reference_groups:
+            spans = [(a, b) for a, b, c in ref_spans if any(c is member for member in group)]
+            local = [s for s in snippets if s[0] >= spans[-1][1] and same_scope(line, s[0], spans[0][0])
+                     and not any(spans[-1][1] <= a < s[0] for a, _, c in ref_spans if all(c is not member for member in group))]
+            if not local:
+                continue
+            numbered = [re.match(r'\s*(?:line\s+)?(\d+):', s[2], re.I) for s in local]
+            if all(numbered):
+                continue  # Explicit numbered snippets use the exact-range path below.
+            grouped_snippets.update(s[0] for s in local)
+            before_quotes = masked(line[spans[-1][1]:local[0][0]])
+            after_quotes = line[local[-1][1]:sentence_span(line, spans[0][0])[1]]
+            ordered = (re.search(r'각각|\brespectively\b', before_quotes, re.I)
+                       or re.match(r'\s*[,，]?\s*respectively\b', after_quotes, re.I))
+            if len(local) == len(group) and ordered:
+                for c, snippet in zip(group, local):
+                    attached.setdefault(id(c), []).append(snippet)
+            else:
+                for c in group:
+                    c.contextual_reason = c.contextual_reason or 'binding_ambiguous'
+                    c.text += ' ' + ' '.join(s[3] for s in local)
         for snippet in snippets:
+            if snippet[0] in grouped_snippets:
+                continue
             pos = snippet[0]
             possible = [(a, b, c) for a, b, c in ref_spans if same_scope(line, pos, a) and adjacent_snippet(line, (a, b), snippet)
                         and not (snippet[0] <= a < snippet[1])]
@@ -399,9 +478,16 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     command_exit=int(next(g for g in exit_claim.groups() if g is not None)))
                 continue
             kv = re.fullmatch(r'([A-Za-z_$][\w.$]*)\s*[:=]\s*["\u201c]?([^"\u201d]+?)["\u201d]?', value)
+            spaced_value = re.fullmatch(r'([A-Za-z_$][\w.$]*)\s+(\d+(?:\.\d+)?)', value)
+            if spaced_value and (general_identifier(spaced_value.group(1)) or not (
+                    reported_claim(line, m.start())
+                    or re.search(r'실제|사실은|\b(?:actually|in fact)\b', sentence(line, m.start()), re.I))):
+                spaced_value = None
+            kv = kv or spaced_value
             bound, candidates = binding(m.start())
-            if kv and (bound or candidates) and (re.search(r'\s[:=]|[:=]\s|["\u201c]', value) or CONTEXT.search(sentence(line, m.start()))):
-                add('K4', m.group(), m.start(), value=kv.group(1), definition=True)
+            if kv and (bound or candidates) and (spaced_value or re.search(r'\s[:=]|[:=]\s|["\u201c]', value) or CONTEXT.search(sentence(line, m.start()))):
+                add('K4', m.group(), m.start(), value=kv.group(1), definition=True,
+                    contextual_reason='reported_claim' if reported_claim(line, m.start()) else '')
                 add('K6', m.group(), m.start(), value=kv.group(2).strip(), entity=kv.group(1), unit='value')
                 continue
             if not IDENTIFIER.fullmatch(value):
@@ -422,6 +508,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 continue
             definition = bool(re.search(r'정의|설정\s*키|필드|\b키\b|\bfunction\b|함수', prose, re.I))
             add('K4', m.group(), m.start(), value=value.removesuffix('()'), definition=definition,
+                contextual_reason='proposed_name' if proposed_name(context, (
+                    m.start() - sentence_span(line, m.start())[0], m.end() - sentence_span(line, m.start())[0])) else '',
                 negated_context=negated_context(context, (m.start() - sentence_span(line, m.start())[0],
                                                            m.end() - sentence_span(line, m.start())[0])))
         for m, unit in malformed_metrics(line, paths):
@@ -490,9 +578,21 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             title = re.match(r'\s*(?:[:：—–]|\|)\s*([^|]+)', line[end:])
             if not paired and title:
                 paired = [(title.group(1).strip(' *`'), title.group(1).strip())]
+            if not paired:
+                description = line[end:].strip()
+                if re.fullmatch(r'[A-Za-z가-힣][\w-]*(?:\s+[\w-]+){2,}[.!]?', description):
+                    paired = [(description, description)]
             if path or candidates:
                 for expected, raw in paired:
+                    tail = line[end:sentence_span(line, end)[1]].strip(' :：—–|')
+                    token_only = bool(re.fullmatch(r'`[^`]+`|[\d-]+', raw)
+                                      and tail.rstrip('.') == raw)
+                    # Explicit ordinal rows with code identifiers are a supported
+                    # structured mapping, unlike bare issue/review labels.
+                    ordinal_mapping = bool((ordinal or re.fullmatch(r'#\d+|항목\s*\d+', item_id))
+                                           and paths and code_shaped(expected) and IDENTIFIER.fullmatch(expected))
                     add('K9', item_id+' '+raw, start, value=item_id, quote=expected,
+                        contextual_reason='item_token_only' if token_only and not ordinal_mapping else '',
                         ordinal=ordinal or bool(re.fullmatch(r'#\d+|항목\s*\d+', item_id)))
         malformed_arithmetic = re.search(
             r'(?<![\w.])(?:(?P<total>,+)\s*건\s*중\s*(?P<part>\d[\d,]*)\s*건|'

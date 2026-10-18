@@ -369,6 +369,16 @@ class Checker:
 
     def apply(self, c: Claim):
         self.budget.check()
+        if c.contextual_reason and not (c.contextual_reason == 'reported_claim' and c.check_type == 'K1' and c.quote):
+            c.verdict, c.reason_code = 'unverifiable', c.contextual_reason
+            c.reason = {
+                'binding_ambiguous': '여러 줄 번호와 인용의 대응 관계 미확정',
+                'reported_claim': '다른 보고의 옛 주장 인용으로 현재 사실을 확정하지 않음',
+                'proposed_name': '제안·가정·도입 예정인 이름은 현재 존재 주장으로 확정하지 않음',
+                'item_token_only': '항목 번호 뒤 토큰·숫자만으로 항목 설명을 확정하지 않음',
+            }[c.contextual_reason]
+            c.source = {'path': c.path, 'location': f'보고서:{c.report_line}', 'search_scope': []}
+            return
         if c.malformed_number:
             c.verdict, c.reason_code = 'unverifiable', 'malformed_number'
             c.reason = '쉼표만으로 된 숫자 단위·산술 주장은 대조하지 않음'
@@ -462,15 +472,15 @@ class Checker:
                 c.verdict, c.reason, c.reason_code = result.verdict, result.reason, result.code
                 c.source = e.metadata()
                 return
-            hit, complete, scopes = self.repos.identifier(c.value)
+            hit, complete, scopes = self.repos.identifier(c.value, revision=c.revision, when=c.when)
             # git grep proves mention, not definition.
             reads_complete = all(r[0] != 'unverifiable' for r, _ in results)
             has_transcript = bool(self.transcript.version)
-            c.verdict = 'match' if hit and not c.definition else 'absent' if complete and not hit and reads_complete and self.transcript.valid and has_transcript else 'unverifiable'
+            c.verdict = 'absent' if complete and not hit and reads_complete and self.transcript.valid and has_transcript else 'unverifiable'
             searched = (['대화 읽기 결과'] if has_transcript else []) + scopes
             c.reason = '연결 파일 없는 식별자: ' + (' + '.join(searched) or '검색 근거 미확보')
             c.source = {'search_scope': searched, 'existence': 'mention'}
-            c.reason_code = ('token_match' if c.verdict == 'match' else 'not_found' if c.verdict == 'absent'
+            c.reason_code = ('found_outside_scope' if hit else 'not_found' if c.verdict == 'absent'
                              else 'partial_range' if has_transcript else 'transcript_missing')
             return
         if not observations:
@@ -550,6 +560,19 @@ class Checker:
         else:
             c.verdict, c.reason = results[0][0][:2]
             c.reason_code = results[0][0].code
+        if c.inherited_binding and c.verdict == 'mismatch' and c.reason_code in {'range_exceeded', 'value_mismatch'}:
+            c.verdict, c.reason_code = 'unverifiable', 'inherited_binding'
+            c.reason = '상속한 파일과 범위·값의 연결 미확정'
+        if c.verdict == 'absent' and c.check_type in {'K4', 'K6'} and c.reason_code == 'not_found' and self.repos.roots:
+            token = c.value if c.check_type == 'K4' else c.entity
+            hit, complete, scopes = self.repos.identifier(token, revision=c.revision, when=c.when)
+            c.source['repository_search_scope'] = scopes
+            if hit:
+                c.verdict, c.reason_code = 'unverifiable', 'found_outside_scope'
+                c.reason = '연결 읽기에는 없으나 지정 저장소 검색에서 이름 확인'
+            elif not complete:
+                c.verdict, c.reason_code = 'unverifiable', 'repository_search_incomplete'
+                c.reason = '부재 확정 전 지정 저장소 검색을 완료하지 못함'
 
 
 def run(report: Path, *, agy: str | None = None, codex: Path | None = None,

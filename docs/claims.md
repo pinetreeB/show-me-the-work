@@ -193,6 +193,23 @@ fixed-commit files (`commit_missing_file`), historical references without matchi
 evidence (`historical_no_commit`), damaged text (`decode_damage`), missing auxiliary
 files (`pointer_missing`), pending tasks (`async_incomplete`), and timeouts
 (`timed_out`). Text output supplies the same locations and search scopes in Korean.
+The following uncertainty codes retain the extracted claim and never count as a match:
+
+- `binding_ambiguous`: multiple line references and quotations lack a definite one-to-one correspondence; explicit `각각`/`respectively` lists can be checked in order.
+- `reported_claim`: a number or value attributes an earlier claim to another report; a correction introduced by `실제`/`actually` remains checkable, as do literal K1/K5 quotations.
+- `inherited_binding`: a range or value disagrees with a file inherited from context, without an explicit local file binding.
+- `found_outside_scope`: a name missing from linked reads occurs in a supplied repository at its designated commit (HEAD only when no commit was supplied).
+- `repository_search_incomplete`: repository lookup failed or could not honor the claim's time, so absence cannot be confirmed.
+- `proposed_name`: the atom names a proposed, hypothetical, or future addition rather than an existing definition.
+- `item_token_only`: a review/item label followed only by a backtick token, number, or date does not establish an item description; explicit file/ordinal identifier row mappings remain supported.
+
+Before a K4/K6 missing-name verdict, fixed-string `git grep` searches the supplied
+repository scope. A hit lowers the verdict to unverified; it does not verify a
+definition or value. This does not relax explicit value mismatches, missing
+definitions in a file, or literal quotation mismatches. Search errors also remain
+unverified. Past/present factual statements about added or defined names continue
+to be checked for absence.
+
 `verdict_reason_counts` adds a deterministic nested summary, keyed first by verdict
 and then by `reason_code`; each verdict subtotal equals the corresponding `summary`
 count, including neutral `range_only` claims.

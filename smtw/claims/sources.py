@@ -256,15 +256,19 @@ class Repositories:
                               else ('mismatch', 'commit 아닌 객체'))
                 self.cache[('sha', str(root), sha)] = answer
 
-    def identifier(self, token: str) -> tuple[bool, bool, list[str]]:
+    def identifier(self, token: str, *, revision: str = '', when: str = '') -> tuple[bool, bool, list[str]]:
         found, complete, scopes = False, bool(self.roots), []
         for root in self.roots:
-            key = ('grep', str(root), token)
+            fixed = self.commits.get(normalize_path(str(root)), 'HEAD')
+            if when or revision and not (fixed.startswith(revision) or revision.startswith(fixed)):
+                complete = False
+                continue
+            key = ('grep', str(root), fixed, token)
             if key not in self.cache:
-                r = self.git(root, 'grep', '-w', '-F', '-e', token, 'HEAD', '--')
+                r = self.git(root, 'grep', '-q', '-w', '-F', '-e', token, fixed, '--')
                 self.cache[key] = (r.returncode == 0, r.returncode in (0, 1))
             hit, ok = self.cache[key]
             found |= hit
             complete &= ok
-            scopes.append(f'{root}@HEAD git grep -w')
+            scopes.append(f'{root}@{fixed} git grep -w -F')
         return found, complete, scopes
