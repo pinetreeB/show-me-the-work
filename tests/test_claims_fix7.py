@@ -210,11 +210,15 @@ def test_factual_fabrications_are_not_proposals(tmp_path, wording):
     assert result['status'] == 'FAIL'
 
 
-@pytest.mark.parametrize('report', ['R1 `git`', 'R4-N1 `raw`'])
-def test_short_item_token_does_not_create_a_k9_atom(tmp_path, report):
+@pytest.mark.parametrize('report,reason', [
+    ('R1 `git`', 'item_mismatch'),
+    ('R4-N1 `raw`', 'self_assigned_item_id'),
+])
+def test_short_item_description_creates_one_k9_atom(tmp_path, report, reason):
     result = inspect(tmp_path, '`notes.md` ' + report, '# R1\nnever log secrets\n')
-    assert not atoms(result, 'K9')
-    assert result['status'] == 'INCOMPLETE'
+    claims = atoms(result, 'K9')
+    assert len(claims) == 1
+    assert claims[0]['reason_code'] == reason
 
 
 def test_item_date_is_retained_as_unverifiable(tmp_path):

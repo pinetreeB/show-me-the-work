@@ -257,6 +257,66 @@ def paragraphs(lines: list[str]) -> dict[int, str]:
     return result
 
 
+def report_item_sections(lines: list[str]) -> dict[int, list[tuple[int, int, str, str, str]]]:
+    """Return structural item starts with their full description through the next item."""
+    boundaries = []
+    last_context_path = ''
+    for line_no, line in enumerate(lines, 1):
+        line_paths = list(dict.fromkeys(path for _, _, path in paths_in(line)))
+        for match in ITEM.finditer(line):
+            if re.fullmatch(r'#\d+|항목\s*\d+', match.group()):
+                continue  # Ordinal rows retain their existing structured mapping.
+            prefix = list(line[:match.start()])
+            for start, end, _ in paths_in(line):
+                if end <= match.start():
+                    prefix[start:end] = ' ' * (end-start)
+            if re.sub(r'[\s`*_#|:：—–+.,;()\[\]-]', '', ''.join(prefix)):
+                continue
+            explicit_paths = list(dict.fromkeys(path for start, end, path in paths_in(line)
+                                                if end <= match.start()))
+            item_path = explicit_paths[0] if len(explicit_paths) == 1 else last_context_path
+            description_start = match.end()
+            if line.startswith('`', description_start):
+                description_start += 1
+            elif line.startswith('**', description_start) or line.startswith('__', description_start):
+                description_start += 2
+            boundaries.append((line_no, match.start(), description_start, match.group(), item_path))
+            last_context_path = item_path
+            break
+        else:
+            if len(line_paths) == 1:
+                last_context_path = line_paths[0]
+    result = {}
+    for index, (line_no, start, end, item_id, item_path) in enumerate(boundaries):
+        next_line = boundaries[index+1][0] if index+1 < len(boundaries) else len(lines)+1
+        heading = re.match(r'^\s*(#{1,6})\s', lines[line_no-1])
+        item_heading_level = len(heading.group(1)) if heading else 7
+        first_tail = lines[line_no-1][end:].strip(' \t:：—–|')
+        # A complete quoted inline reference does not open a Markdown section.
+        # Explicit headings/list items and colon descriptions keep continuation.
+        if (not heading and not re.match(r'^\s*[-*+]\s+', lines[line_no-1])
+                and (QUOTE.fullmatch(first_tail) or TICK.fullmatch(first_tail))):
+            next_line = line_no + 1
+        for candidate_line in range(line_no+1, next_line):
+            candidate_heading = re.match(r'^\s*(#{1,6})\s', lines[candidate_line-1])
+            if candidate_heading and len(candidate_heading.group(1)) <= item_heading_level:
+                next_line = candidate_line
+                break
+        section = [lines[line_no-1][end:].strip(' \t:：—–|')]
+        section.extend(lines[line_no:next_line-1])
+        while section and not section[-1].strip():
+            section.pop()
+        description = '\n'.join(section).strip()
+        quote = QUOTE.fullmatch(description)
+        if quote:
+            description = next(group for group in quote.groups() if group is not None)
+        tick = TICK.fullmatch(description)
+        if tick:
+            description = tick.group(1)
+        result.setdefault(line_no, []).append((start, end, item_id, description, item_path))
+    return result
+
+
 def metric_context(line: str, start: int, end: int, paths, unit: str, header: str = '') -> bool:
     """Distinguish a file's dimensions from positions and values stored inside it."""
     a, b = sentence_span(line, start)
@@ -296,6 +356,7 @@ def metric_context(line: str, start: int, end: int, paths, unit: str, header: st
 def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
     lines = report.splitlines()
     paragraph_contexts = paragraphs(lines)
+    item_sections = report_item_sections(lines)
     claims, warnings = [], []
     heading_path = ''
     heading_paths: list[str] = []
@@ -660,7 +721,45 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         for m in URL.finditer(line):
             value = m.group().rstrip('.,;)]}')
             add('K8', value, m.start(), value=value, path='')
-        item_matches = [(m.start(), m.end(), m.group(), False) for m in ITEM.finditer(line)]
+        for start, end, item_id, description, item_path in item_sections.get(line_no, []):
+            if any(a <= start < b for a, b, _ in paths):
+                continue
+            path, candidates = binding(start)
+            path = path or item_path
+            if path or candidates:
+                add('K9', item_id + (' ' + description if description else ''), start,
+                    path=path or None, value=item_id, quote=description,
+                    contextual_reason='' if description else 'item_token_only')
+        structural_starts = {start for start, _, _, _, _ in item_sections.get(line_no, [])}
+        inline_items = [match for match in ITEM.finditer(line)
+                        if match.start() not in structural_starts
+                        and not re.fullmatch(r'#\d+|항목\s*\d+', match.group())]
+        for index, match in enumerate(inline_items):
+            start, description_start = match.start(), match.end()
+            if line.startswith('`', description_start):
+                description_start += 1
+            elif line.startswith('**', description_start) or line.startswith('__', description_start):
+                description_start += 2
+            sentence_end = sentence_span(line, start)[1]
+            description_end = (inline_items[index+1].start()
+                               if index+1 < len(inline_items) else sentence_end)
+            raw_tail = line[description_start:description_end]
+            directly_bound = bool(re.match(r'\s*[:：—–|]', raw_tail))
+            description = raw_tail.strip(' \t:：—–|')
+            quote = QUOTE.match(description)
+            if quote:
+                description = next(group for group in quote.groups() if group is not None)
+            tick = TICK.match(description)
+            if tick:
+                description = tick.group(1)
+            path, candidates = binding(start)
+            if path or candidates:
+                add('K9', match.group() + (' ' + description if description else ''), start,
+                    value=match.group(), quote=description,
+                    contextual_reason=('' if directly_bound and description else
+                                       'binding_ambiguous' if description else 'item_token_only'))
+        item_matches = [(m.start(), m.end(), m.group(), True) for m in ITEM.finditer(line)
+                        if re.fullmatch(r'#\d+|항목\s*\d+', m.group())]
         if row:
             spans = cell_spans(line)
             if spans:

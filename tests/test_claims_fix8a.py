@@ -363,9 +363,11 @@ def test_short_general_quote_next_to_reference_is_not_a_quote_atom(tmp_path):
     assert not atoms(result, 'K5')
 
 
-def test_short_backtick_does_not_create_item_pairing(tmp_path):
+def test_short_backtick_creates_one_self_assigned_item_atom(tmp_path):
     result = inspect(tmp_path, '`notes.md` R4-N1 `raw`')
-    assert not atoms(result, 'K9')
+    claims = atoms(result, 'K9')
+    assert len(claims) == 1
+    assert claims[0]['reason_code'] == 'self_assigned_item_id'
 
 
 def test_short_backtick_code_is_not_a_line_quote_without_explicit_order(tmp_path):

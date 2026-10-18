@@ -202,13 +202,19 @@ The following uncertainty codes retain the extracted claim and never count as a 
 - `repository_search_incomplete`: repository lookup failed or could not honor the claim's time, so absence cannot be confirmed.
 - `proposed_name`: the atom names a proposed, hypothetical, or future addition rather than an existing definition.
 - `item_token_only`: a review/item label followed only by a backtick token, number, or date does not establish an item description; explicit file/ordinal identifier row mappings remain supported.
+- `self_assigned_item_id`: an item ID missing from the target may be a report-local label, so the full item claim remains unverifiable. If the target contains at least two IDs from the same prefix family and only the requested ID is missing, K9 remains `absent`.
 
 A single literal directly following a list of candidate references is represented as
 one K5 candidate-group atom, while each K1 keeps only its own range claim. The group
-matches when any fully observed candidate contains the quote and mismatches once when
-every fully observed candidate range rejects it. Missing, partial, prose-separated,
+matches when any candidate's observed range contains the quote and mismatches once
+when every candidate range is fully observed and rejects it. Missing, partial, prose-separated,
 placeholder, or unordered multi-quote bindings remain `binding_ambiguous`; distinct
 unordered quotations remain distinct unverifiable atoms.
+
+K9 emits one atom for each structural item section. Its description spans from the
+item ID through the line before the next item boundary, including continuation
+lines. Backtick tokens inside that description continue through their normal K4/K6
+extraction paths and do not multiply K9 atoms.
 
 Before a K4/K6 missing-name verdict, fixed-string `git grep` searches the supplied
 repository scope. A hit lowers the verdict to unverified; it does not verify a

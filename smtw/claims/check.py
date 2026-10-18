@@ -10,7 +10,7 @@ import json
 import subprocess
 from typing import NamedTuple
 
-from .extract import extract
+from .extract import ITEM, extract
 from .markup import cell_spans, normalized_quote, quote_fragments, quote_in_text
 from .model import Budget, Claim, DeadlineExceeded, Evidence, Transcript, summarize
 from .paths import matches_path, normalize_path, normalize_url
@@ -244,33 +244,66 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
         if c.ordinal:
             return ordinal_item(c, e, budget)
         dirty = False
-        section, found, ended = [], False, False
-        item = boundary(re.sub(r'\s+', '', c.value))
-        for n, line in content_lines(e, budget):
+        section, found, ended, source_ids, item_heading_level = [], False, False, set(), 7
+        wanted = re.sub(r'\s+', '', c.value)
+        for _, line in content_lines(e, budget):
             dirty |= '\ufffd' in line
-            if item.search(re.sub(r'\s+', '', line)):
+            item_id = source_item_boundary(line)
+            if item_id:
+                source_ids.add(re.sub(r'\s+', '', item_id))
+            if item_id and re.sub(r'\s+', '', item_id) == wanted:
                 found = True
                 section.append(line)
+                heading = re.match(r'^\s*(#{1,6})\s', line)
+                item_heading_level = len(heading.group(1)) if heading else 7
                 if line.lstrip().startswith('|'):
                     ended = True
                     break
                 continue
             if found:
-                if re.match(r'^\s*#{1,6}\s|^\s*(?:[RDB]\d+|F\d+-[A-Z]\d+|§\d+|항목\s*\d+)[\s:.)|]', line):
+                heading = re.match(r'^\s*(#{1,6})\s', line)
+                if item_id or heading and len(heading.group(1)) <= item_heading_level:
                     ended = True
                     break
                 section.append(line)
         if not found:
-            return missing(e, dirty)
+            if dirty:
+                return Result('unverifiable', '항목 ID 탐색 구간 원문 손상', code='decode_damage')
+            family = item_family(wanted)
+            same_family = {item for item in source_ids if item_family(item) == family}
+            if family and len(same_family) >= 2:
+                return missing(e)
+            return Result('unverifiable', '대상 문서 항목 ID인지 보고서 자체 라벨인지 미확정',
+                          code='self_assigned_item_id')
         text = '\n'.join(section)
         if '\ufffd' in text:
             return Result('unverifiable', '항목 구간 원문 손상', code='decode_damage')
-        okay = normalized_quote(c.quote) in normalized_quote(text)
+        okay = normalized_quote(c.quote, prose=True) in normalized_quote(text, prose=True)
         if not okay and not ended and not e.complete:
             return Result('unverifiable', '항목의 전체 구간 미확보', code='partial_range')
         return Result('match' if okay else 'mismatch', '항목 ID와 제목·인용 ' + ('일치' if okay else '불일치'),
                       text, 'item_match' if okay else 'item_mismatch')
     return Result('unverifiable', '대응 검사 근거 미확보')
+
+
+def source_item_boundary(line: str) -> str:
+    """Recognize an item ID only at a structural heading/list/table boundary."""
+    for match in ITEM.finditer(line):
+        prefix = line[:match.start()]
+        if not re.sub(r'[\s`*_#|:：—–+.,;()\[\]-]', '', prefix):
+            return match.group()
+    return ''
+
+
+def item_family(item_id: str) -> str:
+    value = re.sub(r'\s+', '', item_id)
+    match = re.fullmatch(r'([A-Za-z]+)(\d+)(?:-([A-Za-z]+)\d+)?', value)
+    if match:
+        return (match.group(1).upper() + match.group(2) + '-' + match.group(3).upper()
+                if match.group(3) else match.group(1).upper())
+    if value.startswith('§'):
+        return '§'
+    return ''
 
 
 def ordinal_item(c: Claim, e: Evidence, budget: Budget) -> Result:
