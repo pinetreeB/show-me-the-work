@@ -261,3 +261,11 @@ runtime must be measured on independently labelled reports before operational us
 `smtw claims assist --report report.md --codex transcript.jsonl --select-only --format json`은 판정을 변경하지 않고 참고 후보를 출력한다. `--aggregate`는 갈래별 총 후보/선별 건수와 제외 사유만 남긴다. 기본 `--limit 20`, 초과는 `deferred_count`이며 0은 집계 전용이다. 우선순위는 observation_conflict, paraphrased_quote, 숫자·인용 미추출 문장, range_only, 나머지 순서다.
 
 pointer_missing/no_read_of_file/partial_range는 명시 SHA `--commit 저장소=SHA`가 있을 때만 후보가 된다. command_result_missing/binding_ambiguous/malformed_number/measurement_missing/repo_scope_unknown/commit_missing_file 및 match/absent/mismatch 원자는 제외한다. 미추출 여부는 같은 줄의 개별 문장/표 셀 단위로 대조한다. 선별 성공 종료 코드는 0이며 기존 check의 상태/요약/종료 코드를 바꾸지 않는다. 모델 실행기는 없다.
+
+### Phase1 assist — 패킷 dry-run
+
+`smtw claims assist --report report.md --codex transcript.jsonl --dry-run --out private-packets`은 빈 출력 폴더에 패킷과 manifest를 쓴다. 모델/CLI/API 실행은 없으며 manifest의 `model_calls`는 0이다. 발췌는 전사에서 연결된 읽기 도구 결과 또는 `--commit 저장소=SHA`의 고정 git show만 허용한다. `--source-file`은 선행 대조에만 쓰며 패킷 발췌에는 쓰지 않는다. 웹·현재 파일·보고서 자신을 발췌하지 않는다.
+
+주장 300자, 앞뒤 문맥 각 200자, 번호가 유지된 발췌 3개×1500자, 직렬화된 항목 6000자, 지시문 포함 호출 30000자 상한이다. 발췌 순서는 섞고 ref는 보낸 순서로 고정한다. 충돌 판들을 모두 3개 이내에 담지 못하면 `incomplete_conflict`, 연결 근거가 없으면 `no_excerpt`다. 민감 경로(별칭 해석 포함)는 `skipped_sensitive`, 발췌의 가림 4곳 이상은 `redaction_limit`, 항목 크기 초과는 `packet_too_large`로 제외한다. 주장·문맥도 저장 전에 가리며 토큰/JWT/전화/주민번호/이메일/password 패턴을 처리한다.
+
+manifest는 파일 SHA256·UTF-8 바이트/문자 수·가림 수·항목 id와 제외 사유만 기록한다. 패킷의 `data_block`은 지시문이 아닌 신뢰하지 않는 데이터로 명시한다. 개인정보 탐지 전체성을 보장하는 도구는 아니며 새 모델 전송 경로를 열지 않는다.

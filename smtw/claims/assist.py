@@ -17,12 +17,12 @@ PRIORITY = {"observation_conflict": 0, "paraphrased_quote": 1,
             "not_extracted_numeric_or_quote": 2, "range_only": 3}
 SELECT_PATH = re.compile(PATH.pattern.removesuffix(r"\b") + r"(?![A-Za-z0-9_])", re.I)
 ASSERTION = re.compile(
-    r"\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?)"
+    r"\b([A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*(?:\(\))?)"
     r"(?:은|는|이|가|에서|으로|를|을)?\s+[^.!?\n]{0,80}?"
     r"(?:있다|없다|한다|반환한다|호출한다|\bexists?\b|\breturns?\b|\bcalls?\b|\bdoes\b)",
     re.I,
 )
-CODE_NAME = re.compile(r"\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?")
+CODE_NAME = re.compile(r"\b[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*(?:\(\))?")
 
 
 def sentences(report: str) -> list[dict]:
@@ -58,7 +58,7 @@ def identifiers(text: str) -> list[str]:
             found.append(name)
     for match in TICK.finditer(text):
         value = match.group(1)
-        if re.fullmatch(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?", value):
+        if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*(?:\(\))?", value):
             found.append(value.removesuffix("()"))
     return list(dict.fromkeys(found))
 

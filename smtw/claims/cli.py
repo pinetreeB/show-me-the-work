@@ -18,7 +18,10 @@ def add_claims_parser(subparsers):
     from .assist_cli import run_assist
     assist = checks.add_parser('assist', help='오프라인 참고 후보 선별 (모델 호출 없음)')
     add_input_arguments(assist)
-    assist.add_argument('--select-only', action='store_true', required=True)
+    modes = assist.add_mutually_exclusive_group(required=True)
+    modes.add_argument('--select-only', action='store_true')
+    modes.add_argument('--dry-run', action='store_true')
+    assist.add_argument('--out', type=Path)
     assist.add_argument('--limit', type=int, default=20)
     assist.add_argument('--aggregate', action='store_true', help='갈래별 건수만 출력')
     assist.set_defaults(func=run_assist)

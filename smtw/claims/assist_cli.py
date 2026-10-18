@@ -7,6 +7,9 @@ import math
 from .assist import select_candidates
 from .check import run
 from .paths import mapping
+from .model import Budget
+from .packets import build_packets, fixed_sources, transcript_sources, write_packets
+from .transcripts import discover_agy, resolve_agy
 
 
 def check_inputs(args):
@@ -24,6 +27,29 @@ def run_assist(args) -> int:
         checked = check_inputs(args)
         result = select_candidates(args.report.read_text(encoding="utf-8-sig"), checked,
                                    limit=args.limit, fixed_commit=bool(args.commit))
+        if args.dry_run:
+            if args.out is None:
+                raise ValueError("--dry-run에는 --out이 필요합니다.")
+            budget = Budget(args.time_limit)
+            aliases = mapping(args.path_alias)
+            text = args.report.read_text(encoding="utf-8-sig")
+            agy = args.agy
+            if args.agy_auto:
+                found = discover_agy(args.report, text, args.agy_brain_root, aliases, budget)
+                if len(found) != 1:
+                    raise ValueError("자동 연결 전사를 하나로 확정하지 못했습니다.")
+                agy = str(found[0])
+            sources = []
+            if agy:
+                sources = transcript_sources(resolve_agy(agy, args.agy_brain_root), "agy",
+                                             args.report, text, aliases, budget)
+            elif args.codex:
+                sources = transcript_sources(args.codex, "codex", args.report, text, aliases, budget)
+            sources += fixed_sources(result["items"], mapping(args.commit), aliases, args.report, budget)
+            packets, summary = build_packets(result, sources, report=args.report, aliases=aliases)
+            manifest = write_packets(args.out, packets, summary)
+            print(json.dumps(manifest, ensure_ascii=False, indent=2))
+            return 0
         result["checker"] = {k: checked[k] for k in ("status", "summary", "timed_out", "unchecked_count")}
         if args.aggregate:
             result.pop("items")
