@@ -423,47 +423,107 @@ class Checker:
                 ranges.append((path, start, end))
         return tuple(ranges)
 
+    def quote_versions(self, candidates: list[tuple[Claim, list[Evidence]]]):
+        """Compare every candidate with every selected read without inventing missing reads."""
+        expanded = []
+        for candidate, versions in candidates:
+            quotes = candidate.candidate_quotes if candidate.check_type == 'K1' else ()
+            if quotes:
+                expanded.extend((replace(candidate, quote=quote, quote_code=code,
+                                         candidate_quotes=()), versions) for quote, code in quotes)
+            else:
+                expanded.append((candidate, versions))
+        candidates = expanded
+        observations = {}
+        matrix = []
+        outcomes = []
+        matched_versions = set()
+        fallback_used = False
+        complete = True
+        versions_by_path = defaultdict(set)
+        for index, (candidate, versions) in enumerate(candidates):
+            self.budget.check()
+            # Changed contents at the reported coordinates can reflect line drift.
+            spans = {tuple((n, evidence.lines.get(n)) for n in
+                           range(candidate.start, candidate.end + 1)) for evidence in versions}
+            extents = {(min(e.lines), max(e.lines), e.total_lines)
+                       for e in versions if e.lines}
+            fallback = bool(candidate.start and len(versions) > 1
+                            and (len(spans) > 1 or len(extents) > 1))
+            numbered = [re.fullmatch(r'\s*(?:line\s+)?(\d+): ?(.*)', line, re.I)
+                        for line in candidate.quote.splitlines()]
+            if (candidate.start < 0 or candidate.end < candidate.start
+                    or numbered and all(numbered) and any(
+                        not candidate.start <= int(match.group(1)) <= candidate.end
+                        for match in numbered)):
+                fallback = False
+            fallback_used |= fallback
+            quoted = candidate
+            if fallback:
+                quote = ('\n'.join(match.group(2) for match in numbered)
+                         if numbered and all(numbered) else candidate.quote)
+                quoted = replace(candidate, check_type='K5', start=0, end=0, quote=quote)
+            for evidence in versions:
+                self.budget.check()
+                key = (normalize_path(evidence.path, self.aliases), evidence.url,
+                       evidence.origin, evidence.order, evidence.revision, evidence.timestamp,
+                       tuple(sorted(evidence.lines.items())), evidence.total_lines,
+                       evidence.complete, evidence.problem)
+                complete &= evidence.complete and not evidence.problem and not evidence.unsupported
+                versions_by_path[normalize_path(evidence.path, self.aliases)].add(key)
+                observations.setdefault(key, evidence.metadata())
+                result = check_one(quoted, evidence, self.budget)
+                outcomes.append(result)
+                if result.verdict == 'match':
+                    matched_versions.add(key)
+                matrix.append({'candidate': index + 1, 'path': candidate.path, 'quote': candidate.quote,
+                               'range': [candidate.start, candidate.end] if candidate.start else [],
+                               'whole_version_fallback': fallback,
+                               'verdict': result.verdict, 'reason_code': result.code,
+                               'observation': evidence.metadata()})
+        proof = {'version_count': len(observations), 'candidate_count': len(candidates),
+                 'whole_version_fallback': fallback_used,
+                 'observations': list(observations.values()), 'matrix': matrix,
+                 'multiple_versions_of_one_path': any(len(ids) > 1 for ids in versions_by_path.values()),
+                 'all_observations_complete': bool(complete),
+                 'missing_candidate_observation': any(not versions for _, versions in candidates)}
+        absent_everywhere = bool(outcomes and complete and not proof['missing_candidate_observation']
+                                 and all(r.code == 'quote_mismatch' for r in outcomes))
+        supported_every_version = bool(observations and set(observations) == matched_versions)
+        return proof, absent_everywhere, supported_every_version
+
     def resolve_ambiguous_reference(self, c: Claim) -> bool:
-        """Resolve one literal quote over a closed set of candidate ranges."""
+        """Resolve a literal over all candidate ranges and all selected versions."""
         if c.check_type != 'K5' or not c.candidate_ranges or not c.candidate_group_closed:
             return False
-        matrix = []
-        results = []
-        every_candidate_observed = True
-        every_observation_complete = True
         quote, quote_code = c.candidate_quotes[0]
+        candidates = []
         for path, start, end in self.quote_candidate_ranges(c):
             candidate = replace(c, path=path, start=start, end=end, quote=quote, quote_code=quote_code,
                                 contextual_reason='', candidate_ranges=(), candidate_quotes=(),
                                 candidate_group_closed=False)
-            observations = self.select(candidate)
-            every_candidate_observed &= bool(observations)
-            for evidence in observations:
-                every_observation_complete &= evidence.complete and not evidence.problem
-                result = check_one(candidate, evidence, self.budget)
-                results.append(result)
-                matrix.append({'path': path, 'range': [start, end], 'quote': quote,
-                               'verdict': result.verdict, 'reason_code': result.code,
-                               'observation': evidence.metadata()})
-        source = {'candidate_ranges': [[path, start, end] for path, start, end in c.candidate_ranges],
-                  'candidate_quotes': [quote for quote, _ in c.candidate_quotes],
-                  'joined_candidate_ranges': [list(r) for r in self.quote_candidate_ranges(c) if r not in c.candidate_ranges],
-                  'matrix': matrix}
-        if any(result.verdict == 'match' for result in results):
+            candidates.append((candidate, self.select(candidate)))
+        proof, absent_everywhere, supported_every_version = self.quote_versions(candidates)
+        c.source = {'candidate_ranges': [list(candidate) for candidate in c.candidate_ranges],
+                    'candidate_quotes': [quote for quote, _ in c.candidate_quotes],
+                    'joined_candidate_ranges': [list(r) for r in self.quote_candidate_ranges(c) if r not in c.candidate_ranges],
+                    'matrix': proof['matrix'], 'quote_check': proof}
+        supported = any(row['verdict'] == 'match' for row in proof['matrix'])
+        if supported:
+            if proof['multiple_versions_of_one_path'] and not supported_every_version:
+                c.verdict, c.reason, c.reason_code = (
+                    'unverifiable', '인용은 일부 읽은 판에서만 확인되어 관측 시점 미확정',
+                    'observation_conflict')
+            else:
+                c.verdict, c.reason, c.reason_code = (
+                    'match', '후보 줄·범위 중 한 곳에서 인용 일치', 'quote_match')
+        elif absent_everywhere:
             c.verdict, c.reason, c.reason_code = (
-                'match', '후보 줄·범위 중 한 곳에서 인용 일치', 'quote_match')
-            c.source = source
-            return True
-        if (every_candidate_observed and every_observation_complete and results
-                and all(result.verdict == 'mismatch' and result.code == 'quote_mismatch'
-                        for result in results)):
+                'mismatch', f"읽은 {proof['version_count']}판과 {proof['candidate_count']}개 후보 범위 어디에도 인용 없음",
+                'quote_mismatch')
+        else:
             c.verdict, c.reason, c.reason_code = (
-                'mismatch', '모든 후보 줄·범위에서 인용 불일치', 'quote_mismatch')
-            c.source = source
-            return True
-        c.verdict, c.reason, c.reason_code = (
-            'unverifiable', '후보 범위 일부 미확보 또는 인용 결합 미확정', 'binding_ambiguous')
-        c.source = source
+                'unverifiable', '후보 범위 일부 미확보 또는 인용 결합 미확정', 'binding_ambiguous')
         return True
 
     def needs_repository_lookup(self, c: Claim) -> bool:
@@ -684,6 +744,17 @@ class Checker:
         else:
             c.verdict, c.reason = results[0][0][:2]
             c.reason_code = results[0][0].code
+        if c.check_type in {'K1', 'K5'} and c.quote and len(results) > 1:
+            proof, absent_everywhere, _ = self.quote_versions([(c, [e for _, e in results])])
+            c.source['quote_check'] = proof
+            if absent_everywhere and any(result.code == 'quote_mismatch' for result, _ in results):
+                c.verdict, c.reason, c.reason_code = (
+                    'mismatch', f"읽은 {proof['version_count']}판 어디에도 인용 없음", 'quote_mismatch')
+            elif (proof['whole_version_fallback'] and c.reason_code == 'quote_mismatch'
+                  and any(row['verdict'] == 'match' for row in proof['matrix'])):
+                c.verdict, c.reason, c.reason_code = (
+                    'unverifiable', '판마다 줄 위치가 달라 판 전체에서 인용을 확인함',
+                    'observation_conflict')
         if c.inherited_binding and c.verdict == 'mismatch' and c.reason_code in {'range_exceeded', 'value_mismatch'}:
             c.verdict, c.reason_code = 'unverifiable', 'inherited_binding'
             c.reason = '상속한 파일과 범위·값의 연결 미확정'

@@ -245,3 +245,6 @@ runtime must be measured on independently labelled reports before operational us
 
 - FIX8a2: `quote_mismatch`는 개별 후보 및 같은 파일의 인접·겹친 후보 연결 범위를 모두 대조한다. 각각의 개수 불일치도 후보 전체 부재는 확정하며, 괄호 안 인용은 바깥 참조 묶음과 구분한다.
 - FIX8a2: 긴 줄은 전체 원문을 비교하며 K1의 결합 후보 인용 중 하나라도 일치하면 `quote_match`; 출처 괄호만으로 계측 대상을 정한 경우 `inherited_binding`, 명시된 남의 날조 서술은 `reported_claim`으로 보존한다. 식별자 안 `-1B` 등은 크기 원자가 아니다.
+
+- FIX8c Phase 0: K1/K5 `quote_mismatch`는 읽은 모든 판 × 모든 후보 범위(인접 연결 포함)에 인용이 없고 각 관측이 완전할 때 확정한다. `source.quote_check`에 판 수·각 출처·검사 행렬을 남긴다.
+- FIX8c: 판별 줄 위치/범위가 다르면 판 전체로 대조 범위를 넓히고 `whole_version_fallback`으로 공개한다. 어느 판에라도 정확한 인용이 있으면 기존 `observation_conflict` 미확정을 유지하며, 부분·실패 관측으로 전체 부재를 단정하지 않는다.
