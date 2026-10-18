@@ -79,6 +79,8 @@ unlinked identifiers still require both a code-like shape and explicit code cont
 Inherited paths do not turn general words, tool names or repository names into code
 claims. A K4 existence claim in a directly related negative or recommendation
 context remains `unverifiable` with `negated_context`, rather than disappearing.
+This includes the listed polite Korean endings and adjacent English negations;
+the context is evaluated for each identifier, not spread across the sentence.
 Ordinary factual wording such as an added function, a call without errors, or use
 under an `if` condition does not suppress the claim. Context words come from prose outside paths and quoted tokens; a filename
 such as `config.py` cannot supply its own code context. Without a supplied transcript, a repository search miss for an unlinked
@@ -107,13 +109,19 @@ file identifier or quotation. This also applies to syntax-check commands without
 file-content output. An asynchronous marker requires its linked completed task log;
 missing/failed results and post-write self-reads retain their exclusion rules.
 Self-modification detection recognizes only the enumerated forms.
-Recognized shell writes include in-place sed/perl edits, git apply, patch, tee,
+Recognized shell writes include in-place sed/perl edits, git apply/am, patch, tee,
 PowerShell Set-Content/Out-File and output redirection.
+Quoted command arguments of bash/sh (`-c`, `-lc`), cmd (`/c`), and PowerShell/pwsh
+(`-Command`) are checked recursively, including shell argument lists. Other quoted
+text remains masked when identifying redirection and patch commands.
 Reads of explicit write targets after the write cannot serve as independent evidence.
 Null-device redirection, descriptor duplication and arrows are not file writes;
 patch applicators must occur in command position, not in filenames or quoted text.
 Only actual patch applicators and variable-target redirections may exclude all
 subsequent file reads; warnings report how many reads this exclusion affected.
+The patch forms include `git -C <directory> apply/am`, and variable redirections
+include `$env:` paths. Variable targets in `-Path`, `tee $p`, or `WriteAllText`
+remain unresolved and do not trigger global exclusion.
 Other unresolved writes do not erase the rest of the conversation's evidence.
 
 Plain text/code and `.docx` paragraphs and tables are supported. Unsupported Word
@@ -161,7 +169,8 @@ the report INCOMPLETE, never FAIL by themselves. A separate substantive failure
 still makes the report FAIL. Unexpected checker exceptions produce ERROR and exit
 2 (JSON when requested); KeyboardInterrupt is not swallowed. Numeric extraction
 requires a leading digit and never treats a hexadecimal token's `b` as a byte unit.
-Comma-only file metrics or arithmetic operands are malformed input errors.
+Comma-only file metrics or arithmetic operands remain `unverifiable` with
+`malformed_number`; checking continues for the other atoms in the report.
 
 JSON includes `status`, `claims`, `timed_out`, `unchecked_count`,
 `author_marked_review`, `warnings`, `summary`, and `elapsed_seconds`. Claims expose

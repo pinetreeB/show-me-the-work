@@ -23,9 +23,11 @@ def kinds(text):
     ',건 중 2건',
     '3건 중 ,건',
 ])
-def test_fix2_comma_only_metrics_raise_clear_input_error(report):
-    with pytest.raises(ValueError, match='쉼표만'):
-        claims(report)
+def test_fix2_comma_only_metrics_are_preserved_as_unverifiable_atoms(report):
+    found = claims(report)
+    assert len(found) == 1
+    assert found[0].check_type in {'K2', 'K7'}
+    assert found[0].malformed_number is True
 
 
 @pytest.mark.parametrize(('report', 'negated'), [

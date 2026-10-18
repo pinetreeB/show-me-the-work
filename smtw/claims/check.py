@@ -369,6 +369,11 @@ class Checker:
 
     def apply(self, c: Claim):
         self.budget.check()
+        if c.malformed_number:
+            c.verdict, c.reason_code = 'unverifiable', 'malformed_number'
+            c.reason = '쉼표만으로 된 숫자 단위·산술 주장은 대조하지 않음'
+            c.source = {'location': f'보고서:{c.report_line}', 'search_scope': []}
+            return
         if c.negated_context:
             c.verdict, c.reason_code = 'unverifiable', 'negated_context'
             c.reason = '부정·권고 문맥의 식별자 존재는 확정하지 않음'

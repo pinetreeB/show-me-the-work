@@ -50,13 +50,14 @@ def test_b1_keyboard_interrupt_is_not_swallowed(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('text', ['`engine.py` 크기 , B', '`engine.py` 총 , 줄', '3건 중 ,건', ',건 중 2건'])
-def test_b1_lone_comma_real_cli_has_error_json_exit_two(tmp_path, text):
+def test_b1_lone_comma_is_unverifiable_and_cli_continues(tmp_path, text):
     r, t = make_case(tmp_path, text, [agy_call('view_file', AbsolutePath='C:/sample/engine.py'),
                                     view('C:/sample/engine.py', 'print(1)\n')])
     result = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'smtw', 'claims', 'check',
                              '--report', str(r), '--agy', str(t), '--format', 'json'], capture_output=True)
-    assert result.returncode == 2, result.stderr.decode('utf-8')
-    assert json.loads(result.stdout)['status'] == 'ERROR'
+    assert result.returncode == 3, result.stderr.decode('utf-8')
+    claims = json.loads(result.stdout)['claims']
+    assert [(claim['verdict'], claim['reason_code']) for claim in claims] == [('unverifiable', 'malformed_number')]
     assert b'Traceback' not in result.stderr
 
 

@@ -93,20 +93,28 @@ def touches_hex_sha(line: str, start: int, end: int) -> bool:
 def negated_context(line: str, span: tuple[int, int]) -> bool:
     """Recognize only a claim's own narrow negative or recommendation phrasing."""
     before, after = line[:span[0]], line[span[1]:]
-    if re.search(r'\bno\s*$', before, re.I) or re.search(r'\bhas\s+no\s+(?:function\s*)?$', before, re.I):
+    if (re.search(r'\bno\s*$', before, re.I)
+            or re.search(r'\bhas\s+no\s+(?:function\s*)?$', before, re.I)
+            or re.search(r'\b(?:does\s+not\s+use|no\s+longer\s+calls?)\s*$', before, re.I)):
         return True
-    if re.match(r'\s*(?:(?:is|are|was|were|do|does|did)\s+not|not\s+used|should\s+not\s+be\s+used)\b', after, re.I):
+    if re.match(r'\s*(?:(?:is|are|was|were|do|does|did)\s+not|not\s+used|'
+                r'should\s+not\s+be\s+used|does\s+not\s+use|'
+                r'(?:is|are|was|were)\s+no\s+longer(?:\s+uses?|\s+used)?|'
+                r'no\s+longer(?:\s+uses?|\s+used)?|was\s+removed)\b', after, re.I):
         return True
     if re.match(r'\s*(?:은|는|이|가|을|를)?\s*'
-                r'(?:(?:의존|함수|메서드|필드|설정\s*키)\s*(?:이|가)?\s*)?'
-                r'(?:없다|없음)(?!\w)', after):
+                r'(?:(?:의존|import|함수|메서드|필드|설정\s*키)\s*(?:은|는|이|가|을|를)?\s*)?'
+                r'(?:없다|없음|없습니다|없어요)(?!\w)', after):
         return True
-    if re.match(r'\s*(?:은|는|을|를)?\s*(?:(?:함수|메서드)?를?\s*호출하지\s*않는다|쓰지\s*않는다|사용하지\s*않는다|않는다)(?!\w)', after):
+    if re.match(r'\s*(?:은|는|이|가|을|를)?\s*'
+                r'(?:(?:함수|메서드)?(?:은|는|이|가|을|를)?\s*)?'
+                r'(?:(?:호출하지|쓰지|쓰이지|사용하지|존재하지|포함되어\s*있지)\s*않(?:다|는다|습니다)|않는다)(?!\w)', after):
         return True
-    if re.match(r'\s*(?:을|를)?\s*(?:호출(?:이|을)?\s*)?제거(?:한다|됨|했다|되었다|됐다|해야\s*한다)?(?!\w)', after):
+    if re.match(r'\s*(?:은|는|이|가|을|를)?\s*(?:호출(?:이|을)?\s*)?'
+                r'제거(?:한다|됨|했다|되었다|됐다|되었습니다|했습니다|했고|해야\s*한다)?(?!\w)', after):
         return True
-    return bool(re.match(r'\s*(?:을|를)?\s*(?:(?:함수|메서드|필드|설정\s*키)를?\s*)?'
-                         r'(?:추가할\s*것을\s*)?(?:권장|권고)(?:하지\s*않는다|한다|됨|했다)?(?!\w)', after))
+    return bool(re.match(r'\s*(?:을|를)?\s*(?:(?:함수|메서드|필드|설정\s*키)를?\s*)?(?:사용을?\s*)?'
+                         r'(?:추가할\s*것을\s*)?(?:권장|권고)(?:하지\s*않는다|한다|됨|했다|합니다)?(?!\w)', after))
 
 
 def proposed_or_recommended(context: str) -> bool:
@@ -116,16 +124,15 @@ def proposed_or_recommended(context: str) -> bool:
     return bool(re.search(r'바꿔야|수정\s*제안|제안|권장|권고|\b(?:should|proposed|recommended)\b', ''.join(prose), re.I))
 
 
-def malformed_metric(line: str, paths: list[tuple[int, int, str]]) -> bool:
-    """Reject only comma-only file metrics; ordinary comma prose remains prose."""
-    for match in re.finditer(r'(?<![\w.])(?:`|\*\*|__)?(?:,+)(?:`|\*\*|__)?\s*'
-                            r'(줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z0-9])', line, re.I):
-        unit = match.group(1).removesuffix('짜리')
+def malformed_metrics(line: str, paths: list[tuple[int, int, str]]):
+    """Yield only comma-only file metrics; ordinary comma prose remains prose."""
+    for match in re.finditer(r'(?<![\w.])(?:`|\*\*|__)?(?P<number>,+)(?:`|\*\*|__)?\s*'
+                            r'(?P<unit>줄(?:짜리)?|lines?|bytes?|바이트|KB|MB|KiB|MiB|B|건|개|회|%|ms)(?![A-Za-z0-9])', line, re.I):
+        unit = match.group('unit').removesuffix('짜리')
         if unit.lower() in {'line', 'lines'}:
             unit = '줄'
         if metric_context(line, match.start(), match.end(), paths, unit):
-            return True
-    return False
+            yield match, unit
 
 
 def adjacent_snippet(line: str, span: tuple[int, int], snippet: tuple) -> bool:
@@ -224,8 +231,6 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 fence_lines.append(line)
             continue
         paths = paths_in(line)
-        if malformed_metric(line, paths):
-            raise ValueError('쉼표만 있는 숫자 단위 주장')
         if line.startswith('#'):
             heading_paths = list(dict.fromkeys(p[2] for p in paths))
             heading_path = paths[0][2] if len(paths) == 1 else ''
@@ -419,6 +424,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             add('K4', m.group(), m.start(), value=value.removesuffix('()'), definition=definition,
                 negated_context=negated_context(context, (m.start() - sentence_span(line, m.start())[0],
                                                            m.end() - sentence_span(line, m.start())[0])))
+        for m, unit in malformed_metrics(line, paths):
+            add('K2', m.group(), m.start(), value=m.group('number'), unit=unit, malformed_number=True)
         for m in NUMBER.finditer(line):
             if any(a <= m.start() < b for a, b, _ in paths + ref_spans):
                 continue
@@ -488,10 +495,13 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     add('K9', item_id+' '+raw, start, value=item_id, quote=expected,
                         ordinal=ordinal or bool(re.fullmatch(r'#\d+|항목\s*\d+', item_id)))
         malformed_arithmetic = re.search(
-            r'(?<![\w.])(?:,+)\s*건\s*중\s*\d[\d,]*\s*건|'
-            r'\d[\d,]*\s*건\s*중\s*(?:,+)\s*건', line)
+            r'(?<![\w.])(?:(?P<total>,+)\s*건\s*중\s*(?P<part>\d[\d,]*)\s*건|'
+            r'(?P<total_right>\d[\d,]*)\s*건\s*중\s*(?P<part_right>,+)\s*건)', line)
         if malformed_arithmetic:
-            raise ValueError('쉼표만 있는 산술 주장')
+            add('K7', malformed_arithmetic.group(), malformed_arithmetic.start(),
+                value=malformed_arithmetic.group('total') or malformed_arithmetic.group('total_right'),
+                entity=malformed_arithmetic.group('part') or malformed_arithmetic.group('part_right'),
+                malformed_number=True)
         arithmetic = re.search(r'(\d[\d,]*)\s*건\s*중\s*(\d[\d,]*)\s*건', line)
         if arithmetic:
             add('K7', arithmetic.group(), arithmetic.start(), value=arithmetic.group(1).replace(',', ''),

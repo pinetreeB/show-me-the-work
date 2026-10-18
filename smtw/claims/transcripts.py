@@ -17,7 +17,7 @@ FILE_TOKEN = re.compile(r'''(?:[A-Za-z]:[\\/]|/|\.?\.?[/\\])?[^\s`"'<>;|{}=]+\.(
 READ_COMMAND = re.compile(r'\b(?:Get-Content|Get-Item|Select-String|cat|type|head|tail|sed|rg|grep|wc|stat|git|readFileSync|readFile|read_text|read_bytes|open)\b', re.I)
 WRITE_COMMAND = re.compile(r'\b(?:writeFileSync|writeFile|write_text|write_bytes|WriteAllText|WriteAllLines|Set-Content|Add-Content|Out-File|apply_patch|Remove-Item|Move-Item|sed\s+[^\n;|]*-[^\s;|]*i|perl\b(?=[^\n;|]*\s-\S*i\S*))\b|\bopen\s*\([^\n]+,[\s]*["\'][wax]|(?:^|[;&|])\s*(?:rm|mv|cp|tee)\s', re.I)
 REDIRECT = re.compile(r'(?:(?<![<>=-])(?:\d+)?>>?|(?<![<>=\-\d])&>)')
-PATCH_APPLICATOR = re.compile(r'(?:^|[;\n]|&&|\|\|?)\s*(?:git\s+apply|patch)(?=\s|$)', re.I)
+PATCH_APPLICATOR = re.compile(r'(?:^|[;\n]|&&|\|\|?)\s*(?:git(?:\s+-C\s+\S+)?\s+(?:apply|am)|patch)(?=\s|$)', re.I)
 GENERATED = re.compile(r'\b(?:echo|Write-Output)\b|\bprint\s*\(|console\.log|stdout\.write', re.I)
 GENERATED_LITERAL = re.compile(r'''(?:\bprint|console\.log|stdout\.write)\s*\(\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)''', re.I)
 TRUNCATED = re.compile(r'<truncated|\[.{0,12}truncated|output (?:has been )?truncated|Warning: truncated output|\.\.\.\s*\d+ (?:tokens|chars).*truncated', re.I)
@@ -61,7 +61,54 @@ def redirect_is_sink(target: str) -> bool:
 
 
 def redirect_is_variable(target: str) -> bool:
-    return bool(re.fullmatch(r'\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})', target))
+    return bool(re.fullmatch(r'\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\}|env:[^\s;|]+)', target, re.I))
+
+
+def shell_wrapper_bodies(command: str) -> list[str]:
+    """Return the command argument of a real shell wrapper at command start."""
+    argv = None
+    if re.match(r'''^\s*\[\s*['"]''', command):
+        try:
+            argv = ast.literal_eval(command)
+        except (SyntaxError, ValueError):
+            pass
+    if isinstance(argv, list) and all(isinstance(item, str) for item in argv):
+        if not argv:
+            return []
+        shell = re.sub(r'\.exe$', '', argv[0].lower())
+        flags = {'bash': {'-c', '-lc'}, 'sh': {'-c', '-lc'}, 'cmd': {'/c'},
+                 'powershell': {'-command'}, 'pwsh': {'-command'}}.get(shell, set())
+        for index, argument in enumerate(argv[:-1]):
+            if argument.lower() in flags:
+                return [argv[index + 1]]
+        return []
+
+    match = re.match(r'^\s*(bash|sh|cmd|powershell|pwsh)(?:\.exe)?(?=\s|$)(.*)$', command, re.I | re.S)
+    if not match:
+        return []
+    shell, arguments = match.group(1).lower(), match.group(2)
+    flags = {'bash': {'-c', '-lc'}, 'sh': {'-c', '-lc'}, 'cmd': {'/c'},
+             'powershell': {'-command'}, 'pwsh': {'-command'}}[shell]
+    flag = re.search(r'(?<!\S)(' + '|'.join(re.escape(value) for value in flags) + r')(?!\S)',
+                     shell_code(arguments), re.I)
+    if not flag:
+        return []
+    body = arguments[flag.end():].lstrip()
+    if not body:
+        return []
+    if body[0] not in {'"', "'"}:
+        return [body.split(None, 1)[0]]
+    quote, index, escaped = body[0], 1, False
+    while index < len(body):
+        char = body[index]
+        if escaped:
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif char == quote:
+            return [body[1:index]]
+        index += 1
+    return []
 
 
 def patch_applicator(command: str) -> bool:
@@ -70,6 +117,8 @@ def patch_applicator(command: str) -> bool:
 
 def command_has_write(command: str) -> bool:
     if WRITE_COMMAND.search(command) or patch_applicator(command):
+        return True
+    if any(command_has_write(body) for body in shell_wrapper_bodies(command)):
         return True
     code = shell_code(command)
     return any(not redirect_is_sink(redirect_target(command, match.end()))
@@ -163,9 +212,7 @@ def command_write_targets(call: Call) -> tuple[list[str], bool]:
     command, _ = success_marker(call.command)
     if not command:
         return ([call.path] if call.path else [], False)
-    if patch_applicator(command):
-        return [], True
-    targets = []
+    targets, dynamic_redirect = [], False
 
     def add(value: str) -> None:
         if not value or re.search(r'\$|%[^%]+%|`|\$\(', value):
@@ -173,6 +220,19 @@ def command_write_targets(call: Call) -> tuple[list[str], bool]:
         value = value.strip().strip('"\'(),')
         if value and value not in targets:
             targets.append(value)
+
+    for body in shell_wrapper_bodies(command):
+        # A read-only inner command can name inputs, but only a write body may
+        # contribute targets.  The outer command is still parsed below.
+        if not command_has_write(body):
+            continue
+        wrapped = Call(call.name, {'command': body}, call.order, call.timestamp, call.call_id)
+        body_targets, body_dynamic = command_write_targets(wrapped)
+        for target in body_targets:
+            add(target)
+        dynamic_redirect = dynamic_redirect or body_dynamic
+    if patch_applicator(command):
+        return [], True
 
     if re.search(r'\b(?:sed\s+[^\n;|]*-[^\s;|]*i|perl\b(?=[^\n;|]*\s-\S*i\S*))\b', command, re.I):
         for value in call_paths(call):
@@ -187,7 +247,6 @@ def command_write_targets(call: Call) -> tuple[list[str], bool]:
         for token in re.findall(r'"[^"]*"|\'[^\']*\'|\S+', match.group(1)):
             if not token.startswith('-'):
                 add(token)
-    dynamic_redirect = False
     code = shell_code(command)
     for match in REDIRECT.finditer(code):
         value = redirect_target(command, match.end())
@@ -197,7 +256,7 @@ def command_write_targets(call: Call) -> tuple[list[str], bool]:
             dynamic_redirect = True
             continue
         add(value)
-    if targets:
+    if targets or dynamic_redirect:
         return targets, dynamic_redirect
     # Existing literal API writes and direct file operations remain path-bound.
     paths = call_paths(call)

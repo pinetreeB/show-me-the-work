@@ -37,7 +37,7 @@ def test_fix3_unrelated_or_excluded_cues_keep_identifier_claim(report):
     '`engine.py`에 `new_helper` 함수를 추가할 것을 권고한다.',
     '`engine.py`에는 `optional_helper`를 권장하지 않는다.',
     'In `engine.py`, function `ghost_helper` is not used.',
-    '`engine.py`에서 `getConnection()` 호출이 제거되었다.',
+    '`engine.py`에서 `open_session()` 호출이 제거되었다.',
     '### `engine.py`\n이 모듈은 `parse_args` 함수를 호출하지 않는다.',
     '`engine.py` `ghost_helper` not used.',
     '`engine.py` has no function `ghost_helper`.',
