@@ -77,11 +77,8 @@ def main() -> int:
     # indirectly through the other command parsers.
     import sys
     if sys.argv[1:2] == ["claims"]:
-        from .claims.cli import add_claims_parser
-        parser = argparse.ArgumentParser(prog="smtw")
-        add_claims_parser(parser.add_subparsers(dest="command", required=True))
-        args = parser.parse_args()
-        return int(args.func(args))
+        from .claims.cli import main as claims_main
+        return claims_main()
     parser = build_parser()
     args = parser.parse_args()
     return int(args.func(args))

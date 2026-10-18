@@ -277,3 +277,6 @@ manifest는 파일 SHA256·UTF-8 바이트/문자 수·가림 수·항목 id와 
 패킷 SHA·크기·항목 id를 확인한 뒤 **보낸 가림 후 발췌만** K5의 마크다운/공백 정규화와 순서 있는 생략 조각 규칙으로 대조한다. 줄 번호 접두는 근거 본문에서 제외한다. 일치는 `quote_verified`이며 주장 의미의 정확성을 증명하지 않는다. 불일치는 `quote_not_in_excerpt`로 집계하고 표시를 버린다. 인용/참조 누락은 `missing_quote_or_ref`로 센다.
 
 출력은 별도 “LLM 참고 표시 — 판정 아님” 구역이다. 검증된 contradicted를 먼저, supported는 회색 한 줄, not_enough_evidence는 건수만 표시한다. `--report`와 기존 입력 옵션을 함께 주면 대조 결과 뒤에 구역을 붙여 stdout으로만 출력한다(JSON은 checker/assist 분리). 이때 대조기의 상태·요약·종료 코드를 그대로 보존한다. 원본 보고서를 덮어쓰지 않는다. --report 없이 검증만 하면 성공 0/입력 오류 2다. 모델의 정확도·재현성·성능·사용량은 Phase1에서 측정하지 않았다.
+
+- P1E: claims 공통 CLI 진입점에서 stdout/stderr를 UTF-8로 맞춘다. check와 assist의 select-only/dry-run/verify 모두 환경변수·Windows 코드페이지에 의존하지 않는다.
+- P1E 패킷 표시: 발췌 path의 Windows/macOS/Linux 사용자 홈 부분만 ~/로 축약한다. claim/context/발췌 본문은 이 표시 변환으로 바꾸지 않으며, 원 경로는 manifest.source_path_hashes의 SHA256(항목 id·ref별)으로만 기록한다.

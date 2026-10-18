@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import math
 from pathlib import Path
@@ -8,6 +9,17 @@ import sys
 from .check import run
 from .paths import mapping
 
+
+
+def main() -> int:
+    """One UTF-8 boundary for every claims subcommand, including parser errors."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
+    parser = argparse.ArgumentParser(prog='smtw')
+    add_claims_parser(parser.add_subparsers(dest='command', required=True))
+    args = parser.parse_args()
+    return int(args.func(args))
 
 def add_claims_parser(subparsers):
     parser = subparsers.add_parser('claims', help='보고서 주장을 읽기 근거와 사후 대조합니다.')
@@ -64,8 +76,6 @@ def render_text(result: dict) -> str:
 
 def run_check(args) -> int:
     try:
-        if hasattr(sys.stdout, 'reconfigure'):
-            sys.stdout.reconfigure(encoding='utf-8')
         if not math.isfinite(args.time_limit) or args.time_limit <= 0:
             raise ValueError('--time-limit은 양의 유한 초 단위 숫자여야 합니다.')
         result = run(args.report, agy=args.agy, agy_auto=args.agy_auto, codex=args.codex, brain_root=args.agy_brain_root,

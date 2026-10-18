@@ -171,3 +171,44 @@ def test_supported_advisory_cannot_promote_checker_fail_or_change_pass(tmp_path,
     a.pop("elapsed_seconds")
     b.pop("elapsed_seconds")
     assert a == b
+
+
+def test_claims_cli_utf8_without_environment_overrides(tmp_path):
+    """Piped cp949 streams must work even without UTF-8/legacy-console settings."""
+    import os
+    folder = sent_packets(tmp_path)
+    report = tmp_path / "report.md"
+    report.write_text("alpha.py:1\n", encoding="utf-8")
+    # Explicit cp949 makes this regression meaningful on non-Korean hosts too.
+    wrapper = (
+        "import sys; sys.stdout.reconfigure(encoding='cp949'); "
+        "sys.stderr.reconfigure(encoding='cp949'); "
+        "from smtw.cli import main; code=main(); "
+        "sys.stderr.write('diagnostic \\u2014 UTF-8\\n'); raise SystemExit(code)"
+    )
+    for legacy in (None, "1"):
+        env = dict(os.environ)
+        for key in ("PYTHONUTF8", "PYTHONIOENCODING", "PYTHONLEGACYWINDOWSSTDIO"):
+            env.pop(key, None)
+        if legacy is not None:
+            env["PYTHONLEGACYWINDOWSSTDIO"] = legacy
+        cases = [
+            (["assist", "--verify", str(FIXTURE), "--packets", str(folder), "--format", "text"], 0),
+            (["assist", "--verify", str(FIXTURE), "--packets", str(folder), "--format", "json"], 0),
+            (["check", "--report", str(report), "--format", "text"], 3),
+            (["assist", "--report", str(report), "--select-only", "--format", "json"], 0),
+            (["assist", "--report", str(report), "--dry-run", "--out",
+              str(tmp_path / ("dry-" + str(legacy))), "--format", "json"], 0),
+        ]
+        for args, code in cases:
+            result = subprocess.run([sys.executable, "-B", "-c", wrapper, "claims", *args],
+                                    capture_output=True, env=env)
+            text = result.stdout.decode("utf-8")
+            assert result.returncode == code, text + result.stderr.decode("utf-8")
+            assert result.stderr.decode("utf-8").splitlines() == ["diagnostic — UTF-8"]
+            if args[-1] == "json":
+                assert isinstance(json.loads(text), dict)
+            elif args[0] == "assist":
+                assert "LLM 참고 표시 — 판정 아님" in text
+            else:
+                assert "전체 상태: INCOMPLETE" in text

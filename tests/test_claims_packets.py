@@ -197,3 +197,24 @@ def test_korean_identifier_assertion_overlaps_source_without_file_path():
     assert selected["items"][0]["identifiers"] == ["renderWidget"]
     packets, summary = build_packets(selected, [source("def renderWidget(): pass")], report=Path("report.md"))
     assert packets and summary["sent_count"] == 1
+
+
+@pytest.mark.parametrize("path,display", [
+    ("file:///C:/Users/SyntheticPerson/project/alpha.py", "~/project/alpha.py"),
+    (r"C:\Users\SyntheticPerson\project\alpha.py", "~/project/alpha.py"),
+    ("/home/synthetic/project/alpha.py", "~/project/alpha.py"),
+    ("pkg/alpha.py", "pkg/alpha.py"),
+])
+def test_only_packet_display_path_is_shortened_and_original_hash_is_manifested(tmp_path, path, display):
+    item = candidate(paths=[path], claim=path + "에 구현했다.", before="앞 " + path, after="뒤 " + path)
+    content = "SOURCE_PATH = " + repr(path)
+    packets, summary = packetize([item], [source(content, path=path)])
+    sent = packets[0]["data_block"][0]
+    assert sent["excerpts"][0]["path"] == display
+    assert sent["excerpts"][0]["text"] == "1: " + content
+    for key in ("claim", "before", "after"):
+        assert sent[key] == item[key]
+    manifest = write_packets(tmp_path / "packets", packets, summary)
+    assert manifest["source_path_hashes"] == [
+        {"item_id": item["id"], "ref": 1, "sha256": hashlib.sha256(path.encode("utf-8")).hexdigest()}]
+    assert path not in encoded(manifest)

@@ -49,6 +49,14 @@ def sensitive_reference(text: str) -> bool:
                for token in re.findall(r"[^\s<>|]+", text))
 
 
+
+def display_path(path: str) -> str:
+    """Only the display field is shortened; evidence matching keeps the raw path."""
+    normalized = path.replace("\\", "/")
+    home = re.match(r"(?i)^(?:file:///?)?(?:[a-z]:/users/[^/]+|/users/[^/]+|/home/[^/]+)(?:/(.*))?$",
+                    normalized)
+    return "~/" + (home.group(1) or "") if home else path
+
 def redact(text: str) -> tuple[str, dict[str, int]]:
     counts = Counter()
     for kind, pattern in PATTERNS:
@@ -176,6 +184,7 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
     aliases = aliases or {}
     rng = rng or random.SystemRandom()
     items, skipped, totals = [], [], Counter()
+    source_path_hashes = []
     for selected in selection["items"]:
         def skip(reason):
             skipped.append({"id": selected["id"], "reason_code": reason})
@@ -203,7 +212,8 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
             if identity in identities:
                 continue
             identities.add(identity)
-            excerpts.append({"path": safe_path, "source": source.kind, "revision": source.revision,
+            excerpts.append({"path": display_path(safe_path), "source": source.kind, "revision": source.revision,
+                             "_path_sha256": hashlib.sha256(source.path.encode("utf-8")).hexdigest(),
                              "observation": source.observation, "text": text,
                              "redactions": dict(Counter(counts) + Counter(path_counts))})
         if too_sensitive:
@@ -225,7 +235,10 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
             value, redactions = redact(selected[key])
             item[key] = value[:cap]
             counts.update(redactions)
+        item_path_hashes = []
         for index, excerpt in enumerate(excerpts, 1):
+            item_path_hashes.append({"item_id": selected["id"], "ref": index,
+                                     "sha256": excerpt.pop("_path_sha256")})
             excerpt["ref"] = index
             counts.update(excerpt["redactions"])
         item["excerpts"] = excerpts
@@ -234,6 +247,7 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
             skip("packet_too_large")
             continue
         totals.update(counts)
+        source_path_hashes.extend(item_path_hashes)
         items.append(item)
     packets = []
     for item in items:
@@ -243,7 +257,7 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
     return packets, {"selected_count": selection["selected_count"], "sent_count": len(items),
                      "deferred_count": selection["deferred_count"], "skipped": skipped,
                      "skipped_counts": dict(Counter(x["reason_code"] for x in skipped)),
-                     "redactions": dict(totals)}
+                     "redactions": dict(totals), "source_path_hashes": source_path_hashes}
 
 
 def write_packets(folder: Path, packets: list[dict], summary: dict) -> dict:
