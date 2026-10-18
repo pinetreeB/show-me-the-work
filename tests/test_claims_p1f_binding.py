@@ -71,3 +71,8 @@ def test_ordinary_code_location_is_not_a_document_declaration(tmp_path):
     result = inspect_files(tmp_path, '`alpha.py:1` 근처의 분기에서 `if value > 10:`',
                            {"alpha.py": "header\nif value > 10:\n"})
     assert result["status"] == "PASS"
+
+def test_path_only_proposed_code_does_not_become_a_source_declaration(tmp_path):
+    result = inspect_files(tmp_path, '- `alpha.py` (`requirePermission(owner, "new.permission")`)',
+                           {"alpha.py": "existing content\n"})
+    assert result["status"] != "FAIL"

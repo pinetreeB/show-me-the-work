@@ -281,6 +281,8 @@ def immediate_reference_gap(line: str, before: tuple[int, int], after: tuple[int
 
 def explicit_quote_source(line: str, pos: int, paths, ref_spans) -> tuple[tuple[str, ...], bool]:
     """Recognize a source citation immediately introducing the quote, not mentions."""
+    if not any(b <= pos for _, b, _ in ref_spans):
+        return (), False
     start, _ = quote_span(line, pos)
     last_ref = max([start, *[b for a, b, _ in ref_spans if start <= a and b <= pos]])
     def direct_tail(end):
