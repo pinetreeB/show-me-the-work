@@ -64,8 +64,264 @@ def redirect_is_variable(target: str) -> bool:
     return bool(re.fullmatch(r'\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\}|env:[^\s;|]+)', target, re.I))
 
 
+SHELL_WRAPPER_MAX_DEPTH = 3
+SHELL_WRAPPERS = {'bash', 'sh', 'cmd', 'powershell', 'pwsh'}
+SHELL_PREFIXES = {'sudo', 'env', 'exec', 'time', 'nohup'}
+PREFIX_VALUE_OPTIONS = {
+    'sudo': {
+        '-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt',
+        '-r', '--role', '-t', '--type', '-c', '--close-from', '-d', '--chdir',
+    },
+    'env': {
+        '-u', '--unset', '-c', '--chdir', '--block-signal', '--default-signal',
+        '--ignore-signal',
+    },
+    'exec': {'-a'},
+    'time': {'-f', '--format', '-o', '--output'},
+    'nohup': set(),
+}
+PREFIX_TERMINAL_OPTIONS = {'--help', '--version'}
+
+
+def _wrapper_flag(shell: str, argument: str) -> bool:
+    value = argument.lower()
+    if shell in {'bash', 'sh'}:
+        return bool(re.fullmatch(r'-[a-z]*c[a-z]*', value))
+    if shell == 'cmd':
+        return value in {'/c', '/k'}
+    return value in {'-c', '-command', '-command:'}
+
+
+def _wrapper_flag_index(shell: str, arguments: list[str]) -> int | None:
+    powershell_switches = {
+        '-nologo', '-noexit', '-noprofile', '-noninteractive', '-mta', '-sta',
+    }
+    powershell_values = {
+        '-configurationname', '-custompipename', '-executionpolicy', '-inputformat',
+        '-outputformat', '-settingsfile', '-version', '-windowstyle', '-workingdirectory',
+    }
+    index = 0
+    while index < len(arguments):
+        value = arguments[index].lower()
+        if shell in {'powershell', 'pwsh'} and value.rstrip(':') == '-encodedcommand':
+            return None
+        if _wrapper_flag(shell, value):
+            return index
+        if shell in {'bash', 'sh'}:
+            if not value.startswith('-'):
+                return None
+            index += 1
+        elif shell == 'cmd':
+            if not value.startswith('/'):
+                return None
+            index += 1
+        elif value in powershell_switches:
+            index += 1
+        elif value in powershell_values and index + 1 < len(arguments):
+            index += 2
+        else:
+            return None
+    return None
+
+
+def _prefix_command_index(tokens: list[str | None]) -> int | None:
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token is None:
+            break
+        prefix = re.sub(r'\.exe$', '', token.lower())
+        if prefix not in SHELL_PREFIXES:
+            break
+        index += 1
+        value_options = PREFIX_VALUE_OPTIONS[prefix]
+        while index < len(tokens):
+            option = tokens[index]
+            if option is None:
+                break
+            lowered = option.lower()
+            if lowered in PREFIX_TERMINAL_OPTIONS:
+                return None
+            if lowered == '--':
+                index += 1
+                break
+            if any(lowered.startswith(value + '=') for value in value_options
+                   if value.startswith('--')):
+                index += 1
+                continue
+            if lowered in value_options:
+                if index + 1 >= len(tokens):
+                    return None
+                index += 2
+                continue
+            if lowered.startswith('-'):
+                index += 1
+                continue
+            if prefix == 'env' and re.fullmatch(r'[A-Za-z_]\w*=\S*', option):
+                index += 1
+                continue
+            break
+    return index
+
+
+def _argv_wrapper_body(argv: list[str]) -> str:
+    index = _prefix_command_index(argv)
+    if index is None or index >= len(argv):
+        return ''
+    shell = re.sub(r'\.exe$', '', argv[index].lower())
+    if shell not in SHELL_WRAPPERS:
+        return ''
+    arguments = argv[index + 1:]
+    flag_arguments = list(arguments)
+    attached_bodies = {}
+    if shell in {'powershell', 'pwsh'}:
+        for argument_index, argument in enumerate(arguments):
+            if argument.lower().startswith('-command:') and len(argument) > len('-command:'):
+                flag_arguments[argument_index] = '-command:'
+                attached_bodies[argument_index] = argument[len('-command:'):]
+    flag_index = _wrapper_flag_index(shell, flag_arguments)
+    if flag_index in attached_bodies:
+        return attached_bodies[flag_index]
+    if flag_index is None or flag_index + 1 >= len(arguments):
+        return ''
+    return arguments[flag_index + 1]
+
+
+def _command_positions(code: str) -> list[int]:
+    def escaped(position: int) -> bool:
+        backslashes = 0
+        position -= 1
+        while position >= 0 and code[position] == '\\':
+            backslashes += 1
+            position -= 1
+        return bool(backslashes % 2)
+
+    positions = [0]
+    index = 0
+    while index < len(code):
+        if (escaped(index) or (index > 0 and code[index] in {'&', '|'}
+                               and code[index - 1] == code[index] and escaped(index - 1))):
+            index += 1
+            continue
+        if code[index] in {'\n', ';'}:
+            positions.append(index + 1)
+        elif code.startswith(('&&', '||'), index):
+            positions.append(index + 2)
+            index += 1
+        elif code[index] == '|':
+            positions.append(index + 1)
+        elif (code[index] == '&' and (index == 0 or code[index - 1] not in {'>', '&'})
+              and (index + 1 == len(code) or code[index + 1] not in {'>', '&'})):
+            positions.append(index + 1)
+        index += 1
+    return positions
+
+
+def _segment_end(code: str, start: int) -> int:
+    positions = _command_positions(code)
+    following = [position for position in positions if position > start]
+    if not following:
+        return len(code)
+    end = min(following)
+    while end > start and code[end - 1] in {'\n', ';', '&', '|'}:
+        end -= 1
+    return end
+
+
+def _unquote_wrapper_body(command: str, start: int, end: int) -> str:
+    while start < end and command[start].isspace():
+        start += 1
+    if start >= end:
+        return ''
+    if command[start] not in {'"', "'"}:
+        return command[start:end].split(None, 1)[0]
+    quote = command[start]
+    index = start + 1
+    escaped = False
+    while index < end:
+        char = command[index]
+        if escaped:
+            escaped = False
+        elif char == '\\':
+            escaped = True
+        elif char == quote:
+            body = command[start + 1:index]
+            if quote == "'":
+                return body
+            unescaped = []
+            body_index = 0
+            while body_index < len(body):
+                if (body[body_index] == '\\' and body_index + 1 < len(body)
+                        and body[body_index + 1] in {'\\', quote}):
+                    body_index += 1
+                unescaped.append(body[body_index])
+                body_index += 1
+            return ''.join(unescaped)
+        index += 1
+    return ''
+
+
+def _shell_tokens(command: str, start: int, end: int) -> list[tuple[str, int, int]]:
+    tokens = []
+    position = start
+    while position < end:
+        while position < end and command[position].isspace():
+            position += 1
+        if position >= end:
+            break
+        token_start = position
+        quote = ''
+        escaped = False
+        while position < end:
+            char = command[position]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == '\\':
+                    escaped = True
+                elif char == quote:
+                    quote = ''
+            elif char in {'"', "'", '`'}:
+                quote = char
+            elif char.isspace():
+                break
+            position += 1
+        tokens.append((command[token_start:position], token_start, position))
+    return tokens
+
+
+def _plain_shell_token(token: str) -> str:
+    return token if not any(quote in token for quote in {'"', "'", '`'}) else ''
+
+
+def _string_wrapper_body(command: str, code: str, start: int) -> str:
+    end = _segment_end(code, start)
+    tokens = _shell_tokens(command, start, end)
+    plain_tokens = [_plain_shell_token(token[0]) or None for token in tokens]
+    token_index = _prefix_command_index(plain_tokens)
+    if token_index is None or token_index >= len(tokens):
+        return ''
+    shell = re.sub(r'\.exe$', '', _plain_shell_token(tokens[token_index][0]).lower())
+    if shell not in SHELL_WRAPPERS:
+        return ''
+    arguments = tokens[token_index + 1:]
+    flag_arguments = [_plain_shell_token(argument[0]) or argument[0] for argument in arguments]
+    attached_starts = {}
+    if shell in {'powershell', 'pwsh'}:
+        for argument_index, argument in enumerate(arguments):
+            attached = re.match(r'-command:(?=["\'])', argument[0], re.I)
+            if attached:
+                flag_arguments[argument_index] = '-command:'
+                attached_starts[argument_index] = argument[1] + attached.end()
+    flag_index = _wrapper_flag_index(shell, flag_arguments)
+    if flag_index is None:
+        return ''
+    body_start = attached_starts.get(flag_index, arguments[flag_index][2])
+    return _unquote_wrapper_body(command, body_start, end)
+
+
 def shell_wrapper_bodies(command: str) -> list[str]:
-    """Return the command argument of a real shell wrapper at command start."""
+    """Return command arguments of supported wrappers at real command positions."""
     argv = None
     if re.match(r'''^\s*\[\s*['"]''', command):
         try:
@@ -73,52 +329,28 @@ def shell_wrapper_bodies(command: str) -> list[str]:
         except (SyntaxError, ValueError):
             pass
     if isinstance(argv, list) and all(isinstance(item, str) for item in argv):
-        if not argv:
-            return []
-        shell = re.sub(r'\.exe$', '', argv[0].lower())
-        flags = {'bash': {'-c', '-lc'}, 'sh': {'-c', '-lc'}, 'cmd': {'/c'},
-                 'powershell': {'-command'}, 'pwsh': {'-command'}}.get(shell, set())
-        for index, argument in enumerate(argv[:-1]):
-            if argument.lower() in flags:
-                return [argv[index + 1]]
-        return []
+        body = _argv_wrapper_body(argv)
+        return [body] if body else []
 
-    match = re.match(r'^\s*(bash|sh|cmd|powershell|pwsh)(?:\.exe)?(?=\s|$)(.*)$', command, re.I | re.S)
-    if not match:
-        return []
-    shell, arguments = match.group(1).lower(), match.group(2)
-    flags = {'bash': {'-c', '-lc'}, 'sh': {'-c', '-lc'}, 'cmd': {'/c'},
-             'powershell': {'-command'}, 'pwsh': {'-command'}}[shell]
-    flag = re.search(r'(?<!\S)(' + '|'.join(re.escape(value) for value in flags) + r')(?!\S)',
-                     shell_code(arguments), re.I)
-    if not flag:
-        return []
-    body = arguments[flag.end():].lstrip()
-    if not body:
-        return []
-    if body[0] not in {'"', "'"}:
-        return [body.split(None, 1)[0]]
-    quote, index, escaped = body[0], 1, False
-    while index < len(body):
-        char = body[index]
-        if escaped:
-            escaped = False
-        elif char == '\\':
-            escaped = True
-        elif char == quote:
-            return [body[1:index]]
-        index += 1
-    return []
+    code = shell_code(command)
+    bodies = []
+    for start in _command_positions(code):
+        body = _string_wrapper_body(command, code, start)
+        if body:
+            bodies.append(body)
+    return bodies
 
 
 def patch_applicator(command: str) -> bool:
     return bool(PATCH_APPLICATOR.search(shell_code(command)))
 
 
-def command_has_write(command: str) -> bool:
+def command_has_write(command: str, _wrapper_depth: int = 0) -> bool:
     if WRITE_COMMAND.search(command) or patch_applicator(command):
         return True
-    if any(command_has_write(body) for body in shell_wrapper_bodies(command)):
+    if (_wrapper_depth < SHELL_WRAPPER_MAX_DEPTH
+            and any(command_has_write(body, _wrapper_depth + 1)
+                    for body in shell_wrapper_bodies(command))):
         return True
     code = shell_code(command)
     return any(not redirect_is_sink(redirect_target(command, match.end()))
@@ -201,7 +433,7 @@ def call_paths(call: Call) -> list[str]:
     return paths
 
 
-def command_write_targets(call: Call) -> tuple[list[str], bool]:
+def command_write_targets(call: Call, _wrapper_depth: int = 0) -> tuple[list[str], bool]:
     """Return literal write targets and whether an unresolvable write occurred.
 
     Shell patch applicators name their input patch, not the files they modify.  A
@@ -221,13 +453,14 @@ def command_write_targets(call: Call) -> tuple[list[str], bool]:
         if value and value not in targets:
             targets.append(value)
 
-    for body in shell_wrapper_bodies(command):
+    bodies = shell_wrapper_bodies(command) if _wrapper_depth < SHELL_WRAPPER_MAX_DEPTH else []
+    for body in bodies:
         # A read-only inner command can name inputs, but only a write body may
         # contribute targets.  The outer command is still parsed below.
-        if not command_has_write(body):
+        if not command_has_write(body, _wrapper_depth + 1):
             continue
         wrapped = Call(call.name, {'command': body}, call.order, call.timestamp, call.call_id)
-        body_targets, body_dynamic = command_write_targets(wrapped)
+        body_targets, body_dynamic = command_write_targets(wrapped, _wrapper_depth + 1)
         for target in body_targets:
             add(target)
         dynamic_redirect = dynamic_redirect or body_dynamic

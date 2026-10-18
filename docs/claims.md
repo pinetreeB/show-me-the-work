@@ -111,9 +111,14 @@ missing/failed results and post-write self-reads retain their exclusion rules.
 Self-modification detection recognizes only the enumerated forms.
 Recognized shell writes include in-place sed/perl edits, git apply/am, patch, tee,
 PowerShell Set-Content/Out-File and output redirection.
-Quoted command arguments of bash/sh (`-c`, `-lc`), cmd (`/c`), and PowerShell/pwsh
-(`-Command`) are checked recursively, including shell argument lists. Other quoted
-text remains masked when identifying redirection and patch commands.
+Shell wrappers are recognized at each command position (line start or after `;`,
+`&&`, `||`, `|`, or `&`), including `sudo`, `env`, `exec`, `time`, and `nohup`
+prefixes. Supported command flags are bash/sh letter bundles containing `c`
+(`-c`, `-lc`, `-ec`, `-xc`), cmd `/c` or `/k`, and PowerShell/pwsh `-c` or
+`-Command` (including `-Command:`), without case sensitivity. Quoted command
+arguments and shell argument lists are unwrapped to at most three nested levels.
+Other quoted text remains masked when identifying redirection and patch commands.
+PowerShell `-EncodedCommand` is not decoded and remains outside this support.
 Reads of explicit write targets after the write cannot serve as independent evidence.
 Null-device redirection, descriptor duplication and arrows are not file writes;
 patch applicators must occur in command position, not in filenames or quoted text.
