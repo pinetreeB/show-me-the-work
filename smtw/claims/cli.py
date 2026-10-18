@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import math
 from pathlib import Path
@@ -14,18 +13,29 @@ def add_claims_parser(subparsers):
     parser = subparsers.add_parser('claims', help='보고서 주장을 읽기 근거와 사후 대조합니다.')
     checks = parser.add_subparsers(dest='claims_command', required=True)
     check = checks.add_parser('check', help='결정론 주장 대조 (모델·API 호출 없음)')
-    check.add_argument('--report', type=Path, required=True)
-    transcript = check.add_mutually_exclusive_group()
+    add_input_arguments(check)
+    check.set_defaults(func=run_check)
+    from .assist_cli import run_assist
+    assist = checks.add_parser('assist', help='오프라인 참고 후보 선별 (모델 호출 없음)')
+    add_input_arguments(assist)
+    assist.add_argument('--select-only', action='store_true', required=True)
+    assist.add_argument('--limit', type=int, default=20)
+    assist.add_argument('--aggregate', action='store_true', help='갈래별 건수만 출력')
+    assist.set_defaults(func=run_assist)
+
+
+def add_input_arguments(parser):
+    parser.add_argument('--report', type=Path, required=True)
+    transcript = parser.add_mutually_exclusive_group()
     transcript.add_argument('--agy')
     transcript.add_argument('--agy-auto', action='store_true', help='마지막 보고서 쓰기가 정확히 일치하는 대화 1개만 자동 연결')
     transcript.add_argument('--codex', type=Path)
-    check.add_argument('--agy-brain-root', type=Path, default=Path('~/.gemini/antigravity-cli/brain'))
+    parser.add_argument('--agy-brain-root', type=Path, default=Path('~/.gemini/antigravity-cli/brain'))
     for option in ('repo', 'commit', 'source-file', 'path-alias'):
-        check.add_argument('--' + option, action='append', default=[])
-    check.add_argument('--default-file', metavar='표기=실제파일', help='파일 문맥 없는 줄 위치의 명시적 기본 원문')
-    check.add_argument('--format', choices=('text', 'json'), default='text')
-    check.add_argument('--time-limit', type=float, default=60)
-    check.set_defaults(func=run_check)
+        parser.add_argument('--' + option, action='append', default=[])
+    parser.add_argument('--default-file', metavar='표기=실제파일', help='파일 문맥 없는 줄 위치의 명시적 기본 원문')
+    parser.add_argument('--format', choices=('text', 'json'), default='text')
+    parser.add_argument('--time-limit', type=float, default=60)
 
 
 def render_text(result: dict) -> str:

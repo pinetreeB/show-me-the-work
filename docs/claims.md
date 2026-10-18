@@ -255,3 +255,9 @@ runtime must be measured on independently labelled reports before operational us
 
 - Phase1 A: paraphrased_quote는 코드 인용의 한 호출 내 말줄임(R-ell), 실제 클래스 소유 속성의 한정자(R-qual), 같은 들여쓰기 수준의 타입 주석 생략(R-ann)을 구문으로 확인했을 때의 unverifiable이다. match나 PASS 근거가 아니다.
 - R-ell은 고정 이름·값·조각 순서를 보존하고 서로 다른/중첩 호출의 인자를 합치지 않는다. X(...)만 있거나 의미 있는 조각이 3자 미만이면 적용하지 않는다. R-qual은 직접 소유한 속성, R-ann은 동일 수준의 동일 RHS에만 적용한다. 현재 구조 검증은 Python 구문으로 해석 가능한 코드에 한정한다.
+
+### Phase1 assist — 오프라인 선별
+
+`smtw claims assist --report report.md --codex transcript.jsonl --select-only --format json`은 판정을 변경하지 않고 참고 후보를 출력한다. `--aggregate`는 갈래별 총 후보/선별 건수와 제외 사유만 남긴다. 기본 `--limit 20`, 초과는 `deferred_count`이며 0은 집계 전용이다. 우선순위는 observation_conflict, paraphrased_quote, 숫자·인용 미추출 문장, range_only, 나머지 순서다.
+
+pointer_missing/no_read_of_file/partial_range는 명시 SHA `--commit 저장소=SHA`가 있을 때만 후보가 된다. command_result_missing/binding_ambiguous/malformed_number/measurement_missing/repo_scope_unknown/commit_missing_file 및 match/absent/mismatch 원자는 제외한다. 미추출 여부는 같은 줄의 개별 문장/표 셀 단위로 대조한다. 선별 성공 종료 코드는 0이며 기존 check의 상태/요약/종료 코드를 바꾸지 않는다. 모델 실행기는 없다.
