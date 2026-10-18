@@ -24,6 +24,22 @@ def check_inputs(args):
 
 def run_assist(args) -> int:
     try:
+        if args.verify:
+            from .advisory import render_advisory, render_with_advisory, verify_files
+            if args.packets is None:
+                raise ValueError("--verify에는 --packets가 필요합니다.")
+            advisory = verify_files(args.verify, args.packets)
+            if args.report is not None:
+                checked = check_inputs(args)
+                output = (json.dumps({"checker": checked, "assist": advisory}, ensure_ascii=False, indent=2)
+                          if args.format == "json" else render_with_advisory(checked, advisory))
+                print(output)
+                return {"PASS": 0, "FAIL": 1, "ERROR": 2, "INCOMPLETE": 3}[checked["status"]]
+            print(json.dumps(advisory, ensure_ascii=False, indent=2) if args.format == "json"
+                  else render_advisory(advisory))
+            return 0
+        if args.report is None:
+            raise ValueError("선별/dry-run에는 --report가 필요합니다.")
         checked = check_inputs(args)
         result = select_candidates(args.report.read_text(encoding="utf-8-sig"), checked,
                                    limit=args.limit, fixed_commit=bool(args.commit))

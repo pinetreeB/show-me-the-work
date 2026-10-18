@@ -269,3 +269,11 @@ pointer_missing/no_read_of_file/partial_range는 명시 SHA `--commit 저장소=
 주장 300자, 앞뒤 문맥 각 200자, 번호가 유지된 발췌 3개×1500자, 직렬화된 항목 6000자, 지시문 포함 호출 30000자 상한이다. 발췌 순서는 섞고 ref는 보낸 순서로 고정한다. 충돌 판들을 모두 3개 이내에 담지 못하면 `incomplete_conflict`, 연결 근거가 없으면 `no_excerpt`다. 민감 경로(별칭 해석 포함)는 `skipped_sensitive`, 발췌의 가림 4곳 이상은 `redaction_limit`, 항목 크기 초과는 `packet_too_large`로 제외한다. 주장·문맥도 저장 전에 가리며 토큰/JWT/전화/주민번호/이메일/password 패턴을 처리한다.
 
 manifest는 파일 SHA256·UTF-8 바이트/문자 수·가림 수·항목 id와 제외 사유만 기록한다. 패킷의 `data_block`은 지시문이 아닌 신뢰하지 않는 데이터로 명시한다. 개인정보 탐지 전체성을 보장하는 도구는 아니며 새 모델 전송 경로를 열지 않는다.
+
+### Phase1 assist — 인용 재검증과 참고 구역
+
+`smtw claims assist --verify judge.json --packets private-packets`은 모델을 호출하지 않고 수동 판정 JSON 배열을 검증한다. 스키마는 `smtw/claims/judge-output.schema.json`에 있으며 id/verdict/rationale는 필수다. verdict는 supported/contradicted/not_enough_evidence, evidence_quote는 최대 200자, evidence_ref는 해당 항목의 1부터 시작하는 발췌 번호, rationale는 최대 120자다. 인용/참조가 누락된 supported/contradicted는 not_enough_evidence로 내리기 때문에 해당 두 필드는 스키마상 선택이다. 길이·형식·중복 id·보내지 않은 id·추가 필드 위반은 입력 오류다.
+
+패킷 SHA·크기·항목 id를 확인한 뒤 **보낸 가림 후 발췌만** K5의 마크다운/공백 정규화와 순서 있는 생략 조각 규칙으로 대조한다. 줄 번호 접두는 근거 본문에서 제외한다. 일치는 `quote_verified`이며 주장 의미의 정확성을 증명하지 않는다. 불일치는 `quote_not_in_excerpt`로 집계하고 표시를 버린다. 인용/참조 누락은 `missing_quote_or_ref`로 센다.
+
+출력은 별도 “LLM 참고 표시 — 판정 아님” 구역이다. 검증된 contradicted를 먼저, supported는 회색 한 줄, not_enough_evidence는 건수만 표시한다. `--report`와 기존 입력 옵션을 함께 주면 대조 결과 뒤에 구역을 붙여 stdout으로만 출력한다(JSON은 checker/assist 분리). 이때 대조기의 상태·요약·종료 코드를 그대로 보존한다. 원본 보고서를 덮어쓰지 않는다. --report 없이 검증만 하면 성공 0/입력 오류 2다. 모델의 정확도·재현성·성능·사용량은 Phase1에서 측정하지 않았다.
