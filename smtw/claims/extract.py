@@ -76,7 +76,8 @@ def code_snippet(value: str) -> bool:
     if re.fullmatch(r':\d+(?:\s*,\s*:\d+)+', value):
         return False
     symbols = re.findall(r'->|=>|==|!=|<=|>=|[=()"\x27$;{}\[\]:,+*/]', value)
-    return len(symbols) >= 2 and bool(re.search(r'\s|[(),;:{}\[\]]', value))
+    block_header = re.fullmatch(r'(?:if|elif|while|for|def|class)\s+.+:\s*(?:\.\.\.|…)?', value)
+    return (len(symbols) >= 2 or bool(block_header)) and bool(re.search(r'\s|[(),;:{}\[\]]', value))
 
 
 def code_shaped(value: str) -> bool:
@@ -131,7 +132,18 @@ def source_only_binding(line: str, pos: int, path: str, paths) -> bool:
     mentions = [(a, b) for a, b, candidate in paths if candidate == path]
     if not mentions:
         return False
-    sentence_end = sentence_span(line, pos)[1]
+    sentence_start, sentence_end = sentence_span(line, pos)
+    # A citation is not a different subject by itself. Require another target.
+    other_path = any(candidate != path and sentence_start <= a < sentence_end
+                     for a, _, candidate in paths)
+    prose = masked(line[sentence_start:sentence_end])
+    other_subject = re.search(
+        r'다른\s*(?:파일|대상|코드|주어)|별도(?:의)?\s*(?:파일|대상)|'
+        r'\b(?:another|other|separate)\s+(?:file|target|module)\b', prose, re.I)
+    unnamed_script = (re.search(r'스크립트|\bscript\b', prose, re.I)
+                      and re.search(r'\.(?:md|txt|rst|log|jsonl?)$', path, re.I))
+    if not (other_path or other_subject or unnamed_script):
+        return False
     for a, _ in mentions:
         parent = parent_span(line, a)
         if (not parent or parent[0] <= pos <= parent[1] or a <= pos
@@ -142,7 +154,16 @@ def source_only_binding(line: str, pos: int, path: str, paths) -> bool:
 
 
 def quote_scope(line: str, a: int, b: int) -> bool:
-    return same_scope(line, a, b) and parent_span(line, a) == parent_span(line, b)
+    if not same_scope(line, a, b):
+        return False
+    first, second = parent_span(line, a), parent_span(line, b)
+    if first == second:
+        return True
+    # A parenthesized quotation after a reference list still refers to that list.
+    # A parenthesis with its own reference starts a separate binding scope.
+    parent = first or second
+    return bool((first is None or second is None) and parent
+                and not REFERENCE.search(line[parent[0]:parent[1]]))
 
 
 def reported_claim(line: str, pos: int) -> bool:
@@ -171,7 +192,7 @@ def reported_claim(line: str, pos: int) -> bool:
     attributed = sentence_text[:correction.start()]
     if re.search(
         r'(?<![가-힣\w])(?:저는|제가|나는|내가|우리는|본\s*보고서(?:는|가)?|이\s*보고서(?:는|가)?|현재\s*보고서(?:는|가)?)'
-        r'(?:[^.;]{0,80})?(?:주장|보고|적|기록|썼)|'
+        r'(?:[^.;]{0,80})?(?:주장했|보고했|적었|적혀|적은|기록했|썼)|'
         r'\b(?:I|we|the\s+report|this\s+report|our\s+report|my\s+report|current\s+report)\b'
         r'(?:[^.;]{0,80})?\b(?:claimed|reported|said)\b',
         attributed, re.I,
@@ -179,7 +200,7 @@ def reported_claim(line: str, pos: int) -> bool:
         return False
     third_party = bool(re.search(
         r'(?:이전|기존|옛|지난|old|earlier|previous)\s*(?:보고서?|주장|report|claim)|'
-        r'(?<![가-힣\w])보고서(?:가|이|는|은)\s*(?:[^.;]{0,80})?(?:주장|보고|적|기록|썼)|'
+        r'(?<![가-힣\w])보고서(?:가|이|는|은)\s*(?:[^.;]{0,80})?(?:주장했|보고했|적었|적혀|적은|기록했|썼)|'
         r'\b(?:reviewer|they|he|she)\b\s+(?:[^.;]{0,80})?(?:claimed|reported|said)',
         attributed, re.I,
     ) or re.search(r'\b(?!I\b|We\b|The\b|This\b|Our\b|My\b|Current\b)[A-Z][A-Za-z0-9_-]+\s+(?:[^.;]{0,80})?'
@@ -187,7 +208,7 @@ def reported_claim(line: str, pos: int) -> bool:
         or re.search(r'(?<![가-힣\w])(?!(?:저|제|나|내|우리|본\s*보고서|이\s*보고서))'
                      r'(?:X|검토자|리뷰어|작성자|[가-힣]{2,})'
                      r'(?:가|이|는|은)\s*(?:[^.;]{0,80})?'
-                     r'(?:주장|보고|적|기록|썼)', attributed))
+                     r'(?:주장했|보고했|적었|적혀|적은|기록했|썼)', attributed))
     return third_party
 
 
@@ -234,7 +255,7 @@ def adjacent_snippet(line: str, span: tuple[int, int], snippet: tuple) -> bool:
     a, b = span
     visible = masked(line)
     gap = visible[b:snippet[0]] if b <= snippet[0] else visible[snippet[1]:a]
-    gap = re.sub(r'실측|원문|인용|\b(?:actual|quote)\b', '', gap, flags=re.I)
+    gap = re.sub(r'실측|원문|인용|및|와|과|그리고|\b(?:actual|quote|and)\b', '', gap, flags=re.I)
     return bool(re.fullmatch(r'[\s`*:：,，;()\[\]{}=→-]*', gap))
 
 
@@ -554,15 +575,27 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
         attached: dict[int, list[tuple]] = {}
         grouped_snippets = set()
-        # The same list may repeat the filename instead of using comma tails.
-        for a, _, c in ref_spans:
-            if any(any(c is member for member in group) for group in reference_groups):
-                continue
-            local = [s for s in snippets if quote_scope(line, a, s[0])]
-            group = [other for x, y, other in ref_spans
-                     if quote_scope(line, a, x) and local and y <= local[0][0]]
+        # Build actual consecutive reference lists, not every earlier reference
+        # in a table cell. Descriptions and HTML breaks separate independent claims.
+        reference_groups = []
+        index = 0
+        while index < len(ref_spans):
+            a, end, first = ref_spans[index]
+            group = [first]
+            cursor = index + 1
+            while cursor < len(ref_spans):
+                start, next_end, other = ref_spans[cursor]
+                gap = line[end:start]
+                gap = re.sub(r'및|와|과|\band\b', '', gap, flags=re.I)
+                if not quote_scope(line, a, start) or not re.fullmatch(
+                        r'[\s\x60*:：,，;()\[\]{}=→·/-]*', gap):
+                    break
+                group.append(other)
+                end = next_end
+                cursor += 1
             if len(group) > 1:
                 reference_groups.append(group)
+            index = cursor
         for group in reference_groups:
             spans = [(a, b) for a, b, c in ref_spans if any(c is member for member in group)]
             local = [s for s in snippets if s[0] >= spans[-1][1] and quote_scope(line, s[0], spans[0][0])
@@ -587,12 +620,16 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 closed = bool((ordered or len(local) == 1 and direct_gap)
                               and not any(s[4] and '...' in s[2] for s in local))
                 grouped_snippets.update(s[0] for s in local)
+                if not closed:
+                    for member in group:
+                        member.contextual_reason = 'binding_ambiguous'
                 for snippet in local:
                     group_claim = quote_claims.get(snippet[0])
                     if group_claim is None:
                         group_claim = add('K5', snippet[3], snippet[0], path='', quote=snippet[2],
                                           quote_code=snippet[4])
-                    group_claim.path = ''
+                    group_paths = tuple(dict.fromkeys(member.path for member in group))
+                    group_claim.path = group_paths[0] if not closed and len(group_paths) == 1 else ''
                     group_claim.binding_candidates = ()
                     group_claim.candidate_ranges = ranges
                     group_claim.candidate_quotes = ((snippet[2], snippet[4]),)

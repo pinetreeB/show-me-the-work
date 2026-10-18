@@ -17,6 +17,16 @@ TEXT_SUFFIXES = {'.md', '.txt', '.json', '.jsonl', '.tsv', '.csv', '.py', '.js',
                  '.yaml', '.yml', '.xml', '.html', '.css', '.sql', '.go', '.rs',
                  '.java', '.c', '.h', '.cpp', '.cs', '.log', '.ini', '.cfg', '.bat'}
 DOCUMENT_SUFFIXES = {'.md', '.txt', '.log', '.csv', '.tsv', '.docx'}
+CODE_SUFFIXES = {'.py', '.pyi', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx',
+                 '.sh', '.ps1', '.bat', '.sql', '.go', '.rs', '.java', '.c', '.h',
+                 '.cc', '.cpp', '.hpp', '.cs', '.rb', '.php', '.swift', '.kt',
+                 '.kts', '.scala', '.lua', '.pl', '.r'}
+
+
+def code_path(path: str) -> bool:
+    parts = path.replace(chr(92), '/').casefold().split('/')
+    return Path(parts[-1]).suffix in CODE_SUFFIXES and not {'docs', 'reviews'}.intersection(parts[:-1])
+
 
 
 def decode(data: bytes) -> str:
@@ -262,7 +272,7 @@ class Repositories:
     def _identifier_hit(path: str, line_number: int, line: str, token: str,
                         revision: str, word: re.Pattern, definition: re.Pattern,
                         suffix: str) -> dict | None:
-        if suffix in DOCUMENT_SUFFIXES:
+        if not code_path(path):
             return None
         stripped = line.lstrip()
         if stripped.startswith(('#', '//', '/*', '*', '<!--', ';')):
@@ -425,7 +435,7 @@ class Repositories:
                         continue
                     _, path, line_number, raw_line = parts
                     suffix = Path(path).suffix.lower()
-                    if suffix not in DOCUMENT_SUFFIXES:
+                    if code_path(path):
                         parsed_rows.append((path, int(line_number), raw_line, suffix))
                 blobs_complete = self._preload_masked_files(
                     root, fixed, [path for path, _, _, _ in parsed_rows])

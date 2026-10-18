@@ -98,4 +98,5 @@ def test_one_supported_candidate_prevents_long_line_k1_mismatch(tmp_path):
     result = inspect(tmp_path, "`sample.md:1` 실측: `value = 'present' ~ flags`, `value = 'other' ~ flags`",
                      "padding " * 90 + "value = 'present' ~ flags\n", 'sample.md')
     claims = atoms(result, 'K1')
-    assert claims and all(c['verdict'] == 'match' for c in claims)
+    assert claims and all(c['verdict'] == 'unverifiable' for c in claims)
+    assert all(c['reason_code'] == 'binding_ambiguous' for c in claims)

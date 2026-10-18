@@ -137,7 +137,8 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
         prose = not c.quote_code
         if c.check_type == 'K1' and c.candidate_quotes and any(
                 quote_in_text(quote, text, prose=not code) for quote, code in c.candidate_quotes):
-            return Result('match', '결합 후보 인용 중 하나가 해당 줄에 일치', text, 'quote_match')
+            return Result('unverifiable', '후보 인용 중 일부만 줄에 결합되어 대응 관계 미확정',
+                          text, 'binding_ambiguous')
         if not quote_in_text(c.quote, text, prose=prose):
             return Result('mismatch', f'대응 줄 원문과 인용 불일치: {text[:240]}', text, 'quote_mismatch')
         return Result('match', '파일 줄 범위·인용 일치', text, 'quote_match')
@@ -494,11 +495,13 @@ class Checker:
 
     def resolve_ambiguous_reference(self, c: Claim) -> bool:
         """Resolve a literal over all candidate ranges and all selected versions."""
-        if c.check_type != 'K5' or not c.candidate_ranges or not c.candidate_group_closed:
+        if c.check_type != 'K5' or not c.candidate_ranges:
             return False
         quote, quote_code = c.candidate_quotes[0]
         candidates = []
-        for path, start, end in self.quote_candidate_ranges(c):
+        ranges = (self.quote_candidate_ranges(c) if c.candidate_group_closed else
+                  tuple((path, 0, 0) for path in dict.fromkeys(p for p, _, _ in c.candidate_ranges)))
+        for path, start, end in ranges:
             candidate = replace(c, path=path, start=start, end=end, quote=quote, quote_code=quote_code,
                                 contextual_reason='', candidate_ranges=(), candidate_quotes=(),
                                 candidate_group_closed=False)
@@ -507,10 +510,12 @@ class Checker:
         c.source = {'candidate_ranges': [list(candidate) for candidate in c.candidate_ranges],
                     'candidate_quotes': [quote for quote, _ in c.candidate_quotes],
                     'joined_candidate_ranges': [list(r) for r in self.quote_candidate_ranges(c) if r not in c.candidate_ranges],
-                    'matrix': proof['matrix'], 'quote_check': proof}
+                    'matrix': proof['matrix'], 'quote_check': proof,
+                    'whole_file_open_group': not c.candidate_group_closed}
         supported = any(row['verdict'] == 'match' for row in proof['matrix'])
         if supported:
-            if proof['multiple_versions_of_one_path'] and not supported_every_version:
+            if ((proof['multiple_versions_of_one_path'] and not supported_every_version)
+                    or not c.candidate_group_closed and len(ranges) > 1):
                 c.verdict, c.reason, c.reason_code = (
                     'unverifiable', '인용은 일부 읽은 판에서만 확인되어 관측 시점 미확정',
                     'observation_conflict')
@@ -546,9 +551,10 @@ class Checker:
 
     def apply(self, c: Claim):
         self.budget.check()
-        if c.check_type == 'K5' and c.candidate_group_closed and self.resolve_ambiguous_reference(c):
+        if c.check_type == 'K5' and c.candidate_ranges and self.resolve_ambiguous_reference(c):
             return
-        if c.contextual_reason and not (c.contextual_reason == 'reported_claim' and c.check_type == 'K1' and c.quote):
+        if c.contextual_reason and not (c.check_type == 'K1' and (
+                c.contextual_reason == 'binding_ambiguous' or c.contextual_reason == 'reported_claim' and c.quote)):
             c.verdict, c.reason_code = 'unverifiable', c.contextual_reason
             c.reason = {
                 'binding_ambiguous': '여러 줄 번호와 인용의 대응 관계 미확정',
@@ -755,6 +761,9 @@ class Checker:
                 c.verdict, c.reason, c.reason_code = (
                     'unverifiable', '판마다 줄 위치가 달라 판 전체에서 인용을 확인함',
                     'observation_conflict')
+        if c.check_type == 'K1' and c.contextual_reason == 'binding_ambiguous' and c.verdict in {'match', 'range_only'}:
+            c.verdict, c.reason_code = 'unverifiable', 'binding_ambiguous'
+            c.reason = '열린 인용 묶음의 줄 대응 관계 미확정'
         if c.inherited_binding and c.verdict == 'mismatch' and c.reason_code in {'range_exceeded', 'value_mismatch'}:
             c.verdict, c.reason_code = 'unverifiable', 'inherited_binding'
             c.reason = '상속한 파일과 범위·값의 연결 미확정'

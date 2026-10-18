@@ -248,3 +248,7 @@ runtime must be measured on independently labelled reports before operational us
 
 - FIX8c Phase 0: K1/K5 `quote_mismatch`는 읽은 모든 판 × 모든 후보 범위(인접 연결 포함)에 인용이 없고 각 관측이 완전할 때 확정한다. `source.quote_check`에 판 수·각 출처·검사 행렬을 남긴다.
 - FIX8c: 판별 줄 위치/범위가 다르면 판 전체로 대조 범위를 넓히고 `whole_version_fallback`으로 공개한다. 어느 판에라도 정확한 인용이 있으면 기존 `observation_conflict` 미확정을 유지하며, 부분·실패 관측으로 전체 부재를 단정하지 않는다.
+
+- Phase1 §0: 열린 후보 묶음의 K5는 원래 파일 전체·모든 판에서 인용을 검사한다. K1 줄 결합 및 복수 인용의 any-of 지지는 binding_ambiguous로 남기며 확실한 범위 초과는 보존한다.
+- Phase1 §0: 괄호 출처의 계측 면제는 다른 대상 후보가 있을 때만, 보고 주체 판별은 동사형만 인정한다. 괄호 속 인용은 자체 참조가 없으면 바깥 참조 묶음 전체를 사용한다.
+- Phase1 §0: 저장소 보조 검색은 소스 확장자 화이트리스트와 docs/reviews 제외를 적용한다. 데이터·문서·패치 파일은 found_outside_scope 근거가 아니다. K9의 같은 계열 항목이 하나뿐인 경우는 자체 라벨과 구별하지 못하는 알려진 한계다.

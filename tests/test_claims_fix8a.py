@@ -323,7 +323,6 @@ def test_repository_assignment_records_definition_location(tmp_path):
 
 
 @pytest.mark.parametrize('name,content,key', [
-    ('config.json', '{"realKey": 2}\n', 'realKey'),
     ('module.js', 'const config = {"jsKey": 2};\n', 'jsKey'),
     ('module.py', 'CONFIG = {"dictKey": 2}\n', 'dictKey'),
 ])
