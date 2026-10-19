@@ -477,7 +477,7 @@ def transcript_sources(path: Path, kind: str, report: Path, report_text: str,
             continue
         lines = dict(content_lines(e, budget))
         if lines:
-            result.append(PacketSource(e.path, lines, "transcript_read",
+            result.append(PacketSource(e.path, lines, "transcript_read", revision=e.revision,
                                        observation=hashlib.sha256(e.origin.encode()).hexdigest()[:16]))
     return result
 

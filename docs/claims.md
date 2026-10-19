@@ -300,3 +300,6 @@ N7 코드 검색 확장자: .py/.pyi/.js/.mjs/.cjs/.jsx/.ts/.tsx/.sh/.ps1/.bat/.
 P1F 가림 예외는 정확한 40자리 Git SHA 구분자, SHA256/digest/checksum·파일명·manifest의 64자리 해시, 타입·숫자 상한·코드 참조에 적용합니다. 따옴표 문자열과 불투명 값은 계속 가리며, 긴 식별자는 결정적 단어 비율로 구분합니다. 발췌 길이 예산은 가림 전 원래 줄 길이를 사용합니다.
 
 패킷 재현 비교: `python scripts/compare_claim_packets.py LEFT RIGHT`는 항목 id별 path/source/text 발췌 집합을 비교합니다. 배치·셔플·ref 순서는 무시하고 version/revision/observation 변화는 별도 metadata_changed_ids로 표시합니다. 동일 내용 0, 내용/항목 변경 1, 입력 오류 2이며 발췌 원문은 출력하지 않습니다.
+
+### 버린 셸 읽기의 관측판
+안전한 단일 읽기로 인정하지 못한 셸 출력도 리터럴 파일 경로의 내용 불명 관측(opaque_version)은 남긴다. 본문·계측·출력 포인터는 버리며 발췌에 사용하지 않는다. 다른 관측판 또는 --source-file과의 비교에서 이 미확보 판을 빠뜨려 mismatch로 확정하지 않는다. 고정 SHA의 git show 단일 파일 읽기는 명시된 표시 전용 꼬리만 허용하고 리비전을 보존한다. 모든 완전한 판에 없는 인용은 FAIL을 유지한다.

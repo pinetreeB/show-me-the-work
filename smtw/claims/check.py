@@ -461,10 +461,11 @@ class Checker:
             for e in observed:
                 groups[normalize_path(e.path, self.aliases)].append(e)
             observed = [(min if c.when == 'before' else max)(g, key=lambda e: e.order) for g in groups.values()]
-        if c.check_type == 'K2' and file_reads:
-            return observed or [replace(e, problem='파일 읽기 관측은 있으나 명시 시점에 연결하지 못함',
-                                        problem_code='observation_time_unresolved') for e in file_reads]
-        if observed:
+        if c.check_type == 'K2' and file_reads and not observed:
+            return [replace(e, problem='파일 읽기 관측은 있으나 명시 시점에 연결하지 못함',
+                            problem_code='observation_time_unresolved') for e in file_reads]
+        opaque = [e for e in observed if e.problem_code == 'opaque_version']
+        if observed and len(opaque) != len(observed):
             if c.check_type not in {'K1', 'K5'} or not c.start or any(
                 e.total_lines is not None and c.end > e.total_lines or all(n in e.lines for n in range(c.start, c.end+1))
                 for e in observed
@@ -481,12 +482,12 @@ class Checker:
                 if not c.revision and not c.when:
                     fixed.append(e)
         if fixed:
-            return fixed
+            return [*fixed, *opaque]
         fixed = self.repos.observations(c.path, fixed=True) if c.path else []
         if c.revision or c.when:
             fixed = [e for e in fixed if not c.when and e.revision and c.revision and
                      (e.revision.startswith(c.revision) or c.revision.startswith(e.revision))]
-        return fixed or observed
+        return [*fixed, *opaque] if fixed else observed
 
     def quote_candidate_ranges(self, c: Claim) -> tuple[tuple[str, int, int], ...]:
         """Keep individual ranges and add only same-file connected unions."""
@@ -889,6 +890,15 @@ class Checker:
         else:
             c.verdict, c.reason = results[0][0][:2]
             c.reason_code = results[0][0].code
+        # Distinct complete versions may disagree with each other while every
+        # version disproves the same explicit entity value. Unknown/partial
+        # versions never establish this universal negative.
+        if (c.check_type == 'K6' and c.unit == 'value' and c.entity and len(results) > 1
+                and all(r.code == 'value_mismatch' and r.verdict == 'mismatch'
+                        and e.complete and not e.problem and not e.unsupported
+                        for r, e in results)):
+            c.verdict, c.reason, c.reason_code = (
+                'mismatch', '모든 완전한 관측판에서 연결 엔터티 값 불일치', 'value_mismatch')
         if c.check_type in {'K1', 'K5'} and c.quote and len(results) > 1:
             proof, absent_everywhere, _ = self.quote_versions([(c, [e for _, e in results])])
             c.source['quote_check'] = proof

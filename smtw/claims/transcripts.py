@@ -449,9 +449,62 @@ def literal_call_paths(call: Call) -> list[str]:
     return paths
 
 
+def git_file_read(command: str, cwd: str = "") -> tuple[str, str, str, bool] | None:
+    """One fixed Git blob, optionally followed only by display-only stages.
+
+    Allowed tails: 2>&1, | Out-String, | Select-Object -First N.
+    No other options, operands, expressions, or commands are accepted.
+    """
+    from .packets import hard_excluded
+    if any(char in command for char in "\r\n\x00"):
+        return None
+    literal = r"""(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s"'|&<>;]+)"""
+    match = re.fullmatch(
+        rf"\s*git(?:\s+-C\s+(?P<root>{literal}))?\s+show\s+(?P<blob>{literal})"
+        r"(?P<tail>(?:\s+2>&1|\s*\|\s*(?:Out-String|Select-Object\s+-First\s+[1-9]\d*))*)\s*",
+        command, re.I)
+    if not match:
+        return None
+    unquote = lambda value: value[1:-1] if value[:1] in {"'", '"'} else value
+    blob = unquote(match["blob"])
+    parsed = re.fullmatch(r"([0-9a-fA-F]{7,40}):(.+)", blob)
+    if not parsed:
+        return None
+    revision, path = parsed.groups()
+    root = unquote(match["root"]) if match["root"] else ""
+    operands = [value for value in (root, path) if value]
+    if any(any(char in value for char in ";&|\r\n$<>(){}#^*?[]%," + chr(96))
+           or "'" in value or '"' in value for value in operands):
+        return None
+    if not FILE_TOKEN.fullmatch(path):
+        return None
+    effective_cwd = observed_path(root, cwd) if root else cwd
+    tokens = ["git", "show", revision, *(["-C"] if root else []), *operands, *re.findall(r"[\w-]+", match["tail"])]
+    if any(hard_excluded(token) for token in tokens) or hard_excluded(observed_path(path, effective_cwd)):
+        return None
+    return path, revision.lower(), effective_cwd, bool(re.search(r"\bSelect-Object\b", match["tail"], re.I))
+
+
+def opaque_read_paths(call: Call) -> list[tuple[str, str]]:
+    """Keep only literal path/version hints; never retain rejected output."""
+    from .packets import hard_excluded
+    result = []
+    for token in literal_call_paths(call):
+        blob = re.fullmatch(r"([0-9a-fA-F]{7,40}):(.+)", token)
+        revision, path = (blob[1].lower(), blob[2]) if blob else ("", token)
+        if not hard_excluded(path) and not hard_excluded(observed_path(path, call.cwd)):
+            item = (path, revision)
+            if item not in result:
+                result.append(item)
+    return result
+
+
 def simple_read_path(command: str, cwd: str = "") -> str:
     """Recognize a closed single-file read grammar, never execute shell text."""
     from .packets import hard_excluded
+    git_read = git_file_read(command, cwd)
+    if git_read:
+        return git_read[0]
     # A closed count-only wrapper still has exactly one literal read operand.
     measured = re.fullmatch(r"\s*@?\((Get-Content\s+[^()\r\n]+)\)\.(?:Count|Length)\s*", command, re.I)
     if measured:
@@ -906,13 +959,13 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
             rows.pop(markers[-1])
             body = ''.join(rows)
     if call.command and not call.url and not simple_read_path(call.command, call.cwd):
-        # Retain only command completion metadata. Headers and numbered output
-        # cannot restore a file binding for an ambiguous shell command.
+        # Completion metadata and opaque version hints are separate. Opaque
+        # hints retain no output, counts, source lines, or lazy output pointer.
         task = re.search(r"task-(\d+)", body)
         control_paths = literal_call_paths(call)
         pointer = re.search(r"Task logs are available at:\s*([^\r\n]+)", body, re.I)
         target = pointer_path(pointer.group(1), root) if pointer and marker else None
-        return [Evidence(path=control_paths[0] if len(control_paths) == 1 else "",
+        control = Evidence(path=control_paths[0] if len(control_paths) == 1 else "",
                          command=call.command, cwd=call.cwd, tool=call.name,
                          task_id=task.group(1) if task else "",
                          aux_path=str(target) if target and target.is_file() else "",
@@ -921,7 +974,13 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
                          exit_code=0 if observed_marker and exit_code is None else exit_code,
                          control_only=True,
                          problem="" if marker else "단일 파일 읽기로 확정할 수 없는 셸 명령",
-                         problem_code="" if marker else "binding_ambiguous")]
+                         problem_code="" if marker else "binding_ambiguous")
+        opaque = [Evidence(path=path, revision=revision, cwd=call.cwd, tool=call.name,
+                           origin=origin, order=call.order, timestamp=call.timestamp,
+                           exit_code=exit_code, problem="다른 판의 내용은 확보하지 못한 셸 읽기",
+                           problem_code="opaque_version")
+                  for path, revision in opaque_read_paths(call)]
+        return [control, *opaque]
     if BROWSER_READ.search(call.name) and not SEARCH_TOOL.search(call.name) and not re.search(r'read_url|open_url', call.name, re.I):
         urls = re.findall(r'(?:["\']?(?:URL|pageUrl|page_url|currentUrl)["\']?\s*[:=]\s*["\']?|^\s*[-*]?\s*Page URL:\s*)(https?://[^\s"\'<>]+)', body, re.I | re.M)
         urls = list(dict.fromkeys(u.rstrip('.,;)]}') for u in urls))
@@ -959,6 +1018,16 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
     if TRUNCATED.search(body):
         e.problem = '잘린 도구 출력'
         e.problem_code = 'partial_range'
+    git_read = git_file_read(call.command, call.cwd) if call.command else None
+    if git_read:
+        e.path, e.revision, e.cwd, partial = git_read
+        e.text = body
+        e.lines = dict(enumerate(body.splitlines(), 1))
+        e.complete = not partial and not e.problem
+        if e.complete:
+            e.counts = line_counts(body)
+            e.total_lines = e.counts["L_view"]
+        return [e]
     path_header = re.search(r'^File Path:\s*`?([^\r\n`]+)', body, re.M)
     if path_header:
         actual = path_header.group(1).strip()
@@ -1122,7 +1191,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
     def accept(call, body, n, exit_code=None):
         observations = parse_result(call, body, f'{path}:{n}', root, budget, exit_code)
         for e in observations:
-            e.path = observed_path(e.path, call.cwd)
+            e.path = observed_path(e.path, e.cwd or call.cwd)
             normalized = normalize_path(e.path, aliases)
             locally_excluded = (normalized in report_targets
                                 or normalized in writes and writes[normalized] <= call.order)
