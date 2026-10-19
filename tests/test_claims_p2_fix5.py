@@ -42,3 +42,27 @@ def test_parenthetical_reference_without_quote_stays_range_only(tmp_path):
     r, t = make_case(tmp_path, report, rows)
     claim, = [c for c in run(r, agy=str(t))["claims"] if c["check_type"] == "K1"]
     assert claim["verdict"] == "range_only"
+
+
+@pytest.mark.parametrize("body", [
+    "¤slug-a¤ is deprecated and routed to ¤slug-b¤ at the same price of 12.",
+    "¤¤slug-a¤¤ is deprecated and routed to ¤¤slug-b¤¤ at the same price of 12.",
+    "slug-a is deprecated and routed to slug-b at the same price of 12.",
+])
+@pytest.mark.parametrize("change,expected", [("", "match"), ("word", "mismatch"), ("number", "mismatch")])
+def test_web_inline_backticks_preserve_words_and_numbers(tmp_path, body, change, expected):
+    quoted = "¤slug-a¤ is deprecated and routed to ¤slug-b¤ at the same price of 12."
+    if change == "word":
+        quoted = quoted.replace("deprecated", "supported")
+    elif change == "number":
+        quoted = quoted.replace("12", "13")
+    url = "https://example.invalid/catalog#routing"
+    report = '> local ¤state.json¤ summary\n> ' + url + ' 원문 인용 "' + quoted + '"'
+    report, body = report.replace("¤", chr(96)), body.replace("¤", chr(96))
+    rows = [agy_call("view_file", AbsolutePath="C:/synthetic/state.json"),
+            view("C:/synthetic/state.json", '{"enabled":true}'),
+            agy_call("read_url_content", Url=url), generic(body)]
+    r, t = make_case(tmp_path, report, rows)
+    claims = [c for c in run(r, agy=str(t))["claims"] if c["check_type"] == "K5"]
+    assert len(claims) == 1
+    assert claims[0]["verdict"] == expected

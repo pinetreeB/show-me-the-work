@@ -188,15 +188,17 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
             return Result('absent', '토큰 언급은 있으나 정의·설정 키는 없음', 'no definition', 'definition_missing')
         return missing(e, dirty)
     if c.check_type == 'K5':
+        # URL renderers may retain, double, or omit inline code delimiters.
+        quote = c.quote.replace('`', '') if c.web_quote else c.quote
         observed_text = '\n'.join(e.lines[n] for n in sorted(e.lines))
-        if not quote_in_text(c.quote, observed_text, prose=False):
+        if not c.web_quote and not quote_in_text(quote, observed_text, prose=False):
             rule = paraphrase_rule(c.quote, e)
             if rule:
                 return Result('unverifiable', f'코드 인용 표기 차이({rule}); 리터럴 일치로 확정하지 않음',
                               observed_text, 'paraphrased_quote')
         dirty = False
         prose = not c.quote_code and not code_ellipsis(c.quote)
-        parts = quote_fragments(c.quote, prose=prose)
+        parts = quote_fragments(quote, prose=prose)
         if not parts:
             return Result('unverifiable', '대조할 인용 조각 없음', code='quote_empty')
         part_index = 0
@@ -204,7 +206,7 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
         window = ''
         for n, line in content_lines(e, budget):
             dirty |= '\ufffd' in line
-            window = window + ' ' + normalized_quote(line, prose=prose)
+            window = window + ' ' + normalized_quote(line.replace('`', '') if c.web_quote else line, prose=prose)
             while part_index < len(parts):
                 needle = parts[part_index]
                 offset = window.find(needle)
