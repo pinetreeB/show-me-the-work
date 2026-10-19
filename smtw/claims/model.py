@@ -93,6 +93,7 @@ class Evidence:
     problem: str = ""
     problem_code: str = ""
     aux_path: str = ""
+    url_content_path: str = ""
     task_id: str = ""
     conditional_marker: str = ""
     success_marker: str = ""
@@ -112,7 +113,7 @@ class Evidence:
                 "problem_code": self.problem_code,
                 "range": [min(self.lines), max(self.lines)] if self.lines else [],
                 "total_lines": self.total_lines, "total_bytes": self.total_bytes,
-                "aux_path": self.aux_path,
+                "aux_path": self.aux_path, "url_content_path": self.url_content_path,
                 "conditional_marker": self.conditional_marker, "success_marker": self.success_marker,
                 "exit_code": self.exit_code,
                 "control_only": self.control_only,

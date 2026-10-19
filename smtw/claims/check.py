@@ -114,6 +114,9 @@ def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
         return Result('unverifiable', '명령 성공 제어 정보는 파일 원문이 아님', code='no_read_of_file')
     if e.problem:
         return Result('unverifiable', e.problem, code=e.problem_code or 'read_failed')
+    if e.url_content_path:
+        return Result('unverifiable', '웹 본문 저장 안내만 있고 연결된 읽기 근거 없음',
+                      code='web_evidence_missing')
     if c.check_type in {'K4', 'K6'}:
         quote = c.text[1:-1] if c.text.startswith(chr(96)) and c.text.endswith(chr(96)) else c.text
         if re.match(r'^[A-Za-z_]\w*\.[A-Za-z_]\w*\s*[:=]', quote):
@@ -403,9 +406,21 @@ class Checker:
 
     def select(self, c: Claim) -> list[Evidence]:
         if c.web_quote:
-            return [e for e in self.transcript.evidence
-                    if e.url and not e.control_only and (c.current or not e.after_report)
-                    and (not c.path or normalize_url(c.path) == normalize_url(e.url))]
+            pages = [e for e in self.transcript.evidence
+                     if e.url and not e.control_only and (c.current or not e.after_report)
+                     and (not c.path or normalize_url(c.path) == normalize_url(e.url))]
+            observed = []
+            for page in pages:
+                if not page.url_content_path:
+                    observed.append(page)
+                    continue
+                captured = [replace(e, url=page.url) for e in self.transcript.evidence
+                            if 'view_file' in e.tool and not e.control_only
+                            and e.order > page.order and (c.current or not e.after_report)
+                            and normalize_path(e.path, self.aliases)
+                            == normalize_path(page.url_content_path, self.aliases)]
+                observed.extend(captured or [page])
+            return observed
         observed = [e for e in self.transcript.evidence
                     if not e.control_only and (c.current or not e.after_report)
                     and c.path and (matches_path(c.path, e.path, self.aliases)
@@ -683,9 +698,9 @@ class Checker:
         if c.check_type == 'K8':
             relevant = [e for e in self.transcript.evidence if normalize_url(e.url) == normalize_url(c.value)
                         and (c.current or not e.after_report)]
-            if any(not e.problem and e.complete for e in relevant):
+            if any(not e.problem and (e.complete or e.url_content_path) for e in relevant):
                 c.verdict, c.reason = 'match', '성공한 URL 읽기 결과 확인'
-                c.source = next(e.metadata() for e in relevant if not e.problem and e.complete)
+                c.source = next(e.metadata() for e in relevant if not e.problem and (e.complete or e.url_content_path))
                 c.reason_code = 'visited_url'
             else:
                 c.verdict = 'unverifiable' if relevant or not self.transcript.valid or not self.transcript.version else 'absent'

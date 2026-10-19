@@ -762,6 +762,17 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
     if exit_code not in (None, 0) or re.search(r'^(?:Error:|Error executing|File not found|Access denied)|"isError"\s*:\s*true|"success"\s*:\s*false|"status"\s*:\s*"(?:ERROR|FAILED)"', body, re.M | re.I):
         e.problem = '읽기 도구 실패'
         e.problem_code = 'read_failed'
+    if e.url and not e.problem:
+        saved = re.search(r'\bsaved\s+to:\s*([^\r\n]+)', body, re.I)
+        if saved:
+            location = saved.group(1).strip(' `*"\'')
+            content = re.search(r'(?:^|[/\\])steps[/\\]\d+[/\\]content\.md(?![\w./\\-])', location, re.I)
+            if content:
+                # This is a storage notice, not page text. Only captured later
+                # view_file results may supply the page; never read this path.
+                e.url_content_path = location[:content.end()]
+                e.complete = False
+                return [e]
     if TRUNCATED.search(body):
         e.problem = '잘린 도구 출력'
         e.problem_code = 'partial_range'
