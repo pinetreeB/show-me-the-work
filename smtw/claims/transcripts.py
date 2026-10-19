@@ -1113,6 +1113,9 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                         register(call)
                 elif typ in {'function_call_output', 'custom_tool_call_output'}:
                     calls = codex_calls.pop(str(item.get('call_id', '')), [])
+                    if (result_parser is not None and hasattr(result_parser, 'allow_codex_output')
+                            and not result_parser.allow_codex_output(calls, n)):
+                        continue
                     outputs = unwrapped(item.get('output', ''))
                     for i, (body, code, output_index) in enumerate(outputs):
                         selected = output_index if output_index is not None else i

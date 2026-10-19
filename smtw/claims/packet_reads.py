@@ -4,11 +4,12 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 import re
+import json
 import shlex
 
 from .model import Budget, Evidence, line_counts
 from .paths import normalize_path
-from .transcripts import Call, FILE_TOKEN, call_paths, observed_path, parse_result
+from .transcripts import Call, FILE_TOKEN, call_paths, js_calls, observed_path, parse_result, unwrapped
 
 
 def git_file_read(command: str, cwd: str = "") -> tuple[str, str, str, bool] | None:
@@ -135,6 +136,11 @@ def parse_packet_result(call: Call, body: str, origin: str, root: Path,
         return [Evidence(path=excluded, command=call.command, tool=call.name, origin=origin,
                          order=call.order, timestamp=call.timestamp, control_only=True,
                          problem="패킷 단일 읽기 출처 미확정", problem_code="binding_ambiguous")]
+    # Shell output notices cannot authorize reading another tool step's file.
+    if re.search(r"(?:saved to:|Task logs are available at:|steps[/\\]\d+[/\\].*output\.txt)", body, re.I):
+        return [Evidence(command=call.command, tool=call.name, origin=origin,
+                         order=call.order, control_only=True,
+                         problem="셸 보조 포인터는 패킷 출처 아님", problem_code="pointer_unbound")]
     observations = parse_result(call, body, origin, root, budget, exit_code)
     git_read = git_file_read(call.command, call.cwd)
     if git_read:
@@ -162,3 +168,106 @@ def parse_packet_result(call: Call, body: str, origin: str, root: Path,
                         total_lines=line_counts(body)["L_view"])
         result.append(e)
     return result
+
+
+class PacketResultParser:
+    """Validate attribution groups before any output becomes packet evidence.
+
+    The shared check adapter remains unchanged. Preflight sees the entire
+    transcript, so an extra result or an unfinished final FIFO invalidates
+    earlier shell observations in that group as well.
+    """
+
+    def __init__(self, path: Path, kind: str, budget: Budget):
+        self.kind = kind
+        self.allowed = set()
+        groups = []
+        current = None
+        codex = {}
+        malformed = False
+        with path.open("rb") as stream:
+            for number, raw in enumerate(stream, 1):
+                budget.check()
+                try:
+                    row = json.loads(raw)
+                    if not isinstance(row, dict):
+                        raise ValueError("invalid row")
+                except (ValueError, UnicodeError):
+                    malformed = True
+                    continue
+                if kind == "agy":
+                    typ = row.get("type")
+                    if typ == "PLANNER_RESPONSE":
+                        tools = row.get("tool_calls", [])
+                        current = {"order": number, "count": len(tools) if isinstance(tools, list) else 0,
+                                   "results": [], "bad": not isinstance(tools, list)}
+                        groups.append(current)
+                    elif current is not None:
+                        if typ == "GENERIC":
+                            current["results"].append(number)
+                        elif len(current["results"]) < current["count"]:
+                            current["bad"] = True
+                    continue
+                if row.get("type") != "response_item" or not isinstance(row.get("payload"), dict):
+                    continue
+                item = row["payload"]
+                ident = str(item.get("call_id", ""))
+                typ = item.get("type")
+                if typ in {"function_call", "custom_tool_call"}:
+                    args = item.get("arguments", item.get("input", {}))
+                    code_mode = str(item.get("name", "")).rsplit(".", 1)[-1] == "exec"
+                    count, bad = 1, False
+                    if code_mode:
+                        if not isinstance(args, str):
+                            count, bad = 0, True
+                        else:
+                            count = len(js_calls(args, number, ""))
+                            occurrences = len(re.findall(
+                                r"\btools\s*(?:\.\s*[\w$]+|\[[^\]]+\])\s*\(", args))
+                            bad = not count or occurrences != count
+                    if ident in codex:
+                        codex[ident]["bad"] = True
+                        bad = True
+                    current = {"order": number, "count": count, "results": [],
+                               "bad": bad or not ident}
+                    groups.append(current)
+                    codex[ident] = current
+                elif typ in {"function_call_output", "custom_tool_call_output"}:
+                    if ident in codex:
+                        codex[ident]["results"].append((number, unwrapped(item.get("output", ""))))
+        if malformed:
+            return
+        for group in groups:
+            budget.check()
+            if group["bad"] or not group["count"]:
+                continue
+            if kind == "agy":
+                if len(group["results"]) == group["count"]:
+                    self.allowed.update((group["order"], row) for row in group["results"])
+                continue
+            # One terminal output row per call ID. Duplicate rows cannot safely
+            # share the adapter's pop-on-first-result fallback.
+            if len(group["results"]) != 1:
+                continue
+            row, outputs = group["results"][0]
+            if row <= group["order"] or not outputs:
+                continue
+            indices = [index for _, _, index in outputs]
+            if all(index is None for index in indices):
+                aligned = len(outputs) == group["count"]
+            else:
+                aligned = (all(type(index) is int and 0 <= index < group["count"] for index in indices)
+                           and len(set(indices)) == len(indices))
+            if aligned:
+                self.allowed.add((group["order"], row))
+
+    def allow_codex_output(self, calls, row):
+        return bool(calls and (calls[0].order, row) in self.allowed)
+
+    def __call__(self, call, body, origin, root, budget, exit_code=None):
+        row = int(origin.rsplit(":", 1)[1])
+        if (self.kind != "agy" or call.command) and (call.order, row) not in self.allowed:
+            return [Evidence(command=call.command, tool=call.name, origin=origin,
+                             order=call.order, control_only=True,
+                             problem="출력과 호출의 일대일 귀속 미확정", problem_code="output_binding")]
+        return parse_packet_result(call, body, origin, root, budget, exit_code)

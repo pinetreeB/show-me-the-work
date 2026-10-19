@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from smtw.claims.code_identity import code_sha256
+
 FIXTURE = Path(__file__).parent/"fixtures"/"claims-check-75512be.json"
 
 
@@ -42,10 +44,13 @@ def differences(expected, actual):
 def test_claims_public_75512be_frozen(sample):
     folder = os.environ.get("SMTW_CLAIMS_PUBLIC_RESULTS")
     if not folder:
+        if os.environ.get("SMTW_REQUIRE_PUBLIC") == "1":
+            pytest.fail("SMTW_REQUIRE_PUBLIC=1 requires fresh public-corpus results")
         pytest.skip("private public-corpus results supplied by authorized regression runner")
     frozen = json.loads(FIXTURE.read_text(encoding="utf-8"))
     assert frozen["baseline"] == "75512be" and len(frozen["samples"]) == 12
     actual = json.loads((Path(folder)/(sample+".json")).read_text(encoding="utf-8"))
+    assert actual.get("code_sha256") == code_sha256(), "public result code SHA mismatch; regenerate results"
     changed = differences(frozen["samples"][sample], projection(actual))
     assert not changed, sample+"\n"+"\n".join(changed)
 

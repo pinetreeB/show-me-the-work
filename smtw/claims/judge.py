@@ -35,7 +35,7 @@ def child_environment(parent):
     # Iterate names and filter BEFORE looking up any value.
     names = list(parent)
     if any(key.upper().startswith("ANTHROPIC_")
-           or key.upper() in {"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"}
+           or key.upper().startswith("CLAUDE_CODE_USE_")
            for key in names):
         raise ValueError("provider override environment name present; subscription execution refused")
     allowed = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR",

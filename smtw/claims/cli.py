@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from .check import run
+from .code_identity import code_sha256
 from .paths import mapping
 
 
@@ -85,6 +86,7 @@ def run_check(args) -> int:
                      repos=args.repo, commits=mapping(args.commit), sources=mapping(args.source_file, basename_default=True),
                      default_file=mapping([args.default_file]) if args.default_file is not None else None,
                      aliases=mapping(args.path_alias), time_limit=args.time_limit)
+        result['code_sha256'] = code_sha256()
         output = json.dumps(result, ensure_ascii=False, indent=2) if args.format == 'json' else render_text(result)
         code = {'PASS': 0, 'FAIL': 1, 'ERROR': 2, 'INCOMPLETE': 3}[result['status']]
     except Exception as exc:

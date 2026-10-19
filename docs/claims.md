@@ -313,3 +313,13 @@ P1F 가림 예외는 정확한 40자리 Git SHA 구분자, SHA256/digest/checksu
 SMTW_CLAIMS_PUBLIC_RESULTS 환경 변수로 지정하면 tests/test_claims_p31f_frozen.py가
 상태·요약·원자 identity·verdict·reason_code·출처 해시를 비교한다.
 자료가 없으면 이 12건은 명시적으로 skip하며, 이를 공개 사례 통과로 표시하지 않는다.
+
+### check 코어 상시 동결
+
+tests/test_claims_p31g_core.py는 비공개 자료 없이 check·extract·sources·model·markup·paraphrase
+모듈과 transcripts.parse_result의 소스 SHA256을 75512be 기준에 고정해 검사한다.
+공개 사례 자료가 없는 일반 환경에서도 이 검사는 항상 실행한다.
+SMTW_REQUIRE_PUBLIC=1이면 공개 결과 폴더가 없는 경우 skip 대신 실패한다.
+check CLI 결과의 code_sha256은 현재 claims Python 소스 전체에 결속되며,
+공개 고정 시험은 해당 SHA가 현재 코드와 다르거나 누락되면 결과 재생성을 요구하며 실패한다.
+이 메타데이터는 대조기 원자 판정·요약·상태에 영향을 주지 않는다.

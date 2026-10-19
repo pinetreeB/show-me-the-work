@@ -6,6 +6,7 @@ import math
 
 from .assist import select_candidates
 from .check import run
+from .code_identity import code_sha256
 from .paths import mapping
 from .model import Budget
 from .privacy import load_blocklist, needs_blocklist
@@ -17,11 +18,13 @@ from .transcripts import discover_agy, resolve_agy
 def check_inputs(args):
     if not math.isfinite(args.time_limit) or args.time_limit <= 0:
         raise ValueError("--time-limit은 양의 유한 초 단위 숫자여야 합니다.")
-    return run(args.report, agy=args.agy, agy_auto=args.agy_auto, codex=args.codex,
+    result = run(args.report, agy=args.agy, agy_auto=args.agy_auto, codex=args.codex,
                brain_root=args.agy_brain_root, repos=args.repo, commits=mapping(args.commit),
                sources=mapping(args.source_file, basename_default=True),
                default_file=mapping([args.default_file]) if args.default_file is not None else None,
                aliases=mapping(args.path_alias), time_limit=args.time_limit)
+    result["code_sha256"] = code_sha256()
+    return result
 
 
 def run_assist(args) -> int:
