@@ -28,7 +28,7 @@ def test_url_pointer_uses_only_captured_page_reads(tmp_path, saved, mode, quote,
     claim, = [c for c in result["claims"] if c["check_type"] == "K5"]
     assert claim["verdict"] == expected
     visit, = [c for c in result["claims"] if c["check_type"] == "K8"]
-    assert visit["verdict"] == "match"
+    assert visit["verdict"] == ("match" if mode == "full" else "unverifiable")
     if mode in {"pointer", "other", "partial"}:
         assert not any(e["complete"] for e in claim["source"]["observations"])
     if expected == "mismatch":

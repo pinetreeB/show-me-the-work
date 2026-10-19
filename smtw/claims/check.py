@@ -696,11 +696,10 @@ class Checker:
             c.reason_code = 'value_match' if okay else 'value_mismatch'
             return
         if c.check_type == 'K8':
-            relevant = [e for e in self.transcript.evidence if normalize_url(e.url) == normalize_url(c.value)
-                        and (c.current or not e.after_report)]
-            if any(not e.problem and (e.complete or e.url_content_path) for e in relevant):
+            relevant = self.select(replace(c, web_quote=True, path=c.value))
+            if any(not e.problem and e.complete for e in relevant):
                 c.verdict, c.reason = 'match', '성공한 URL 읽기 결과 확인'
-                c.source = next(e.metadata() for e in relevant if not e.problem and (e.complete or e.url_content_path))
+                c.source = next(e.metadata() for e in relevant if not e.problem and e.complete)
                 c.reason_code = 'visited_url'
             else:
                 c.verdict = 'unverifiable' if relevant or not self.transcript.valid or not self.transcript.version else 'absent'

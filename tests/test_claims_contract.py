@@ -274,6 +274,8 @@ def test_required_06_07_aux_pointer_lazy_and_task_completion(tmp_path):
             generic('has been saved to: C:/fake-brain/.system_generated/steps/5/content.md'),
             agy_call('run_command', CommandLine='git log -1'),
             generic('background task task-8\nTask logs are available at: C:/fake-brain/.system_generated/tasks/task-8.log'),
+            agy_call('view_file', AbsolutePath='C:/fake-brain/.system_generated/steps/5/content.md'),
+            view('C:/fake-brain/.system_generated/steps/5/content.md', 'source paragraph here'),
             {'type': 'SYSTEM_MESSAGE', 'content': 'Task id 8 finished with result: command exited with code 0'}]
     r, t = make_case(tmp_path, 'https://example.invalid/doc', rows)
     start = time.monotonic()
@@ -282,7 +284,9 @@ def test_required_06_07_aux_pointer_lazy_and_task_completion(tmp_path):
     assert time.monotonic() - start < 10
     transcript = read_transcript(t, 'agy', r, r.read_text(), {}, Budget(10))
     assert transcript.evidence[1].complete
-    assert transcript.evidence[0].aux_path.endswith('content.md')
+    assert transcript.evidence[0].url_content_path.endswith('content.md')
+    assert not transcript.evidence[0].complete
+    assert transcript.evidence[0].aux_path == ''
     write_transcript(t, rows[:-1])
     transcript = read_transcript(t, 'agy', r, r.read_text(), {}, Budget(10))
     assert transcript.evidence[1].problem == '비동기 완료 정보 미확보'
@@ -426,9 +430,14 @@ def test_missing_aux_and_failed_read_precede_absence(tmp_path):
 def test_quoted_web_aux_content(tmp_path):
     aux = tmp_path / 'aux/steps/3'
     aux.mkdir(parents=True)
-    (aux/'content.md').write_text('exact web source phrase\n', encoding='utf-8')
-    r, t = make_case(tmp_path, 'https://example.invalid/doc “exact web source phrase”', [
-        agy_call('read_url_content', Url='https://example.invalid/doc'), generic('has been saved to: C:/fake-brain/steps/3/content.md')])
+    (aux/'content.md').write_text('untrusted disk-only page text\n', encoding='utf-8')
+    rows = [agy_call('read_url_content', Url='https://example.invalid/doc'),
+            generic('has been saved to: C:/fake-brain/steps/3/content.md')]
+    r, t = make_case(tmp_path, 'https://example.invalid/doc “exact web source phrase”', rows)
+    assert run(r, agy=str(t))['status'] == 'INCOMPLETE'
+    rows += [agy_call('view_file', AbsolutePath='C:/fake-brain/steps/3/content.md'),
+             view('C:/fake-brain/steps/3/content.md', 'exact web source phrase')]
+    write_transcript(t, rows)
     assert run(r, agy=str(t))['status'] == 'PASS'
 
 
