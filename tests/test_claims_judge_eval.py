@@ -156,3 +156,125 @@ def test_fixed_repo_pool_filters_paths_before_read_and_lines_after_read(tmp_path
     assert all(len(r["quote"]) >= 20 and not r["redactions"] for r in rows)
     assert all("synthetic_example" not in r["text"] and ".codex" not in r["text"] for r in rows)
     assert len({r["quote"] for r in rows}) == len(rows)
+
+
+
+def assert_no_answer_hints(folder):
+    forbidden = {"truth", "expected", "verdict", "mutation", "is_original", "answers", "sampling"}
+    def walk(value):
+        if isinstance(value, dict):
+            assert not forbidden.intersection(value)
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+    for file in folder.glob("*.json"):
+        walk(json.loads(file.read_text(encoding="utf-8")))
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 99])
+def test_packet_batches_validate_independently_and_preserve_all_items(tmp_path, scope_file, batch_size):
+    from collections import Counter
+    whole = tmp_path / "whole"
+    split = tmp_path / "split"
+    original = generate(pool(), whole, scope_file=scope_file)
+    result = generate(pool(), split, scope_file=scope_file, batch_size=batch_size)
+    expected = load_sent_items(whole / "packets")
+    expected_truth = json.loads((whole / "truth/answers.json").read_text(encoding="utf-8"))["items"]
+    combined, truth_items, packet_bytes = {}, {}, []
+    batches = sorted((split / "packets").iterdir())
+    assert len(batches) == (original["packets"] + batch_size - 1) // batch_size
+    assert [p.name for p in batches] == [f"batch-{i:03d}" for i in range(1, len(batches) + 1)]
+    assert len(result["batches"]) == len(batches)
+    assert not (split / "packets/manifest.json").exists()
+    for folder, summary in zip(batches, result["batches"]):
+        sent = load_sent_items(folder)  # Existing judge SHA/size/id validation.
+        manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+        answers = split / "truth" / folder.name / "answers.json"
+        truth = json.loads(answers.read_text(encoding="utf-8"))
+        assert set(sent) == set(truth["items"]) == set(manifest["item_cases"])
+        assert 1 <= len(manifest["packets"]) <= batch_size
+        assert manifest["sent_count"] == manifest["selected_count"] == len(sent)
+        assert manifest["deferred_count"] == 0
+        assert summary["packets_dir"] == str(folder) and summary["answers"] == str(answers)
+        assert truth["original_count"] == sum(v["verdict"] == "supported" for v in truth["items"].values())
+        assert truth["mutation_count"] == sum(v["verdict"] == "contradicted" for v in truth["items"].values())
+        assert not set(combined).intersection(sent)
+        assert "| Packet | Items |" in summarize(folder, scope_file=scope_file)
+        assert_no_answer_hints(folder)
+        combined.update(sent)
+        truth_items.update(truth["items"])
+        packet_bytes.extend(p.read_bytes() for p in folder.glob("packet-*.json"))
+    assert combined == expected and truth_items == expected_truth
+    assert Counter(packet_bytes) == Counter(p.read_bytes() for p in (whole / "packets").glob("packet-*.json"))
+    assert result["items"] == original["items"] == 200 and result["model_calls"] == 0
+    # A changed packet invalidates only its own folder's hash set.
+    first = next(batches[0].glob("packet-*.json"))
+    first.write_bytes(first.read_bytes() + b" ")
+    with pytest.raises(ValueError, match="SHA"):
+        load_sent_items(batches[0])
+    for folder in batches[1:]:
+        assert load_sent_items(folder)
+
+
+@pytest.mark.parametrize("limit", [2, 12, 44, 200, 202])
+def test_item_limit_selects_first_complete_pairs_before_shuffle(tmp_path, scope_file, limit):
+    generate(pool(), tmp_path / "whole", scope_file=scope_file)
+    original = json.loads((tmp_path / "whole/truth/answers.json").read_text(encoding="utf-8"))
+    result = generate(pool(), tmp_path / "small", scope_file=scope_file, limit_items=limit)
+    sent = load_sent_items(tmp_path / "small/packets")
+    truth = json.loads((tmp_path / "small/truth/answers.json").read_text(encoding="utf-8"))
+    expected_ids = list(original["items"])[:limit]
+    assert set(sent) == set(truth["items"]) == set(expected_ids)
+    assert truth["items"] == {key: original["items"][key] for key in expected_ids}
+    assert truth["original_count"] == truth["mutation_count"] == min(limit, 200) // 2
+    for i in range(0, len(expected_ids), 2):
+        pair = [original["items"][key]["verdict"] for key in expected_ids[i:i+2]]
+        assert pair == ["supported", "contradicted"]
+    assert sum(truth["originals_by_category"].values()) == min(limit, 200) // 2
+    assert result["items"] == min(limit, 200)
+    assert result["unique_originals"] == truth["unique_used_quotes"] == min(limit, 200) // 2
+    assert_no_answer_hints(tmp_path / "small/packets")
+
+
+@pytest.mark.parametrize("option,value", [
+    ("batch_size", 0), ("batch_size", -1), ("batch_size", True),
+    ("limit_items", 0), ("limit_items", -2), ("limit_items", 1), ("limit_items", 3),
+])
+def test_generation_bounds_reject_invalid_values_without_writes(tmp_path, scope_file, option, value):
+    output = tmp_path / "invalid"
+    with pytest.raises(ValueError, match="batch-size|limit-items"):
+        generate(pool(), output, scope_file=scope_file, **{option: value})
+    assert not output.exists()
+
+
+def test_generate_cli_limits_and_batches_with_folder_scoring(tmp_path, scope_file, monkeypatch, capsys):
+    from smtw.claims import judge_eval as evaluation
+    monkeypatch.setattr(evaluation, "collect_pool", lambda path: (pool(), {}))
+    output = tmp_path / "cli"
+    assert evaluation.main(["generate", "--scope-file", str(scope_file), "--out-root", str(output),
+                            "--limit-items", "12", "--batch-size", "1"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["items"] == 12 and len(result["batches"]) == 1
+    folder = output / "packets/batch-001"
+    truth_file = output / "truth/batch-001/answers.json"
+    truth = json.loads(truth_file.read_text(encoding="utf-8"))["items"]
+    sent = load_sent_items(folder)
+    fake_run = make_run(tmp_path / "fake-run", sent, truth)
+    scored = score(folder, truth_file, [fake_run], scope_file=scope_file)
+    assert scored["runs"][0]["recall"] == scored["runs"][0]["precision"] == 1
+    assert scored["runs"][0]["unjudged"] == 0 and scored["model_calls"] == 0
+
+
+@pytest.mark.parametrize("option,value", [("--batch-size", "0"), ("--limit-items", "3")])
+def test_cli_rejects_invalid_bounds_before_collecting_sources(tmp_path, scope_file, monkeypatch, option, value):
+    from smtw.claims import judge_eval as evaluation
+    def forbidden(*args):
+        pytest.fail("invalid bounds must not read corpus sources")
+    monkeypatch.setattr(evaluation, "collect_pool", forbidden)
+    with pytest.raises(SystemExit) as error:
+        evaluation.main(["generate", "--scope-file", str(scope_file), "--out-root", str(tmp_path / "bad"),
+                         option, value])
+    assert error.value.code == 2
+    assert not (tmp_path / "bad").exists()

@@ -43,6 +43,27 @@ L4는 범위 파일에 명시한 저장소와 고정 커밋의 파일 줄을 git
 원본·변조 모두 동일한 필드와 불투명 id를 쓰며 패킷에는 정답이나 변조 이름을 넣지 않습니다.
 숫자·식별자·인용 토큰·줄 이동·부정 반전을 각각 20개씩 사용합니다.
 
+처음 적은 양을 생성할 때는 두 옵션을 함께 줄 수 있습니다.
+
+```powershell
+python -X utf8 scripts/claims_eval.py generate --scope-file "<WORK>/judge-scope.json" --out-root "<WORK>/l4-small" --limit-items 20 --batch-size 1
+python -X utf8 scripts/claims_eval.py summary --scope-file "<WORK>/judge-scope.json" --packets "<WORK>/l4-small/packets/batch-001"
+```
+
+`--limit-items K`는 기존 생성 순서에서 섞기 전의 앞 K개 항목을 고릅니다.
+원본·변조 한 쌍은 2개 항목이며 K는 2 이상의 짝수입니다. 전체 항목 수보다 큰 K는 전체를 선택합니다.
+원본 코퍼스의 안전성·다양성 검사는 그대로 수행합니다. 옵션을 생략하면 전체 항목을 출력합니다.
+
+`--batch-size N`은 **항목이 아니라 패킷 N개씩** 나눕니다. N은 양의 정수입니다.
+출력은 `packets/batch-001`, `packets/batch-002` 순서이며 각 폴더에 독립 manifest·패킷 SHA가 있습니다.
+정답은 각각 `truth/batch-001/answers.json`, `truth/batch-002/answers.json`에 대응합니다.
+생성 결과 JSON의 `batches` 목록에 각 패킷 폴더와 정답 경로·개수가 표시됩니다.
+항목 제한은 전체에서 짝을 보존하지만, 섞은 패킷을 나눈 각 배치의 원본/변조 수는 다를 수 있습니다.
+
+judge의 `--packets`에는 확인한 배치 폴더 하나를 지정합니다. 각 배치도 기존 `--max-calls` 제한을 따릅니다.
+score의 `--packets`와 `--truth` 역시 같은 배치 번호로 지정합니다.
+두 옵션을 생략하면 기존 `packets/manifest.json`·`truth/answers.json` 구조를 유지합니다.
+
 채점은 claims_eval.py의 score 하위 명령에 --packets, --truth, --runs, --scope-file, --out-root를 지정합니다. 결과는 지정 출력 루트의 score.json에 씁니다.
 --runs에는 판정 회차 폴더 하나 또는 같은 패킷을 판정한 세 회차를 줍니다.
 채점기는 재검증 결과를 다시 계산해 일치 여부를 확인하고 재현율·정밀도·오표시율·

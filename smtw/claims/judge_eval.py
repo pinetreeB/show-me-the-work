@@ -141,7 +141,17 @@ def mutate(row, kind, rng):
     return statement(row,quote=quote[:match.start()]+changed+quote[match.end():])
 
 
-def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2, per_kind: int = 20, receipts=None):
+def generation_bounds(batch_size, limit_items):
+    if batch_size is not None and (type(batch_size) is not int or batch_size < 1):
+        raise ValueError("--batch-size must be a positive packet count")
+    if limit_items is not None and (type(limit_items) is not int or limit_items < 2 or limit_items % 2):
+        raise ValueError("--limit-items must be an even item count of at least 2 (complete original/mutation pairs)")
+
+
+def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2,
+             per_kind: int = 20, receipts=None, batch_size: int | None = None,
+             limit_items: int | None = None):
+    generation_bounds(batch_size, limit_items)
     if not pool or type(per_kind) is not int or per_kind < 1:
         raise ValueError("no usable matched quotes or invalid sample count")
     if output.exists() and any(output.iterdir()):
@@ -152,7 +162,7 @@ def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2,
         raise ValueError("corpus source outside the fixed allowlist")
     rng=random.Random(seed)
     items, truth, item_cases, used = [], {}, {}, set()
-    categories = Counter()
+    item_sources = {}
     for kind in KINDS:
         eligible = []
         for row in pool:
@@ -170,7 +180,6 @@ def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2,
             row, altered = rng.choice([pair for pair in available
                                        if (pair[0]["case"], pair[0].get("category", "code")) == group])
             used.add(row["quote"])
-            categories[row.get("category", "code")] += 1
             for claim, verdict in [(statement(row),"supported"),(altered,"contradicted")]:
                 key="q-"+f"{rng.getrandbits(64):016x}"
                 if key in truth:raise ValueError("duplicate generated id")
@@ -182,27 +191,58 @@ def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2,
                                    "ref":1,"version":"A","observation":row["observation"],
                                    "text":row["text"],"redactions":row["redactions"]}]}
                 items.append(item);item_cases[key]=row["case"]
+                item_sources[key] = (row["quote"], row.get("category", "code"))
                 truth[key]={"verdict":verdict,"mutation":kind if verdict=="contradicted" else None}
     if len(used) < min(60, per_kind * len(KINDS)):
         raise ValueError("L4 requires at least 60 distinct original quotations (or all small-sample pairs)")
+    # The generation order contains adjacent original/mutation pairs. Limit
+    # before shuffling so a small first run never selects an unpaired prefix.
+    if limit_items is not None:
+        items = items[:limit_items]
+    selected_ids = {item["id"] for item in items}
+    truth = {key: value for key, value in truth.items() if key in selected_ids}
+    item_cases = {key: value for key, value in item_cases.items() if key in selected_ids}
+    used = {item_sources[key][0] for key in selected_ids}
     rng.shuffle(items)
     packets=[]
     for item in items:
         if not packets or len(encoded({**packets[-1],"data_block":[*packets[-1]["data_block"],item]}))>30000:
             packets.append({"version":1,"instructions":"Evidence review data.","data_block":[]})
         packets[-1]["data_block"].append(item)
-    manifest=write_packets(output/"packets",packets,{"item_cases":item_cases,"scope_sha256":scope.sha256,
-        "selected_count":len(items),"sent_count":len(items),"deferred_count":0})
-    truth_dir=output/"truth";truth_dir.mkdir(parents=True)
-    answers={"version":1,"seed":seed,"items":truth,"source_receipts":receipts or {},
-             "unique_pool_quotes":len({r["quote"] for r in pool}),
-             "unique_used_quotes":len(used),"sampling":"prefer_distinct_quote_text",
-              "originals_by_category":dict(categories),
-             "original_count":len(items)//2,"mutation_count":len(items)//2}
-    (truth_dir/"answers.json").write_text(json.dumps(answers,ensure_ascii=False,indent=2),encoding="utf-8")
-    validate_scope(manifest,load_sent_items(output/"packets"),scope)
-    return {"items":len(items),"packets":len(packets),"unique_originals":len(used),
-            "model_calls":0,"answers":str(truth_dir/"answers.json")}
+    groups = []
+    width = batch_size or len(packets)
+    for start in range(0, len(packets), width):
+        group = packets[start:start + width]
+        name = f"batch-{start // width + 1:03d}" if batch_size is not None else ""
+        folder, truth_dir = output / "packets", output / "truth"
+        if name:
+            folder, truth_dir = folder / name, truth_dir / name
+        ids = {item["id"] for packet in group for item in packet["data_block"]}
+        group_truth = {key: value for key, value in truth.items() if key in ids}
+        manifest = write_packets(folder, group, {
+            "item_cases": {key: value for key, value in item_cases.items() if key in ids},
+            "scope_sha256": scope.sha256, "selected_count": len(ids),
+            "sent_count": len(ids), "deferred_count": 0})
+        originals = [key for key in group_truth if group_truth[key]["verdict"] == "supported"]
+        answers = {"version": 1, "seed": seed, "items": group_truth, "source_receipts": receipts or {},
+                   "unique_pool_quotes": len({r["quote"] for r in pool}),
+                   "unique_used_quotes": len({item_sources[key][0] for key in ids}),
+                   "sampling": "prefer_distinct_quote_text",
+                   "originals_by_category": dict(Counter(item_sources[key][1] for key in originals)),
+                   "original_count": len(originals), "mutation_count": len(ids) - len(originals)}
+        truth_dir.mkdir(parents=True)
+        answer_file = truth_dir / "answers.json"
+        answer_file.write_text(json.dumps(answers, ensure_ascii=False, indent=2), encoding="utf-8")
+        validate_scope(manifest, load_sent_items(folder), scope)
+        groups.append({"packets_dir": str(folder), "answers": str(answer_file),
+                       "items": len(ids), "packets": len(group)})
+    result = {"items": len(items), "packets": len(packets), "unique_originals": len(used),
+              "model_calls": 0}
+    if batch_size is None:
+        result["answers"] = groups[0]["answers"]
+    else:
+        result["batches"] = groups
+    return result
 
 
 def summarize(folder: Path, *, scope_file: Path) -> str:
@@ -286,6 +326,8 @@ def main(argv=None):
     sub=parser.add_subparsers(dest="action",required=True)
     g=sub.add_parser("generate")
     g.add_argument("--out-root",type=Path,required=True)
+    g.add_argument("--batch-size", type=int, help="packets per batch folder; default: no split")
+    g.add_argument("--limit-items", type=int, help="first K items before shuffle; K must preserve complete pairs")
     h=sub.add_parser("summary");h.add_argument("--packets",type=Path,required=True)
     s=sub.add_parser("score")
     s.add_argument("--packets",type=Path,required=True)
@@ -296,8 +338,13 @@ def main(argv=None):
         command.add_argument("--scope-file",type=Path,required=True)
     args=parser.parse_args(argv)
     if args.action=="generate":
+        try:
+            generation_bounds(args.batch_size, args.limit_items)
+        except ValueError as exc:
+            parser.error(str(exc))
         pool,receipts=collect_pool(args.scope_file)
-        print(json.dumps(generate(pool,args.out_root,scope_file=args.scope_file,receipts=receipts),ensure_ascii=False,indent=2))
+        print(json.dumps(generate(pool,args.out_root,scope_file=args.scope_file,receipts=receipts,
+                                  batch_size=args.batch_size,limit_items=args.limit_items),ensure_ascii=False,indent=2))
     elif args.action=="summary":
         print(summarize(args.packets,scope_file=args.scope_file))
     else:
