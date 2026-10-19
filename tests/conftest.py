@@ -25,3 +25,13 @@ def force_claude_adapter_for_legacy_tests(
     )
     monkeypatch.setenv("SMTW_TEST_FORCE_ENABLE", "1")
     yield
+
+
+@pytest.fixture(autouse=True)
+def forbid_real_claims_judge_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from smtw.claims import judge
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("REAL MODEL LAUNCH FORBIDDEN: global test tripwire")
+
+    monkeypatch.setattr(judge, "_launch", forbidden)

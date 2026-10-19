@@ -20,8 +20,9 @@ claude-p와 동일하게 CLAUDE_CONFIG_DIR=~/.claude-personal 및 CLAUDE_CODE_PL
 사용량 5시간 40% 이상 또는 주간 55% 이상이면 거부합니다. 사용량 자료가 없거나 오래됐으면
 기본 거부이며, 좌상이 사용량을 확인하고 명시적으로 --allow-unknown-usage를 줄 때만 허용됩니다.
 관제탑이 승인한 문맥 축소는 Phase 2 판정 호출에만 적용하며, 좌상이 명시적으로 --lean-context를 붙일 때 켜집니다.
-기본값은 꺼짐이며 기존 호출 인자는 유지됩니다. 켜면 --disable-slash-commands, --strict-mcp-config,
---system-prompt-file <저장소 판정 지시문>만 추가합니다. --mcp-config 없이 MCP를 비활성화하고 --tools ""를 유지합니다.
+lean 기본값은 꺼짐입니다. --disable-slash-commands와 --strict-mcp-config는 항상 적용합니다.
+lean을 켜면 --system-prompt-file <저장소 판정 지시문>을 추가합니다.
+--mcp-config 없이 MCP를 비활성화하고 --tools ""를 유지합니다.
 각 호출은 시스템 TEMP 아래 고객 자료·비밀이 없는 새 빈 폴더를 cwd로 사용하고 호출 종료·실패 때 삭제합니다.
 --setting-sources·권한 관련 플래그·--bare는 허용하지 않으며 API 키 금지와 구독 사용량 검사는 그대로입니다.
 calls.jsonl의 lean_context에 활성 여부를, usage 객체에는 원응답의 input_tokens·output_tokens·
@@ -38,13 +39,13 @@ Phase 1 원본 스키마와 재검증기의 배열 계약은 유지합니다.
 원본 schema_sha256·prompt_sha256·CLI 전달용 cli_schema_sha256을 함께 기록합니다.
 이전 v1 패킷은 재생성해야 합니다. 결과의 structured_output.judgments 또는 result 문자열의
 judgments를 기존 검증·인용 재검증에 넘깁니다.
-is_error: true, 정수 api_error_status, 또는 subtype이 success가 아닌 응답은 중단하고 stdout을 raw 파일에 그대로 보존합니다.
+참 값인 is_error(비 bool 포함), 정수·bool api_error_status, 또는 subtype이 success가 아닌 응답은 중단하고 stdout을 raw 파일에 그대로 보존합니다.
 성공 응답의 api_error_status: null은 정상 처리합니다. subtype이 빠진 CLI 객체는 거부하며, 기존 직접 배열 입력은 유지합니다.
 호출 기록의 원인은 result 앞 200자에 가림을 적용한 값만 사용하며 환경값·stderr·예외 문구는 넣지 않습니다.
 여러 줄 JSON을 .cmd 인자로 보내지 않습니다. native 경로를 찾지 못한 경우에만 claude-p를 사용합니다.
 기존 패킷을 수정하거나 프롬프트·스키마가 바뀌면 새로 생성해야 합니다.
 패킷 SHA·출처 목록·가림 패턴·30,000자 한도를 실행 직전에 다시 확인합니다.
-부모 ANTHROPIC_API_KEY 이름이 있으면 값 조회 없이 거부하며, 자식의 *_API_KEY·*_TOKEN은 제거합니다.
+부모 ANTHROPIC_*·CLAUDE_CODE_USE_BEDROCK/VERTEX 이름이 있으면 값 조회 없이 거부합니다. 자식 환경은 명시적 허용 목록만 복사합니다.
 실제 자격증명 파일이나 값을 읽어 확인하지 않습니다.
 
 calls.jsonl은 지정한 --out-root 아래에 추가 기록만 하며 범위 파일 SHA256을 기록합니다. 원출력, 스키마 통과 JSON, 인용 재검증 결과는
@@ -159,3 +160,12 @@ cat, type, Get-Content(선택적 -LiteralPath/-Path/-Raw), wc(-l/-c), stat(-c %s
 단일 Get-Content를 정확히 감싼 Count/Length 계측은 숫자 계측에만 사용하며 패킷 발췌로 쓰지 않습니다.
 조건부 성공 표식과 연결된 완료 로그도 제어 정보로만 남기며 파일 원문 근거가 되지 않습니다.
 skipped_ambiguous_command는 파일 읽기로 확정하지 못해 버린 셸 출력 관측 수입니다.
+
+
+### 호출 격리 기본값
+--strict-mcp-config와 --disable-slash-commands는 lean 여부와 무관하게 항상 적용합니다.
+lean-context는 system-prompt-file과 빈 임시 cwd만 추가합니다.
+자식 환경은 실행 경로·운영체제·임시 폴더·개인 홈·언어 설정 이름의 허용 목록만 복사합니다.
+개인 구독 설정 폴더 두 이름은 기존처럼 고정합니다.
+ANTHROPIC_* 또는 CLAUDE_CODE_USE_BEDROCK/VERTEX 이름이 있으면 값을 조회하지 않고 거부합니다.
+전역 tests/conftest.py는 모든 시험의 실제 judge._launch 진입을 실패시킵니다.

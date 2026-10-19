@@ -380,7 +380,7 @@ def test_both_response_readers_reject_error_envelopes(tmp_path, overrides):
     assert not list((tmp_path / "out/judge-runs").glob("*/verified-*.json"))
 
 
-@pytest.mark.parametrize("status", [None, False, True, "400"])
+@pytest.mark.parametrize("status", [None, "400"])
 def test_only_integer_api_status_is_an_error(status):
     value = json.loads(SUCCESS_NULL_STATUS)
     value["api_error_status"] = status
@@ -398,7 +398,8 @@ def test_legacy_direct_judgment_array_remains_supported():
 def test_lean_disabled_preserves_argv_bytes_and_executor_signature(tmp_path):
     schema = runner.SCHEMA.read_text(encoding="utf-8")
     baseline = ["claude-p", "--model", "claude-sonnet-5-5", "-p", "--tools", "",
-                "--no-session-persistence", "--output-format", "json", "--json-schema",
+                "--no-session-persistence", "--output-format", "json",
+                "--disable-slash-commands", "--strict-mcp-config", "--json-schema",
                 runner.cli_schema(schema)]
     encode = lambda argv: json.dumps(argv, ensure_ascii=True).encode("ascii")
     assert encode(runner.command(schema, "claude-p")) == encode(baseline)
@@ -430,8 +431,7 @@ def test_lean_each_packet_has_new_empty_cwd_and_removes_it(tmp_path):
         assert list(directory.iterdir()) == []
         assert all(not old.exists() for old in visited)
         visited.append(directory)
-        assert argv == baseline + ["--disable-slash-commands", "--strict-mcp-config",
-                                   "--system-prompt-file", str(runner.PROMPT.resolve())]
+        assert argv == baseline + ["--system-prompt-file", str(runner.PROMPT.resolve())]
         assert argv[argv.index("--tools") + 1] == ""
         assert not {"--bare", "--mcp-config", "--setting-sources",
                     "--dangerously-skip-permissions", "--permission-mode"}.intersection(argv)

@@ -33,11 +33,16 @@ def sha(data: bytes) -> str:
 def child_environment(parent):
     # Iterate names and filter BEFORE looking up any value.
     names = list(parent)
-    if any(key.upper() == "ANTHROPIC_API_KEY" for key in names):
-        raise ValueError("ANTHROPIC_API_KEY is present; subscription execution refused")
-    env = {key: parent[key] for key in names
-           if not key.upper().endswith(("_API_KEY", "_TOKEN"))
-           and key.upper() not in {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PLUGIN_CACHE_DIR"}}
+    if any(key.upper().startswith("ANTHROPIC_")
+           or key.upper() in {"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"}
+           for key in names):
+        raise ValueError("provider override environment name present; subscription execution refused")
+    allowed = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR",
+               "USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH",
+               "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_COLLATE",
+               "LC_NUMERIC", "LC_TIME", "LC_MONETARY", "LC_PAPER", "LC_NAME", "LC_ADDRESS",
+               "LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION", "TERM", "TZ"}
+    env = {key: parent[key] for key in names if key.upper() in allowed}
     # Match claude-p without reading either configuration directory.
     env["CLAUDE_CONFIG_DIR"] = str(Path.home() / ".claude-personal")
     env["CLAUDE_CODE_PLUGIN_CACHE_DIR"] = str(Path.home() / ".claude" / "plugins")
@@ -144,11 +149,11 @@ def command(schema: str, executable: str, *, lean_context: bool = False) -> list
     # and schema quotes through the legacy two-shim Windows chain.
     compact = cli_schema(schema)
     argv = [executable, "--model", MODEL, "-p", "--tools", "",
-            "--no-session-persistence", "--output-format", "json", "--json-schema", compact]
-    # Closed flag allowlist: these are added only on explicit operator opt-in.
+            "--no-session-persistence", "--output-format", "json",
+            "--disable-slash-commands", "--strict-mcp-config", "--json-schema", compact]
+    # MCP/slash isolation is mandatory; lean only changes prompt delivery and cwd.
     if lean_context:
-        argv += ["--disable-slash-commands", "--strict-mcp-config",
-                 "--system-prompt-file", str(PROMPT.resolve())]
+        argv += ["--system-prompt-file", str(PROMPT.resolve())]
     return argv
 
 
@@ -159,10 +164,9 @@ def _launch(argv: list[str], prompt: str, env: dict, *, cwd: str | None = None) 
 
 
 def _is_error_response(value: dict) -> bool:
-    # Success envelopes include api_error_status: null. bool is not an HTTP
-    # status even though Python makes it a subclass of int.
-    return (value.get("is_error") is True
-            or type(value.get("api_error_status")) is int
+    # Malformed truthy error flags and boolean status values fail closed.
+    return (bool(value.get("is_error"))
+            or type(value.get("api_error_status")) in {int, bool}
             or value.get("subtype") != "success")
 
 
