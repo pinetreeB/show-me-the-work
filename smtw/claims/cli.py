@@ -36,7 +36,7 @@ def add_claims_parser(subparsers):
     modes.add_argument('--verify', type=Path)
     assist.add_argument('--packets', type=Path)
     assist.add_argument('--out', type=Path)
-    assist.add_argument('--limit', type=int, default=20)
+    assist.add_argument('--limit', type=int, default=40)
     assist.add_argument('--case-id', help='--scope-file의 cases 키 (dry-run 필수)')
     assist.add_argument('--scope-file', type=Path, help='승인된 case·출처 범위 파일 (dry-run 필수)')
     assist.add_argument('--aggregate', action='store_true', help='갈래별 건수만 출력')

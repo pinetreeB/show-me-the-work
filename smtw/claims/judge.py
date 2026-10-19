@@ -77,7 +77,7 @@ def usage_gate(usage: dict, allow_unknown: bool):
         if not allow_unknown:
             raise ValueError("usage unknown; --allow-unknown-usage is required")
         return
-    if usage["five_hour"] >= 60 or usage["weekly"] >= 70:
+    if usage["five_hour"] >= 40 or usage["weekly"] >= 55:
         raise ValueError("personal subscription usage threshold reached")
 
 
@@ -213,8 +213,8 @@ def _judgments(raw: str):
 def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int = 4, allow_unknown_usage: bool = False,
           executor=None, tty=None, usage_reader=None, parent_env=None,
           executable=None, lean_context: bool = False) -> dict:
-    if type(max_calls) is not int or not 1 <= max_calls <= 10:
-        raise ValueError("max-calls must be between 1 and 10")
+    if type(max_calls) is not int or not 1 <= max_calls <= 8:
+        raise ValueError("max-calls must be between 1 and 8")
     if not (tty or (lambda: sys.stdin.isatty() and sys.stdout.isatty()))():
         raise ValueError("a visible terminal on stdin and stdout is required")
     env = child_environment(os.environ if parent_env is None else parent_env)

@@ -63,7 +63,7 @@ def identifiers(text: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def select_candidates(report: str, checked: dict, *, limit: int = 20,
+def select_candidates(report: str, checked: dict, *, limit: int = 40,
                       fixed_commit: bool = False) -> dict:
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
         raise ValueError("선별 상한은 0 이상의 정수여야 합니다.")

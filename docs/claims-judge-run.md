@@ -17,7 +17,7 @@ python -X utf8 scripts/claims_judge.py --scope-file "<WORK>/judge-scope.json" --
 두 번째 표의 출처와 가림 수를 직접 확인한 후에만 세 번째 줄을 실행합니다.
 개인 구독 설정과 claude-sonnet-5-5만 허용합니다. Windows에서는 설치된 native claude.exe를 우선 사용하며,
 claude-p와 동일하게 CLAUDE_CONFIG_DIR=~/.claude-personal 및 CLAUDE_CODE_PLUGIN_CACHE_DIR=~/.claude/plugins를 지정합니다. 도구는 비활성화되고 세션은 저장하지 않습니다.
-사용량 5시간 60% 이상 또는 주간 70% 이상이면 거부합니다. 사용량 자료가 없거나 오래됐으면
+사용량 5시간 40% 이상 또는 주간 55% 이상이면 거부합니다. 사용량 자료가 없거나 오래됐으면
 기본 거부이며, 좌상이 사용량을 확인하고 명시적으로 --allow-unknown-usage를 줄 때만 허용됩니다.
 관제탑이 승인한 문맥 축소는 Phase 2 판정 호출에만 적용하며, 좌상이 명시적으로 --lean-context를 붙일 때 켜집니다.
 기본값은 꺼짐이며 기존 호출 인자는 유지됩니다. 켜면 --disable-slash-commands, --strict-mcp-config,
@@ -28,7 +28,7 @@ calls.jsonl의 lean_context에 활성 여부를, usage 객체에는 원응답의
 cache_read_input_tokens·cache_creation_input_tokens를 복사합니다. 없거나 음수·비정수이면 null로 기록합니다.
 이 옵션의 실제 사용량 감소는 좌상의 명시적 호출로 확인해야 합니다.
 
-회차 상한은 기본 4, 최대 10입니다. 패킷 수가 상한을 넘으면 호출 전에 모두 거부합니다.
+보고서 1건의 회차 상한은 기본 4, 최대 8입니다. assist 기본 선별 상한은 40입니다. 패킷 수가 상한을 넘으면 호출 전에 모두 거부합니다.
 백그라운드·예약·훅 실행은 금지입니다. stdin과 stdout 모두 TTY여야 합니다.
 
 판정자 --json-schema 인자는 Phase 1 배열 스키마에서 $schema·$id·$comment 메타만 제거하고,

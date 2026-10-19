@@ -62,8 +62,8 @@ def test_fake_judge_verified_and_append_only_logs(tmp_path):
     {"tty":lambda:False}, {"max_calls":0}, {"max_calls":11},
     {"parent_env":{"ANTHROPIC_API_KEY":""}},
     {"usage_reader":lambda:{"known":False}},
-    {"usage_reader":lambda:{"known":True,"five_hour":60,"weekly":0}},
-    {"usage_reader":lambda:{"known":True,"five_hour":0,"weekly":70}},
+    {"usage_reader":lambda:{"known":True,"five_hour":40,"weekly":0}},
+    {"usage_reader":lambda:{"known":True,"five_hour":0,"weekly":55}},
     {"executable":"claude"}, {"executable":"evil-claude-p"},
 ])
 def test_preflight_refuses_before_executor(tmp_path,setting):
@@ -117,7 +117,7 @@ def test_unknown_usage_requires_explicit_override(tmp_path):
 
 def test_usage_rechecked_between_calls(tmp_path):
     folder=packet_folder(tmp_path)
-    usage=iter([{"known":True,"five_hour":0,"weekly":0},{"known":True,"five_hour":60,"weekly":0}])
+    usage=iter([{"known":True,"five_hour":0,"weekly":0},{"known":True,"five_hour":40,"weekly":0}])
     with pytest.raises(ValueError):invoke(folder,tmp_path,usage_reader=lambda:next(usage))
 
 
