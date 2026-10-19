@@ -34,7 +34,8 @@ def fake_judge(argv, prompt, env):
     assert argv[1:8] == ["--model",runner.MODEL,"-p","--tools","","--no-session-persistence","--output-format"]
     rows=[{"id":"q-001","verdict":"supported","evidence_ref":1,
            "evidence_quote":"MAX_LIMIT = 7","rationale":"Literal excerpt."}]
-    return SimpleNamespace(returncode=0,stdout=json.dumps({"structured_output":{"judgments":rows}}))
+    return SimpleNamespace(returncode=0,stdout=json.dumps({"type":"result","subtype":"success","is_error":False,
+               "api_error_status":None,"structured_output":{"judgments":rows}}))
 
 
 def invoke(folder,tmp_path,**kw):
@@ -272,7 +273,7 @@ def test_wrapped_judgments_reach_existing_quote_verifier(tmp_path, envelope):
     payload = {"judgments": rows}
     def injected(*args):
         return SimpleNamespace(returncode=0, stdout=json.dumps({
-            envelope: json.dumps(payload) if envelope == "result" else payload}))
+            "subtype": "success", envelope: json.dumps(payload) if envelope == "result" else payload}))
     result = invoke(packet_folder(tmp_path), tmp_path, executor=injected)
     output = json.loads((Path(result["run"]) / "verified-001.json").read_text(encoding="utf-8"))
     assert output["counts"]["supported"] == 1
@@ -283,7 +284,7 @@ def test_wrapped_judgments_reach_existing_quote_verifier(tmp_path, envelope):
 @pytest.mark.parametrize("exit_code", [0, 1])
 def test_cli_api_errors_preserve_raw_and_record_bounded_reason(tmp_path, flags, exit_code):
     reason = "API Error: 400 input_schema.type must be object. " + "detail " * 50
-    raw = json.dumps({**flags, "result": reason}) + "\n"
+    raw = json.dumps({"subtype": "success", **flags, "result": reason}) + "\n"
     calls = []
     def injected(*args):
         calls.append(1)
@@ -332,3 +333,64 @@ def test_cli_api_error_stops_before_the_next_packet(tmp_path):
         invoke(folder, tmp_path, executor=injected)
     assert calls == [1]
     assert len((tmp_path / "out/calls.jsonl").read_text(encoding="utf-8").splitlines()) == 1
+
+# Fixed synthetic CLI envelope: no captured model response or credentials.
+SUCCESS_NULL_STATUS = """{
+  "type": "result", "subtype": "success", "is_error": false,
+  "api_error_status": null, "duration_ms": 123, "result": "",
+  "usage": {"input_tokens": 11, "output_tokens": 22,
+            "cache_read_input_tokens": 33, "cache_creation_input_tokens": 44},
+  "structured_output": {"judgments": [
+    {"id": "q-001", "verdict": "supported", "evidence_ref": 1,
+     "evidence_quote": "MAX_LIMIT = 7", "rationale": "Synthetic literal source."}
+  ]}
+}"""
+
+
+def test_success_with_null_api_status_writes_verified_file(tmp_path):
+    def injected(*args):
+        return SimpleNamespace(returncode=0, stdout=SUCCESS_NULL_STATUS)
+    result = invoke(packet_folder(tmp_path), tmp_path, executor=injected)
+    verified = json.loads((Path(result["run"]) / "verified-001.json").read_text(encoding="utf-8"))
+    assert verified["counts"]["supported"] == 1
+    assert verified["items"][0]["quote_verified"]
+    receipt = json.loads((tmp_path / "out/calls.jsonl").read_text(encoding="utf-8"))
+    assert receipt["error"] is None
+    assert (Path(result["run"]) / "raw-001.json").read_bytes() == SUCCESS_NULL_STATUS.encode("utf-8")
+
+
+@pytest.mark.parametrize("overrides", [
+    {"is_error": True}, {"api_error_status": 400}, {"api_error_status": 0},
+    {"subtype": "error_max_turns"}, {"subtype": None}, {"subtype": "missing"},
+])
+def test_both_response_readers_reject_error_envelopes(tmp_path, overrides):
+    value = json.loads(SUCCESS_NULL_STATUS)
+    value.update(overrides)
+    if overrides.get("subtype") == "missing":
+        del value["subtype"]
+    raw = json.dumps(value)
+    assert runner._reported_error(raw)["error"] == "judge_reported_error"
+    with pytest.raises(ValueError, match="judge reported an error"):
+        runner._judgments(raw)
+    with pytest.raises(ValueError, match="judge execution failed"):
+        invoke(packet_folder(tmp_path), tmp_path,
+               executor=lambda *args: SimpleNamespace(returncode=0, stdout=raw))
+    receipt = json.loads((tmp_path / "out/calls.jsonl").read_text(encoding="utf-8"))
+    assert receipt["error"] == "judge_reported_error"
+    assert not list((tmp_path / "out/judge-runs").glob("*/verified-*.json"))
+
+
+@pytest.mark.parametrize("status", [None, False, True, "400"])
+def test_only_integer_api_status_is_an_error(status):
+    value = json.loads(SUCCESS_NULL_STATUS)
+    value["api_error_status"] = status
+    raw = json.dumps(value)
+    assert runner._reported_error(raw) == {}
+    assert runner._judgments(raw) == value["structured_output"]["judgments"]
+
+
+def test_legacy_direct_judgment_array_remains_supported():
+    rows = json.loads(SUCCESS_NULL_STATUS)["structured_output"]["judgments"]
+    raw = json.dumps(rows)
+    assert runner._reported_error(raw) == {}
+    assert runner._judgments(raw) == rows

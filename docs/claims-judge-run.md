@@ -29,7 +29,8 @@ Phase 1 원본 스키마와 재검증기의 배열 계약은 유지합니다.
 원본 schema_sha256·prompt_sha256·CLI 전달용 cli_schema_sha256을 함께 기록합니다.
 이전 v1 패킷은 재생성해야 합니다. 결과의 structured_output.judgments 또는 result 문자열의
 judgments를 기존 검증·인용 재검증에 넘깁니다.
-is_error: true 또는 api_error_status가 있으면 중단하고 stdout을 raw 파일에 그대로 보존합니다.
+is_error: true, 정수 api_error_status, 또는 subtype이 success가 아닌 응답은 중단하고 stdout을 raw 파일에 그대로 보존합니다.
+성공 응답의 api_error_status: null은 정상 처리합니다. subtype이 빠진 CLI 객체는 거부하며, 기존 직접 배열 입력은 유지합니다.
 호출 기록의 원인은 result 앞 200자에 가림을 적용한 값만 사용하며 환경값·stderr·예외 문구는 넣지 않습니다.
 여러 줄 JSON을 .cmd 인자로 보내지 않습니다. native 경로를 찾지 못한 경우에만 claude-p를 사용합니다.
 기존 패킷을 수정하거나 프롬프트·스키마가 바뀌면 새로 생성해야 합니다.

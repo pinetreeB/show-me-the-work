@@ -144,12 +144,20 @@ def _launch(argv: list[str], prompt: str, env: dict) -> subprocess.CompletedProc
                           encoding="utf-8", errors="strict", timeout=300)
 
 
+def _is_error_response(value: dict) -> bool:
+    # Success envelopes include api_error_status: null. bool is not an HTTP
+    # status even though Python makes it a subclass of int.
+    return (value.get("is_error") is True
+            or type(value.get("api_error_status")) is int
+            or value.get("subtype") != "success")
+
+
 def _reported_error(raw: str) -> dict:
     try:
         value = json.loads(raw)
     except ValueError:
         return {}
-    if not isinstance(value, dict) or not (value.get("is_error") is True or "api_error_status" in value):
+    if not isinstance(value, dict) or not _is_error_response(value):
         return {}
     result = value.get("result", "")
     # Only the CLI's bounded cause is eligible for the receipt. Never inspect
@@ -163,7 +171,7 @@ def _reported_error(raw: str) -> dict:
 def _judgments(raw: str):
     value = json.loads(raw)
     if isinstance(value, dict):
-        if value.get("is_error") is True or "api_error_status" in value:
+        if _is_error_response(value):
             raise ValueError("judge reported an error")
         value = value.get("structured_output", value.get("result", value))
         if isinstance(value, str):
