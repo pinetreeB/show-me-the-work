@@ -301,5 +301,15 @@ P1F 가림 예외는 정확한 40자리 Git SHA 구분자, SHA256/digest/checksu
 
 패킷 재현 비교: `python scripts/compare_claim_packets.py LEFT RIGHT`는 항목 id별 path/source/text 발췌 집합을 비교합니다. 배치·셔플·ref 순서는 무시하고 version/revision/observation 변화는 별도 metadata_changed_ids로 표시합니다. 동일 내용 0, 내용/항목 변경 1, 입력 오류 2이며 발췌 원문은 출력하지 않습니다.
 
-### 버린 셸 읽기의 관측판
-안전한 단일 읽기로 인정하지 못한 셸 출력도 리터럴 파일 경로의 내용 불명 관측(opaque_version)은 남긴다. 본문·계측·출력 포인터는 버리며 발췌에 사용하지 않는다. 다른 관측판 또는 --source-file과의 비교에서 이 미확보 판을 빠뜨려 mismatch로 확정하지 않는다. 고정 SHA의 git show 단일 파일 읽기는 명시된 표시 전용 꼬리만 허용하고 리비전을 보존한다. 모든 완전한 판에 없는 인용은 FAIL을 유지한다.
+### 대조기와 패킷 출처의 분리
+
+대조기의 수집·귀속·판정은 75512be 기준을 유지한다. assist 전용 packet_reads 파서가
+패킷에 넣을 출력에만 단일 읽기·고정 커밋·표시 전용 꼬리·명령 토큰 하드 제외 규칙을 적용한다.
+공용 전사 어댑터의 기본 파서는 바뀌지 않으며 opaque_version 관측판을 만들지 않는다.
+
+공개 12건의 익명 원자 기준은 tests/fixtures/claims-check-75512be.json에 고정했다.
+원문·실제 사례 이름·개인 경로 대신 원자별 해시와 판정값만 저장한다.
+허가된 별도 평가기가 생성한 sample-01.json부터 sample-12.json까지의 결과 폴더를
+SMTW_CLAIMS_PUBLIC_RESULTS 환경 변수로 지정하면 tests/test_claims_p31f_frozen.py가
+상태·요약·원자 identity·verdict·reason_code·출처 해시를 비교한다.
+자료가 없으면 이 12건은 명시적으로 skip하며, 이를 공개 사례 통과로 표시하지 않는다.

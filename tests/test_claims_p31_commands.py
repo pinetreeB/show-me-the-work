@@ -7,7 +7,8 @@ import pytest
 from smtw.claims.assist import select_candidates
 from smtw.claims.model import Budget
 from smtw.claims.packets import build_packets, transcript_sources
-from smtw.claims.transcripts import Call, call_paths, simple_read_path
+from smtw.claims.packet_reads import parse_packet_result, simple_read_path
+from smtw.claims.transcripts import Call
 
 ROOT = "C:/synthetic/tasks/example"
 SECOND = [".env", "customer-data/list", "customer-data/list.xlsx", "creds.pem",
@@ -66,7 +67,7 @@ def test_r12_compound_variants_drop_entire_file_output(tmp_path, kind, command):
     sources, packets, summary = sources_for(tmp_path, kind, command,
         "IdentAaa returns seven ms. APPROVED_MARKER\nEXCLUDED_MARKER customer row\n")
     assert not sources and not packets and summary["sent_count"] == 0
-    assert call_paths(Call('exec_command', {'cmd': command}, 1, '')) == []
+    assert not simple_read_path(command)
 
 
 @pytest.mark.parametrize("kind", ["agy", "codex"])
@@ -95,9 +96,10 @@ def test_all_command_tokens_are_checked(monkeypatch):
     assert set(["Get-Content", "-LiteralPath", "card.md", "-Raw"]) <= set(visited)
 
 
-def test_explicit_path_argument_cannot_bypass_command_grammar():
+def test_explicit_path_argument_cannot_bypass_command_grammar(tmp_path):
     call = Call("exec_command", {"cmd": "cat card.md .env", "path": "card.md"}, 1, "")
-    assert call_paths(call) == []
+    evidence = parse_packet_result(call, "EXCLUDED_MARKER", "synthetic", tmp_path, Budget(10))
+    assert evidence and all(e.control_only and not e.lines and not e.text for e in evidence)
 
 
 @pytest.mark.parametrize("command", [
