@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import ast
 from pathlib import Path
@@ -698,8 +698,96 @@ def js_writes(code: str, order: int, timestamp: str) -> list[Call]:
     return calls
 
 
+def browser_call(call: Call) -> Call:
+    """Unwrap literal MCP browser arguments without interpreting scripts."""
+    if call.name.rsplit('.', 1)[-1] != 'call_mcp_tool':
+        return call
+    server = next((call.args[k] for k in ('ServerName', 'serverName', 'server_name')
+                   if isinstance(call.args.get(k), str)), '')
+    tool = next((call.args[k] for k in ('ToolName', 'toolName', 'tool_name', 'name')
+                 if isinstance(call.args.get(k), str)), '')
+    if not re.search(r'browser', server + '.' + tool, re.I):
+        return call
+    args = next((call.args[k] for k in ('Arguments', 'arguments', 'args')
+                 if k in call.args), {})
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            return call
+    return Call(server + '.' + tool, args, call.order, call.timestamp, call.call_id) if isinstance(args, dict) else call
+
+
+def web_pointer(body: str, *, browser: bool = False) -> str:
+    notice = re.search(r'\bsaved\s+to:\s*([^\r\n]+)', body, re.I)
+    if not notice and browser:
+        notice = re.search(r'^File Path:\s*([^\r\n]+)', body, re.M | re.I)
+    if not notice:
+        return ''
+    location = normalize_path(notice.group(1).strip(' `*"\''))
+    suffix = r'(?:^|/)steps/\d+/content\.md(?![\w./\\-])'
+    if browser:
+        suffix += r'|(?:^|/)tool-output/[^/`"\r\n]+\.txt(?![\w./\\-])'
+    match = re.search(suffix, location, re.I)
+    return location[:match.end()] if match else ''
+
+
+def block_attribute(attributes: str, name: str) -> str:
+    match = re.search(r'(?:^|\s)' + name + r'=(?:"([^"]*)"|\'([^\']*)\'|([^\s]+))', attributes)
+    return next((v for v in match.groups() if v is not None), '') if match else ''
+
+
+def browser_blocks(e: Evidence, body: str) -> list[Evidence]:
+    """Only a browser result (or its linked capture) may invoke this parser."""
+    starts = list(re.finditer(r'^\s*\[UNTRUSTED_PAGE_CONTENT\b([^\]\r\n]*)\]', body, re.M))
+    observations = []
+    for i, start in enumerate(starts):
+        url = block_attribute(start.group(1), 'origin')
+        if not url.startswith(('https://', 'http://')):
+            continue
+        end = starts[i+1].start() if i+1 < len(starts) else len(body)
+        section = body[start.end():end]
+        close = re.search(r'^\s*\[(?:/UNTRUSTED_PAGE_CONTENT|END_UNTRUSTED_PAGE_CONTENT)\b([^\]\r\n]*)\]', section, re.M)
+        text = section[:close.start() if close else len(section)].strip('\r\n')
+        nonce = block_attribute(close.group(1), 'nonce') if close else ''
+        complete = bool(close and (not nonce or nonce == block_attribute(start.group(1), 'nonce'))
+                        and not TRUNCATED.search(text) and not e.problem)
+        mismatch = bool(e.url and normalize_url(e.url) != normalize_url(url))
+        observations.append(replace(
+            e, url=e.url if mismatch else url, text=text,
+            lines=dict(enumerate(text.splitlines(), 1)), total_lines=None,
+            counts={}, complete=complete and not mismatch, url_content_path='',
+            problem='호출 URL과 origin 불일치' if mismatch else e.problem,
+            problem_code='binding_ambiguous' if mismatch else e.problem_code))
+    return observations
+
+
 def parse_result(call: Call, body: str, origin: str, root: Path,
                  budget: Budget, exit_code: int | None = None) -> list[Evidence]:
+    budget.check()
+    call = browser_call(call)
+    browser = bool(re.search(r'browser', call.name, re.I)
+                   and not SEARCH_TOOL.search(call.name) and not call.write)
+    if browser:
+        base = Evidence(url=call.url, tool=call.name, origin=origin,
+                        order=call.order, timestamp=call.timestamp, exit_code=exit_code)
+        if exit_code not in (None, 0) or re.search(
+                r'^(?:Error:|Error executing)|"isError"\s*:\s*true|"success"\s*:\s*false',
+                body, re.M | re.I):
+            base.problem, base.problem_code = '읽기 도구 실패', 'read_failed'
+        blocks = browser_blocks(base, body)
+        if blocks:
+            return blocks
+        pointer = web_pointer(body, browser=True)
+        if pointer:
+            observed = re.search(r'^(?:Page URL|URL|Source):\s*(https?://\S+)', body, re.M | re.I)
+            if observed:
+                if call.url and normalize_url(call.url) != normalize_url(observed.group(1)):
+                    base.problem, base.problem_code = '호출 URL과 결과 URL 불일치', 'binding_ambiguous'
+                else:
+                    base.url = observed.group(1)
+            base.url_content_path = pointer
+            return [base]
     if re.search(r'web.*run', call.name, re.I) and isinstance(call.args.get('open'), list):
         observations = []
         requests = call.args['open']
@@ -769,16 +857,12 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
     if e.url and e.problem:
         return [e]
     if e.url and not e.problem:
-        saved = re.search(r'\bsaved\s+to:\s*([^\r\n]+)', body, re.I)
-        if saved:
-            location = saved.group(1).strip(' `*"\'')
-            content = re.search(r'(?:^|[/\\])steps[/\\]\d+[/\\]content\.md(?![\w./\\-])', location, re.I)
-            if content:
-                # This is a storage notice, not page text. Only captured later
-                # view_file results may supply the page; never read this path.
-                e.url_content_path = location[:content.end()]
-                e.complete = False
-                return [e]
+        pointer = web_pointer(body)
+        if pointer:
+            # A storage notice is visit evidence, never quotation text or an
+            # instruction to read disk. Only later captured views may supply it.
+            e.url_content_path = pointer
+            return [e]
     if TRUNCATED.search(body):
         e.problem = '잘린 도구 출력'
         e.problem_code = 'partial_range'
@@ -831,6 +915,12 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
                 e.total_lines = e.counts['L_view']
             else:
                 e.complete = False
+    if 'view_file' in call.name and any(
+            key in call.args for key in ('StartLine', 'EndLine', 'ContentOffset')):
+        # A requested chunk needs explicit whole-file extent and coverage.
+        e.complete = (e.complete and e.total_lines is not None
+                      and set(e.lines) == set(range(1, e.total_lines + 1))
+                      and call.args.get('ContentOffset') in (None, 0, '0', ''))
     # Multi-file print loops are accepted only with explicit per-file output headings.
     sections = list(re.finditer(r'^FILE\s+(.+)$', body, re.M))
     if len(paths) > 1 and sections:

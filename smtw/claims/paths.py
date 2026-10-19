@@ -14,9 +14,8 @@ def normalize_path(value: str, aliases: dict[str, str] | None = None) -> str:
 def _normalize_path(value: str, aliases: tuple[tuple[str, str], ...]) -> str:
     value = value.strip().strip('`"\'').replace("\\", "/")
     if value.lower().startswith("file://"):
-        value = unquote(value[7:])
-        if re.match(r"^/[A-Za-z]:/", value):
-            value = value[1:]
+        value = unquote(value[7:]).replace("\\", "/")
+        value = re.sub(r"^/+(?=[A-Za-z]:/)", "", value)
     for alias, actual in sorted(aliases, key=lambda x: -len(x[0])):
         alias = alias.replace("\\", "/")
         if value.casefold() == alias.casefold() or value.casefold().startswith(alias.casefold() + "/"):

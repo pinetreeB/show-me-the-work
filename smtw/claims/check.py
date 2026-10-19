@@ -16,7 +16,7 @@ from .model import Budget, Claim, DeadlineExceeded, Evidence, Transcript, summar
 from .paths import matches_path, normalize_path, normalize_url
 from .paraphrase import code_ellipsis, paraphrase_rule
 from .sources import Repositories, content_lines, file_lines, local_source
-from .transcripts import discover_agy, load_measurement_pointer, load_view_pointer, read_transcript, resolve_agy
+from .transcripts import browser_blocks, discover_agy, load_measurement_pointer, load_view_pointer, read_transcript, resolve_agy
 
 
 @lru_cache(maxsize=1024)
@@ -404,23 +404,44 @@ class Checker:
         self.aliases, self.budget = aliases, budget
         self.loaded: dict[tuple[str, str], Evidence] = {}
 
+    def web_versions(self, c: Claim) -> list[list[Evidence]]:
+        """Keep each URL response separate; join only its captured file ranges."""
+        pages = [e for e in self.transcript.evidence
+                 if (e.url or e.url_content_path) and not e.control_only
+                 and (c.current or not e.after_report)]
+        versions = []
+        for page in pages:
+            self.budget.check()
+            if page.url and c.path and normalize_url(c.path) != normalize_url(page.url):
+                continue
+            if not page.url_content_path or page.problem:
+                if page.url:
+                    versions.append([page])
+                continue
+            path = normalize_path(page.url_content_path, self.aliases)
+            # A repeated write to the same export path begins a new response.
+            end = min((p.order for p in pages if p.order > page.order and p.url_content_path
+                       and normalize_path(p.url_content_path, self.aliases) == path),
+                      default=float('inf'))
+            captured = []
+            for e in self.transcript.evidence:
+                if ('view_file' not in e.tool or e.control_only
+                        or not page.order < e.order < end or e.after_report and not c.current
+                        or normalize_path(e.path, self.aliases) != path):
+                    continue
+                bound = replace(e, url=page.url)
+                blocks = (browser_blocks(bound, '\n'.join(e.lines.values()) if e.lines else e.text)
+                          if 'browser' in page.tool.casefold() else [])
+                candidates = blocks or ([bound] if page.url else [])
+                captured.extend(e for e in candidates if e.url
+                                and (not c.path or normalize_url(c.path) == normalize_url(e.url)))
+            if captured or page.url:
+                versions.append(captured or [page])
+        return versions
+
     def select(self, c: Claim) -> list[Evidence]:
         if c.web_quote:
-            pages = [e for e in self.transcript.evidence
-                     if e.url and not e.control_only and (c.current or not e.after_report)
-                     and (not c.path or normalize_url(c.path) == normalize_url(e.url))]
-            observed = []
-            for page in pages:
-                if not page.url_content_path:
-                    observed.append(page)
-                    continue
-                captured = [replace(e, url=page.url) for e in self.transcript.evidence
-                            if 'view_file' in e.tool and not e.control_only
-                            and e.order > page.order and (c.current or not e.after_report)
-                            and normalize_path(e.path, self.aliases)
-                            == normalize_path(page.url_content_path, self.aliases)]
-                observed.extend(captured or [page])
-            return observed
+            return [e for version in self.web_versions(c) for e in version]
         observed = [e for e in self.transcript.evidence
                     if not e.control_only and (c.current or not e.after_report)
                     and c.path and (matches_path(c.path, e.path, self.aliases)
@@ -701,6 +722,10 @@ class Checker:
             relevant = [e for e in self.transcript.evidence
                         if e.url and not e.control_only and (c.current or not e.after_report)
                         and normalize_url(e.url) == normalize_url(c.value)]
+            # A browser export without URL metadata may reveal its origin only
+            # in a later, path-bound captured view.
+            relevant += [e for version in self.web_versions(replace(c, web_quote=True, path=c.value))
+                         for e in version if e.url and normalize_url(e.url) == normalize_url(c.value)]
             successful = [e for e in relevant if not e.problem or e.problem_code == 'partial_range']
             if successful:
                 c.verdict, c.reason = 'match', '성공한 URL 읽기 결과 확인'
@@ -735,19 +760,32 @@ class Checker:
             if not scoped and (c.verdict == 'absent' or not self.repos.roots):
                 c.verdict, c.reason, c.reason_code = 'unverifiable', 'SHA가 속한 저장소 범위 미확정', 'repo_scope_unknown'
             return
-        observations = self.select(c)
         if c.web_quote:
-            results = [(check_one(c, e, self.budget), e) for e in observations]
-            c.source = {'observations': [e.metadata() for _, e in results],
-                        'search_scope': 'captured URL reads only'}
-            match = next((r for r, _ in results if r.verdict == 'match'), None)
-            if match:
-                c.verdict, c.reason, c.reason_code = match.verdict, match.reason, match.code
-            elif results and all(r.verdict == 'mismatch' for r, _ in results):
-                c.verdict, c.reason, c.reason_code = 'mismatch', results[0][0].reason, 'quote_mismatch'
+            versions = self.web_versions(c)
+            matrix = [[(check_one(c, e, self.budget), e) for e in version] for version in versions]
+            outcomes = []
+            for results in matrix:
+                verdicts = {r.verdict for r, _ in results}
+                codes = {r.code for r, _ in results}
+                if 'match' in verdicts and codes <= {'quote_match', 'partial_range'}:
+                    outcomes.append('match')
+                elif 'mismatch' in verdicts and codes <= {'quote_mismatch', 'partial_range'}:
+                    outcomes.append('mismatch')
+                else:
+                    outcomes.append('unverifiable')
+            c.source = {'observations': [e.metadata() for results in matrix for _, e in results],
+                        'search_scope': 'captured URL reads only',
+                        'version_count': len(versions), 'version_verdicts': outcomes}
+            if outcomes and all(v == 'match' for v in outcomes):
+                c.verdict, c.reason, c.reason_code = 'match', '모든 웹 관측판의 읽은 범위에서 인용 확인', 'quote_match'
+            elif outcomes and all(v == 'mismatch' for v in outcomes):
+                c.verdict, c.reason, c.reason_code = 'mismatch', '모든 완전한 웹 관측판에 인용 없음', 'quote_mismatch'
+            elif any(r.verdict == 'match' for results in matrix for r, _ in results):
+                c.reason, c.reason_code = '웹 인용은 일부 관측판에서만 확인됨', 'observation_conflict'
             else:
                 c.reason, c.reason_code = '웹 원문 읽기 근거 미확보', 'web_evidence_missing'
             return
+        observations = self.select(c)
         if not c.path and c.check_type == 'K4':
             results = []
             for e in self.transcript.evidence:
