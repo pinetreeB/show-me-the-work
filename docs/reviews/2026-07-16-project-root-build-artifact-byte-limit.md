@@ -9,7 +9,7 @@
 
 | | 07-15 (홈 루트) | **07-16 (본 건, 프로젝트 루트)** |
 |---|---|---|
-| 루트 | `C:\Users\example` (홈) | `C:\Users\example\private-repo` (**정상 프로젝트**) |
+| 루트 | `<작업폴더>` (홈) | `<작업폴더>\private-repo` (**정상 프로젝트**) |
 | 게이트 판정 | `scope_too_large` | `scope_too_large` (동일 증상) |
 | 현재 상태 | **해소됨** — A안 구현으로 `unsupported`/`home_root` 판정 → 게이트 통과 | **차단 지속** |
 | 예산 초과 주체 | `.claude/projects` 세션 로그 (61%) | **`.next` 빌드 산출물 (73%)** |
@@ -31,12 +31,12 @@
 같은 세션 ID가 **두 루트의 ledger에 동시 등재**된다.
 
 ```
-# 홈 ledger: C:\Users\example\.fable-lite\ledger.json
+# 홈 ledger: <작업폴더>\.fable-lite\ledger.json
 active_turns["claude_code:e9f5b954-…:claude"]
   provenance_status        = 'unsupported'
   provenance_status_reason = 'home_root'        ← A안 작동 (차단 안 함)
 
-# 프로젝트 ledger: C:\Users\example\private-repo\.fable-lite\ledger.json
+# 프로젝트 ledger: <작업폴더>\private-repo\.fable-lite\ledger.json
 active_turns["claude_code:e9f5b954-…:claude"]
   provenance_status        = 'scope_too_large'
   provenance_status_reason = 'byte_limit'       ← 실제 차단 주체
@@ -113,7 +113,7 @@ active_turns["claude_code:e9f5b954-…:claude"]
 
 ```python
 from core.provenance_lifecycle_scope import scan_snapshot
-snap = scan_snapshot(Path(r'C:\Users\example\private-repo'), None, frozenset(), True)
+snap = scan_snapshot(Path(r'<작업폴더>\private-repo'), None, frozenset(), True)
 ```
 
 | 항목 | 적용 전 | **적용 후 (실측)** |

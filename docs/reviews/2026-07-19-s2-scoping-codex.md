@@ -1,6 +1,6 @@
 # v2.2.0 이후 잔여 백로그 스코핑 보고서
 
-> 범위: 기준 `main b81af04`의 조사·설계만 수행했으며, 프로젝트 코드는 수정하지 않았다. 과제 범위와 산출물 요구는 `C:/Users/example/exchange/to-client-a/20260719-scoping/brief.md:3`, `C:/Users/example/exchange/to-client-a/20260719-scoping/brief.md:37-44`를 따른다.
+> 범위: 기준 `main b81af04`의 조사·설계만 수행했으며, 프로젝트 코드는 수정하지 않았다. 과제 범위와 산출물 요구는 `<작업폴더>/exchange/to-client-a/20260719-scoping/brief.md:3`, `<작업폴더>/exchange/to-client-a/20260719-scoping/brief.md:37-44`를 따른다.
 
 ## 결론 요약
 

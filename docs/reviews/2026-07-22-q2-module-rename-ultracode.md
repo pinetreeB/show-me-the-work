@@ -1,12 +1,12 @@
 # P4 다차원 실측 검증 보고서 — v2.6 Q2 모듈 rename (fable_lite → smtw + shim)
 
-- 검증 대상: worktree `C:\Users\example\fable-lite-wt-q2ultra`
+- 검증 대상: worktree `<작업폴더>\fable-lite-wt-q2ultra`
 - HEAD: `c2ec534571742343e1e90d95465953050cfc11b9` (short `c2ec534`) — worktree git 메타데이터 파일(`.git` → `.git/worktrees/fable-lite-wt-q2ultra/HEAD`)로 확인 (git CLI는 훅 차단으로 사용 불가)
-- 스펙: `C:\Users\example\fable-lite\docs\specs\v2.6-q2-module-rename.md` rev3
+- 스펙: `<작업폴더>\fable-lite\docs\specs\v2.6-q2-module-rename.md` rev3
 - 환경: Python 3.12.8 (`C:\Python312\python.exe`), pytest 9.0.3, setuptools 70.2.0, pip 24.3.1, Windows (spawn 기본)
 - 실측 주체: 우하 Claude (ultracode) P4 검증 라인 — 본실측 5차원 + 적대 반증 5차원
 - 보고 일자: 2026-07-22
-- 실측 원본: `C:\Users\example\fable-lite-wt-q2ultra\tmp\q2-p4\d1..d5\result.json` (본실측) · `d1-verify..d5-verify\result.json` (반증)
+- 실측 원본: `<작업폴더>\fable-lite-wt-q2ultra\tmp\q2-p4\d1..d5\result.json` (본실측) · `d1-verify..d5-verify\result.json` (반증)
 
 ---
 
@@ -61,7 +61,7 @@
 - C: 프로세스 최초 import(scorecard_observations) id 동치 True (2518713829952)
 - D: from-import 11종 전 형태 True / E: `import fable_lite as alias` 동일객체
 
-재현: `python C:/Users/example/fable-lite-wt-q2ultra/tmp/q2-p4/d1/driver.py` · 반증: `python .../d1-verify/driver.py`
+재현: `python <작업폴더>/fable-lite-wt-q2ultra/tmp/q2-p4/d1/driver.py` · 반증: `python .../d1-verify/driver.py`
 증거 파일: `d1/result.json`, `d1/child_1_pkg_identity.txt` ~ `child_5_find_spec.txt` · `d1-verify/result.json`, `d1-verify/child_A..E_*.txt`
 
 ---
@@ -80,7 +80,7 @@
 반증 (`tmp/q2-p4/d2-verify/result.json`) — 7건 전부 주장 생존:
 - RA1 `-W always` stderr 텍스트 직접 카운트=1 / RA2 전 카테고리 record 총 1건·category=DeprecationWarning / RA3 프로세스 2회 각 1 / RA4 strict json.loads 전체 파싱 `{}`·stdout 경고 substring 0 / RA5 version 바이트 정확 / RA6 서브모듈 단독 stderr=1 / RA7 from·alias import 형태에서도 1
 
-재현: `python C:/Users/example/fable-lite-wt-q2ultra/tmp/q2-p4/d2/driver.py` · 반증: `python .../d2-verify/driver.py`
+재현: `python <작업폴더>/fable-lite-wt-q2ultra/tmp/q2-p4/d2/driver.py` · 반증: `python .../d2-verify/driver.py`
 증거 파일: `d2/result.json`, `d2/check1_count.txt` ~ `check5_submodule_only.txt` · `d2-verify/result.json`, `d2-verify/ra1..ra7*.txt`
 
 ---
@@ -105,7 +105,7 @@
 
 결론: D3 제품 주장(§4-3)은 본실측 실데이터 + 반증기의 정상 동작 부분(R4, protocol 0~3 레거시 로드, 클래스 identity)으로 **유지**. 반증 FAIL은 프로브 결함이며 재반증 권고(잔여 위험 §6).
 
-재현: `python C:/Users/example/fable-lite-wt-q2ultra/tmp/q2-p4/d3/driver.py` · 반증(결함 포함): `python .../d3-verify/verify_driver.py`
+재현: `python <작업폴더>/fable-lite-wt-q2ultra/tmp/q2-p4/d3/driver.py` · 반증(결함 포함): `python .../d3-verify/verify_driver.py`
 증거 파일: `d3/result.json`, `d3/check1_spawn_child.txt` ~ `check4_*.txt` · `d3-verify/result.json`, `d3-verify/r1_spawn_child.txt`, `r2_pickle_protocols.txt`, `r2b_cold_legacy.txt`, `r3_*.txt`, `r4_submodule_identity.txt`, `probe_pickle.py`, `diag_p4.py`
 
 ---
@@ -126,7 +126,7 @@
 - 메커니즘 R7: ignore 필터 제거 시 승격(rc1) → **ini ignore가 실제로 하중을 냄**
 - 메커니즘 R4/R5: `-o filterwarnings=error` 및 `-W error::DeprecationWarning` 추가 시 compat `1 failed, 6 passed` — 실패 테스트는 `test_legacy_pickle_fixture_loads_as_canonical_class`(shim import 승격)로 **§4-7 의도된 동작**(strict 환경은 호환 보장 대상 아님)과 일치
 
-재현: `python C:/Users/example/fable-lite-wt-q2ultra/tmp/q2-p4/d4/driver.py` (전체 스위트 ~5.5분) · 반증: `python .../d4-verify/verify_driver.py`
+재현: `python <작업폴더>/fable-lite-wt-q2ultra/tmp/q2-p4/d4/driver.py` (전체 스위트 ~5.5분) · 반증: `python .../d4-verify/verify_driver.py`
 증거 파일: `d4/result.json`, `d4/1_shim_test_green.txt`, `2_full_suite_green.txt`, `3a_env_pythonwarnings_error.txt`, `3b_W_flag_error_deprecation.txt`, `4_default_no_escalation.txt` · `d4-verify/result.json`, `R1..R7*.txt`
 
 ---
@@ -151,7 +151,7 @@
 - METADATA `Name: fable-lite / Version: 2.6.0` · venv `python -P -m smtw version` rc0 `2.6.0` · identity full(상위+11별칭+origin) True · 콘솔 2종 재실행 rc0 경고 없음
 - advisory(비게이팅): venv `python -P -m fable_lite version` rc0 `2.6.0` — D5 wheel 스펙 주장 밖이나 정상 동작
 
-재현: `python C:/Users/example/fable-lite-wt-q2ultra/tmp/q2-p4/d5/driver.py` (~27초) · 반증: `python .../d5-verify/driver.py`
+재현: `python <작업폴더>/fable-lite-wt-q2ultra/tmp/q2-p4/d5/driver.py` (~27초) · 반증: `python .../d5-verify/driver.py`
 증거 파일: `d5/result.json`, `d5/dist/fable_lite-2.6.0-py3-none-any.whl`, `d5/venv/Lib/site-packages/fable_lite-2.6.0.dist-info/{RECORD,entry_points.txt}`, `d5/02_build.txt` ~ `10_fable_lite_exe_version.txt` · `d5-verify/result.json`, `a_record_recount.txt` ~ `i2_fable_lite_exe.txt`
 
 ---
@@ -160,7 +160,7 @@
 
 1. **D3 protocol≥4 합성 레거시 페이로드 미건설**: 반증기가 STACK_GLOBAL 인코딩 수술에 실패해 protocol 4/5의 '구버전 픽셀'을 양적으로 구성하지 못함. 다만 해석 기제(`pickle.find_class → import_module("fable_lite.card") → sys.modules 별칭`)는 프로토콜 무관이며 protocol 0~3 실증 + `alias_class_is_smtw=true`(4/5 포함 전 프로토콜 왕복 성공)로 뒷받침. 완전 폐쇄를 원하면 구버전 fable_lite 2.5 설치 환경에서 **진짜 레거시 fixture 파일**을 생성해 로드 테스트 권고.
 2. **D3-verify 프로브 재작성 후 재반증** 권고 (자식 PYTHONPATH 전달·STACK_GLOBAL 대응 수술·판정 집계 수정). 본 실측 사이클에서는 지시(새 실측 금지)에 따라 재실행하지 않음.
-3. **goals 스토리**: D1~D5+REPORT plan 등록 완료(에이전트 claude-ultracode). `goals verify`는 verify-cmd(드라이버) 재실행을 수반하므로 '새 실측 금지' 지시에 따라 보류 — 증거 경로(각 `result.json`)는本报告에 고정. 재실행 시: `python C:/Users/example/fable-lite/goals/goals.py verify --root C:/Users/example/fable-lite-wt-q2ultra --story <D1..D5|REPORT> --evidence <경로>`.
+3. **goals 스토리**: D1~D5+REPORT plan 등록 완료(에이전트 claude-ultracode). `goals verify`는 verify-cmd(드라이버) 재실행을 수반하므로 '새 실측 금지' 지시에 따라 보류 — 증거 경로(각 `result.json`)는本报告에 고정. 재실행 시: `python <작업폴더>/fable-lite/goals/goals.py verify --root <작업폴더>/fable-lite-wt-q2ultra --story <D1..D5|REPORT> --evidence <경로>`.
 
 ## 7. 실측 규율 준수 노트
 

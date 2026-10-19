@@ -64,7 +64,7 @@ Remove-Item Env:SMTW_CODEX_REAPER_LOG -ErrorAction SilentlyContinue
 
 ## 시간당 백스톱과의 관계
 
-`C:\Users\example\scripts\mcp-reaper.ps1` 및 Task Scheduler의 시간당 실행은 그대로 유지해야
+`<작업폴더>\scripts\mcp-reaper.ps1` 및 Task Scheduler의 시간당 실행은 그대로 유지해야
 합니다. Stop 훅은 정상 종료 시의 1차 방어선이고, 시간당 `mcp-reaper.ps1`은 OOM, 강제 종료,
 훅 미발동을 회수하는 2차 백스톱입니다. 이 contrib는 백스톱 스크립트나 스케줄러를 설치,
 수정, 비활성화하지 않습니다.

@@ -1,4 +1,4 @@
-# client-a 서버 pytest 2건 환경 의존 실패 조사
+# 고객사A 서버 pytest 2건 환경 의존 실패 조사
 
 ## 본문 — 쉬운 결론
 
@@ -48,11 +48,11 @@ Windows LongPathsEnabled: 0
 
 ```text
 RUN: python -m pytest -q \
-     --basetemp=C:\Users\example\AppData\Local\Temp\smtw-bt-short \
+     --basetemp=<작업폴더>\AppData\Local\Temp\smtw-bt-short \
      tests/test_adapters.py::test_failure_hook_scope_context_uses_matching_event_name
 OBSERVE: 1 passed in 0.86s
 
-RUN: PYTEST_ADDOPTS=--basetemp=C:/Users/example/AppData/Local/Temp/smtw-probe-short \
+RUN: PYTEST_ADDOPTS=--basetemp=<작업폴더>/AppData/Local/Temp/smtw-probe-short \
      python eval/run_probes.py --output <tmp-output>
 OBSERVE: probes pass=17 fail=0 manual=3 total=20 result=PASS
 ```
@@ -119,4 +119,4 @@ pytest 8.4.2에서도 긴 기본 temp는 `1 failed in 0.94s`, 짧은 temp는 `1 
 
 - 임시로 설치한 uv-managed Python 3.12.13은 `uv python uninstall 3.12`로 제거했고, 작성한 probe `.py` 파일과 JSON/tar 결과 파일은 삭제했다.
 - tracked worktree는 `main...origin/main` clean이다.
-- 최종 정리 검증에서 `C:\Users\example\fable-lite-dev\tmp\testfail-env` 및 네 개의 `smtw-*` 시스템 임시 디렉터리는 모두 존재하지 않았다. 프로젝트 코드는 수정하지 않았다.
+- 최종 정리 검증에서 `<작업폴더>\fable-lite-dev\tmp\testfail-env` 및 네 개의 `smtw-*` 시스템 임시 디렉터리는 모두 존재하지 않았다. 프로젝트 코드는 수정하지 않았다.

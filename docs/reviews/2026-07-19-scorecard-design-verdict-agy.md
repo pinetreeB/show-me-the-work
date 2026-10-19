@@ -2,8 +2,8 @@
 
 **작성자**: Antigravity (Gemini 3.1 Pro High)
 **대상 설계안**:
-- Codex안 (C:\Users\example\exchange-client-a\from-client-a\20260719-scoping\codex-scoping.md)
-- ultracode안 (C:\Users\example\fable-lite\tmp\ultracode-scoping-20260719.md)
+- Codex안 (<작업폴더>\exchange-client-a\from-client-a\20260719-scoping\codex-scoping.md)
+- ultracode안 (<작업폴더>\fable-lite\tmp\ultracode-scoping-20260719.md)
 - Antigravity 1차 브리프 (tmp\agy-scoping-20260719.md)
 
 ---

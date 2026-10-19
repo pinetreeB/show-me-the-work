@@ -1,7 +1,7 @@
 # fablize 2.1.0 심층 역공학 분석
 
 > **분석자**: Claude Opus 4.6 (Thinking) — fable-lite 우하 구현보조 pane  
-> **분석 대상**: `C:\Users\example\.claude\plugins\cache\fablize\fablize\2.1.0\`  
+> **분석 대상**: `<작업폴더>\.claude\plugins\cache\fablize\fablize\2.1.0\`  
 > **일시**: 2026-07-06  
 > **목적**: fablize가 Fable 5의 어떤 행동 특성을 어떤 메커니즘으로 재현하는지 역공학하고, fable-lite의 개선 기회를 도출한다.
 
