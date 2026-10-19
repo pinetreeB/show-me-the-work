@@ -34,7 +34,7 @@ cache_read_input_tokens·cache_creation_input_tokens를 복사합니다. 없거�
 판정자 --json-schema 인자는 Phase 1 배열 스키마에서 $schema·$id·$comment 메타만 제거하고,
 judgments 배열 필드가 필수인 최상위 object로 감싼 뒤 compact 한 줄 JSON으로 전달합니다.
 Phase 1 원본 스키마와 재검증기의 배열 계약은 유지합니다.
-프롬프트 계약은 v1.1이며 manifest의 judge_contract와 calls.jsonl에
+프롬프트 계약은 v1.2이며 manifest의 judge_contract와 calls.jsonl에
 원본 schema_sha256·prompt_sha256·CLI 전달용 cli_schema_sha256을 함께 기록합니다.
 이전 v1 패킷은 재생성해야 합니다. 결과의 structured_output.judgments 또는 result 문자열의
 judgments를 기존 검증·인용 재검증에 넘깁니다.
@@ -126,3 +126,14 @@ work_roots는 절대 경로 목록, checkpoint는 파일 하나의 절대 경로
 부분 일치로 하드 제외하며 skipped_hard_exclude는 제거한 출처 관측 수입니다.
 발췌는 항목당 최대 3개, 각각 최대 1,500자입니다.
 manifest와 calls.jsonl의 sent_sources는 항목 id별 표시 경로·실제 전송 시작/끝 줄을 기록합니다.
+
+
+### 인용 정규화와 v1.2 전환
+기존 v1.1 패킷은 다시 생성해야 합니다. 프롬프트 SHA와 버전이 다르면 judge가 거부합니다.
+supported와 contradicted 모두 근거가 되는 한 줄 전체를 줄 번호 접두 없이 인용합니다.
+주장이 줄 번호를 명시하면 먼저 번호를 비교하고, 내용이 다른 줄에 있으면 contradicted로
+실제 내용이 있는 줄 전체를 인용합니다. 200자를 넘는 줄밖에 없으면 근거 부족으로 처리합니다.
+결정적 후처리는 부분 문자열을 포함하는 유일한 줄 전체로 evidence_quote를 정규화하고,
+raw_evidence_quote에 원본을 보존합니다. 서로 다른 여러 줄에 맞는 인용은 표시하지 않습니다.
+검증 인용 재현성은 verified_quote_agreement_3(정규화)와
+raw_verified_quote_agreement_3(원본)을 함께 출력합니다.

@@ -28,7 +28,7 @@ def cli_schema(schema: str) -> str:
 
 def contract():
     schema = SCHEMA.read_bytes()
-    return {"version": "v1.1",
+    return {"version": "v1.2",
             "prompt_sha256": hashlib.sha256(PROMPT.read_bytes()).hexdigest(),
             "schema_sha256": hashlib.sha256(schema).hexdigest(),
             "cli_schema_sha256": hashlib.sha256(cli_schema(schema.decode("utf-8")).encode("utf-8")).hexdigest()}

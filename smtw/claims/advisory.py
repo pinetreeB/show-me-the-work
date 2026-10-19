@@ -115,9 +115,18 @@ def verify_judgments(judgments, sent: dict[str, dict]) -> dict:
             counts["quote_not_in_excerpt"] += 1
             counts["not_enough_evidence"] += 1
             continue
+        # Normalize a literal substring only when its containing line is unique.
+        # Keep the judge's raw quote for independent reproducibility reporting.
+        matches = list(dict.fromkeys(line for line in content.splitlines() if quote in line))
+        if len(matches) > 1:
+            counts["quote_not_in_excerpt"] += 1
+            counts["not_enough_evidence"] += 1
+            continue
+        normalized_quote = matches[0] if matches else quote
         counts["quote_verified"] += 1
         counts[verdict] += 1
-        displayed.append({**row, "rationale": redact(row["rationale"])[0], "quote_verified": True})
+        displayed.append({**row, "evidence_quote": normalized_quote, "raw_evidence_quote": quote,
+                          "rationale": redact(row["rationale"])[0], "quote_verified": True})
     displayed.sort(key=lambda row: (row["verdict"] != "contradicted", row["id"]))
     return {"section_title": TITLE, "items": displayed,
             "counts": {key: counts[key] for key in ("supported", "contradicted", "not_enough_evidence",

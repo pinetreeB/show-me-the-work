@@ -394,7 +394,7 @@ def score(folder: Path, truth_file: Path, runs: list[Path], *, scope_file: Path)
             "quote_not_in_excerpt_rate":ratio(bad,len(raw)),
             "true_positive":tp,"false_positive":fp,"judged":len(raw),
             "unjudged":len(sent)-len(raw)})
-    verdict_agreement=quote_agreement=None
+    verdict_agreement=quote_agreement=raw_quote_agreement=None
     if len(evaluated)==3:
         verdict_agreement=sum(all(key in raw for raw,_,_ in evaluated) and
             len({raw[key]["verdict"] for raw,_,_ in evaluated})==1 for key in truth)/len(truth)
@@ -402,8 +402,12 @@ def score(folder: Path, truth_file: Path, runs: list[Path], *, scope_file: Path)
         quote_agreement=(sum(all(key in shown for _,shown,_ in evaluated) and
             len({(shown[key]["evidence_ref"],shown[key]["evidence_quote"]) for _,shown,_ in evaluated})==1
             for key in union)/len(union)) if union else None
+        raw_quote_agreement=(sum(all(key in shown for _,shown,_ in evaluated) and
+            len({(shown[key]["evidence_ref"],shown[key]["raw_evidence_quote"]) for _,shown,_ in evaluated})==1
+            for key in union)/len(union)) if union else None
     return {"runs":measures,"verdict_agreement_3":verdict_agreement,
-            "verified_quote_agreement_3":quote_agreement,"model_calls":0,
+            "verified_quote_agreement_3":quote_agreement,
+            "raw_verified_quote_agreement_3":raw_quote_agreement,"model_calls":0,
             "interpretation":"Scores reflect supplied outputs; synthetic fake outputs are pipeline tests only."}
 
 
@@ -415,7 +419,8 @@ def score_table(result):
         lines.append(f"| {index} | "+" | ".join(fmt(row[key]) for key in
             ("recall","precision","false_display_rate","quote_not_in_excerpt_rate"))+f' | {row["unjudged"]} |')
     lines.extend(["",f'Verdict agreement (3): {fmt(result["verdict_agreement_3"])}',
-                  f'Verified quote agreement (3): {fmt(result["verified_quote_agreement_3"])}'])
+                  f'Verified quote agreement normalized (3): {fmt(result["verified_quote_agreement_3"])}',
+                  f'Verified quote agreement raw (3): {fmt(result["raw_verified_quote_agreement_3"])}'])
     return "\n".join(lines)
 
 

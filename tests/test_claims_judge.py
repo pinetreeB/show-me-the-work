@@ -161,7 +161,7 @@ def test_prompt_schema_hashes_frozen_in_manifest_and_call(tmp_path):
     assert row["schema_sha256"]==contract()["schema_sha256"]
     assert row["cli_schema_sha256"]==contract()["cli_schema_sha256"]
     assert row["cli_schema_sha256"]==runner.sha(row["argv"][-1].encode("utf-8"))
-    assert contract()["version"]=="v1.1"
+    assert contract()["version"]=="v1.2"
     assert runner.SCHEMA.name=="judge-output.schema.json"
 
 
