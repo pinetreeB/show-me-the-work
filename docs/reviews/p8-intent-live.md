@@ -1,6 +1,6 @@
 # P8 — 의도 게이트(Intent Gate) 라이브 E2E 실측
 
-> 실행: Sonnet(우하). 방법론: P5/P5b와 동일 — 격리 디렉토리, `--plugin-dir C:\Users\example\fable-lite`,
+> 실행: Sonnet(우하). 방법론: P5/P5b와 동일 — 격리 디렉토리, `--plugin-dir <작업폴더>\fable-lite`,
 > `--setting-sources project`, `--permission-mode bypassPermissions`, 도구 기본셋(인위적 제한 없음),
 > `--debug hooks --debug-file`로 훅 이벤트 로그 확보. 실행 전 Codex의 `tmp\.done13-codex`(ambiguity.py
 > 미탐 수정) 확인 후 시작. 전체 4개 라이브 세션(케이스 1~4, 케이스2는 turn1+`--resume` turn2) +
@@ -44,7 +44,7 @@
 - **turn2**(`--resume`, 프롬프트: "1번 맞음. 그거예요. 동작만 고치고 스타일 관련된건 건드리지 마세요."):
   - `intent.json`이 **정상 스키마로 생성됨**(`save_intent()`가 실제로 만드는 필드만 존재: goal/scope/non_goals/assumed/confirmed_at_prompt, `confirmed_at_prompt`에 사용자 답변 그대로 기록).
   - `app.py` 정확히 수정(`a + b`), `utils.py`·스타일 무변경(비목표 준수).
-  - **그러나** `verification_commands`에 `"C:/Users/example/fable-lite/goals/goals.py"` **절대경로**가 등장 — 이는 모델이 `python -m fable_lite`가 실패한 뒤(turn1~2 사이 어딘가에서, hookdebug.log엔 명령 텍스트가 없어 정확한 재시도 시점은 미확인) **플러그인 설치 경로를 스스로 탐색해 찾아냈다는 강한 정황 증거**입니다. `CLAUDE_PLUGIN_ROOT`가 Bash 도구에 노출되지 않음을 별도 프로브로 확인했으므로(§3 참조), 공식적으로 제공되는 정보가 아니라 **모델의 파일시스템 탐색 능력에 의존한 우회**로 보입니다.
+  - **그러나** `verification_commands`에 `"<작업폴더>/fable-lite/goals/goals.py"` **절대경로**가 등장 — 이는 모델이 `python -m fable_lite`가 실패한 뒤(turn1~2 사이 어딘가에서, hookdebug.log엔 명령 텍스트가 없어 정확한 재시도 시점은 미확인) **플러그인 설치 경로를 스스로 탐색해 찾아냈다는 강한 정황 증거**입니다. `CLAUDE_PLUGIN_ROOT`가 Bash 도구에 노출되지 않음을 별도 프로브로 확인했으므로(§3 참조), 공식적으로 제공되는 정보가 아니라 **모델의 파일시스템 탐색 능력에 의존한 우회**로 보입니다.
   - 같은 턴에서 N2(goals) 게이트도 동시 발동(`needs_goals: true`) — intent 게이트와 무관한 별개 이슈라 상세 분석은 범위 밖으로 두되, `goals.py --help` 호출들이 `{"fail_open": true, "message": "argument parse failed: 0"}`를 evidence에 남기는 것은 참고로 기록만 해둡니다(Codex 영역).
 
 ## 3. 케이스 3 — 명확 프롬프트 "app.py의 add 함수 버그 고쳐줘"
@@ -109,7 +109,7 @@ python -m fable_lite intent set --root . --goal "test" --scope "app.py"
 
 - 격리 스크래치 디렉토리(케이스1~4, 합성검증용 보조 디렉토리, env 프로브)는 증거 추출 후 전부 삭제 완료.
 - `~/.claude.json`만 변경(세션 북키핑, 기존 패턴과 동일 — 양성), `settings.json`/`settings.local.json`/`installed_plugins.json`/`known_marketplaces.json` 4개 파일 해시 불변 확인.
-- 실제 저장소(`C:\Users\example\fable-lite`)에 `.fable-lite/` 상태 누출 없음 확인.
+- 실제 저장소(`<작업폴더>\fable-lite`)에 `.fable-lite/` 상태 누출 없음 확인.
 - 코드 변경 없음(순수 리뷰/실측 과제) — 별도 pytest 재실행 불필요.
 
 ---
@@ -121,14 +121,14 @@ Codex가 §5의 BLOCKER를 수정: 저장소 루트에 self-locating 런처 `fab
 훅 파일 위치에서 이 런처의 **절대경로**를 계산 + `user_prompt_submit.py`의 컨텍스트와 `core/contract.py`의
 차단 사유 양쪽에 `python "<절대경로>/fable-lite-cli.py" intent set ...` 명령을 그대로 박아 넣도록 배선.
 
-**사전 메커니즘 확인**: 임의 디렉토리에서 `python "C:\Users\example\fable-lite\fable-lite-cli.py" intent set --root . --goal "mech check" --scope "app.py"` → exit 0, intent.json 정상 생성 확인(ModuleNotFoundError 재현 안 됨).
+**사전 메커니즘 확인**: 임의 디렉토리에서 `python "<작업폴더>\fable-lite\fable-lite-cli.py" intent set --root . --goal "mech check" --scope "app.py"` → exit 0, intent.json 정상 생성 확인(ModuleNotFoundError 재현 안 됨).
 
 **라이브 재검증** (P8 케이스1과 동일 셋업 — 격리 디렉토리, `--plugin-dir`, "이거 좀 고쳐줘", 세션 지속 활성화 후 `--resume`으로 답변 1턴):
 
 - **turn1**: 조사(가설1/2/3·증거·기각, 다만 "조사 팩 마커를 포함해 다시 정리합니다"라는 메타발언이 마커 앞에 붙음 — 여전히 발생하는 편차) 후 Edit 시도 → 차단(`intent_blocks:1`) → **`확인질문 1(목표)`/`확인질문 2(범위)`/`확인질문 3(비목표)` 3개를 마커로 정확히 구분해 물었으나 한 턴에 전부 나열**(P8 케이스1은 반대로 1개로 뭉쳤음 — "1문1답, 한 번에 하나씩" 원칙 준수가 매번 다름을 재확인). `fable-lite-cli.py` 명령은 아직 실행하지 않고 사용자 답변 대기.
 - **turn2**(`--resume`, "네 맞습니다. 1,2,3 모두 그대로 진행해주세요."): **모델이 주입된 명령을 정확히 그대로 실행** —
   ```
-  python "C:\Users\example\fable-lite\fable-lite-cli.py" intent set --root . --goal "app.py의 add 함수 버그 수정: a - b를 a + b로 변경" --scope "app.py의 add 함수 한 줄만 수정" --non-goal "multiply·utils.greet 등 정상 코드 변경, 테스트 추가, 리팩터링, 타 파일 변경 제외"
+  python "<작업폴더>\fable-lite\fable-lite-cli.py" intent set --root . --goal "app.py의 add 함수 버그 수정: a - b를 a + b로 변경" --scope "app.py의 add 함수 한 줄만 수정" --non-goal "multiply·utils.greet 등 정상 코드 변경, 테스트 추가, 리팩터링, 타 파일 변경 제외"
   ```
   → `intent.json`이 **`save_intent()` 표준 스키마 그대로, 단 한 번의 시도로 생성**(경로 탐색·수동 파일 작성 흔적 전혀 없음 — P8 케이스4·2와 뚜렷이 대비됨). 이어서 `app.py` 정확히 수정(`a + b`), `intent_required: false`로 재판정, `stop_blocks: 0`(무리 없이 바로 통과).
 

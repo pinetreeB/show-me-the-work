@@ -14,7 +14,7 @@ Codex multi-agent(codex-cli 0.144.1 + omo 4.16.3)는 **서브에이전트 스레
   시간대 분포로 "세션 재시작 문제"가 아니라 **작업 중 상시 축적**임을 확정 (22시에만 219개 생성).
 - 대비: Claude Code 서브에이전트는 동일 프로세스 내 대화 스레드(연산=클라우드, MCP=부모 공유)라
   같은 기간 자식 node 11개. 아키텍처 차이가 원인이며 codex 쪽 설정으로는 못 막는다.
-- 현행 방어선: `C:\Users\example\scripts\mcp-reaper.ps1` v2 + Task Scheduler 매시 정각.
+- 현행 방어선: `<작업폴더>\scripts\mcp-reaper.ps1` v2 + Task Scheduler 매시 정각.
   Tier1(고아 30분+) / Tier2(2h+ 유휴 AND CPU<60s), 살아있는 claude/agy/wmux 소속 제외,
   살아있는 codex 세션의 최초 도구 세트(첫 자식+5분 창) 보호. 실측 48.5→14.2GB 무손상 회수.
   상세: 메모리 위키 `reference/tools/reference_codex_mcp_zombie_fix.md`.

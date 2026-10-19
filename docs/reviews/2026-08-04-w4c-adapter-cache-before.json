@@ -42,7 +42,7 @@
   },
   "fixture": {
     "bytes": 7967923,
-    "path": "C:\\Users\\example\\fable-lite\\tmp\\friction-fix\\fixture-ledger-8mb.json",
+    "path": "<작업폴더>\\fable-lite\\tmp\\friction-fix\\fixture-ledger-8mb.json",
     "sha256": "ff79cb625347ae59ab37ff50dec7c1bb4e5672db1020559d4c4068dc10679d0a",
     "statusless_invocations": 209
   },
@@ -50,7 +50,7 @@
   "method": "fresh process and fresh statusless fixture with a matching active turn per timed PreToolUse",
   "schema_version": 1,
   "settings": {
-    "adapter_root": "C:\\Users\\example\\AppData\\Local\\Temp\\w4c-before-rBHOBB\\repo",
+    "adapter_root": "<작업폴더>\\AppData\\Local\\Temp\\w4c-before-rBHOBB\\repo",
     "concurrency": 1,
     "samples": 5
   }

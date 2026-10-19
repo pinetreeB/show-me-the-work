@@ -1,14 +1,14 @@
 # 사건 기록: 홈 루트 세션에서 provenance 게이트 구조적 무력화 (2026-07-15)
 
 > 기록 목적: 프로젝트 루트가 **사용자 홈 디렉토리**인 세션에서 Change Provenance가 `scope_too_large`로 고정되어, Stop 게이트가 매 턴 2회 차단 후 cap으로 통과되는 **구조적 무력화** 실측 사례.
-> 발생 세션: `C--Users-example`(홈) 좌상 Claude(Opus 4.8 1M), wmux 우하 pane 모델 교체 작업 중.
+> 발생 세션: `C--Users-<사용자>`(홈) 좌상 Claude(Opus 4.8 1M), wmux 우하 pane 모델 교체 작업 중.
 > 성격: 코드 결함 아님. **환경(홈 루트)과 스캔 예산의 불일치** + **상태 디렉토리 세션 공유**의 설계 경계 문제.
 
 ## 환경
 
 - show-me-the-work v2.0.0 (로컬 디렉토리 `~/fable-lite`), Windows 11
-- 세션 cwd = `C:\Users\example` (홈). 프로젝트 폴더가 아닌 홈에서 Claude Code 기동
-- 상태 디렉토리 = `C:\Users\example\.fable-lite\` (홈에 1개)
+- 세션 cwd = `<작업폴더>` (홈). 프로젝트 폴더가 아닌 홈에서 Claude Code 기동
+- 상태 디렉토리 = `<작업폴더>\.fable-lite\` (홈에 1개)
 - 작업 내용: `~/.claude/skills/wmux-project-start/SKILL.md` 외 3개 파일 편집 (총 수 KB)
 
 ## 증상 (실측)

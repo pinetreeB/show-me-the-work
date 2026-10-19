@@ -38,19 +38,19 @@ P4 then reproduced a block-to-allow R2 bypass by removing `status` from a five-m
 The live source was read only. Both rehearsal files were copied from the same snapshot of:
 
 ```text
-C:\Users\example\fable-lite-dev\.fable-lite\ledger.json
+<작업폴더>\fable-lite-dev\.fable-lite\ledger.json
 ```
 
 PowerShell rehearsal root:
 
 ```text
-C:\Users\example\fable-lite-dev\tmp\b5-status-rehearsal
+<작업폴더>\fable-lite-dev\tmp\b5-status-rehearsal
 ```
 
 Git Bash equivalent:
 
 ```text
-/c/Users/example/fable-lite-dev/tmp/b5-status-rehearsal
+<작업폴더>/fable-lite-dev/tmp/b5-status-rehearsal
 ```
 
 The sealed real-ledger copy and initial work copy had the same SHA-256:

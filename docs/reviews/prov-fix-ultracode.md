@@ -113,7 +113,7 @@
 
 - **위치**: `core/provenance_policy.py:97`
 - **주장**: root `.codegraph` 무조건 harness-state 제외가 합의 설계를 초과, root-level 사각지대 신설.
-- **기각 근거(검증자)**: `.codegraph`는 이 레포 root의 **OMO 소유 gitignore된 디렉토리 정션**(→ `/c/Users/example/.omo/codegraph/...`, 레포 밖 캐시)이며 제품 소스가 아님. design-codex §F1이 정확히 이 정션을 F1 대형-루트-스캔 오탐 원인으로 문서화, `d888c9b`가 그 **의도된 수정**. impl-report item 8·line 98이 `.codegraph`를 의도된 harness-state 제외로 명시. 제안된 수정("user config exclude 의존")은 D5(config 정책 이관 금지, agy 자가면제 공격)와 정면 배치. **의도된 동작 — 결함 아님.**
+- **기각 근거(검증자)**: `.codegraph`는 이 레포 root의 **OMO 소유 gitignore된 디렉토리 정션**(→ `<작업폴더>/.omo/codegraph/...`, 레포 밖 캐시)이며 제품 소스가 아님. design-codex §F1이 정확히 이 정션을 F1 대형-루트-스캔 오탐 원인으로 문서화, `d888c9b`가 그 **의도된 수정**. impl-report item 8·line 98이 `.codegraph`를 의도된 harness-state 제외로 명시. 제안된 수정("user config exclude 의존")은 D5(config 정책 이관 금지, agy 자가면제 공격)와 정면 배치. **의도된 동작 — 결함 아님.**
 
 ---
 

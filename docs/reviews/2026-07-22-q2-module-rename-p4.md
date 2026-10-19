@@ -2,7 +2,7 @@
 
 > 대상: `worker/q2-module-rename` (HEAD `c2ec534`, 커밋 5: `88ba7f0` move-only → `1369f39` shim → `659b770` consumers/tests → `28092d1` release → `c2ec534` audit, 53파일 +526/−55)
 > 스펙: `docs/specs/v2.6-q2-module-rename.md` rev3 · P2.5 기록: `docs/reviews/2026-07-22-q2-module-rename-p25.md`
-> 구현: codex@고객사A(gpt-5.6-sol high) 42분 완주. 검토자별 worktree 분리 실시(07-19 교훈).
+> 구현: codex@client-a(gpt-5.6-sol high) 42분 완주. 검토자별 worktree 분리 실시(07-19 교훈).
 
 ## 판정: **APPROVE — critical/high 0, 수용기준 8/8 충족, 릴리스 진행 가능**
 
@@ -32,5 +32,5 @@
 - 원문: `tmp/q2-rename/ultracode-p4.md` · 실측 원본: `fable-lite-wt-q2ultra/tmp/q2-p4/d1..d5{,-verify}/result.json`
 
 ## 운영 노트
-- codex@고객사A 구현 중 자체 감독(smtw) 실발동: R1 계약 게이트·provenance unstable_path(임시 venv 48파일)를 스스로 해소 — 도그푸딩 정상 동작 확인.
+- codex@client-a 구현 중 자체 감독(smtw) 실발동: R1 계약 게이트·provenance unstable_path(임시 venv 48파일)를 스스로 해소 — 도그푸딩 정상 동작 확인.
 - ultracode 동적 워크플로가 전 차원 완료 후에도 대기 상태 지속 → 좌상 인터럽트 후 기존 result.json 종합으로 마무리(결과 무손실). 워크플로 완료 통지 미수신 계열 — 쇼미더워크 "좀비/대기 정리" 백로그와 함께 관찰 대상.

@@ -50,7 +50,7 @@
 
 격리 디렉토리(`fable-lite-e2e-n1`)는 3회 반복 종료 후 완전 삭제했고, 실제 fable-lite repo에 `.fable-lite/` 등 흔적이 없음을 확인했다. 다만 이번엔 **공유 설정 파일 해시 대조에서 실제 변경을 발견**했다:
 
-- `~/.claude/plugins/installed_plugins.json`에 `"fable-lite@fable-lite"`(캐시 경로: `~/.claude/plugins/cache/fable-lite/fable-lite/0.1.0`)가, `~/.claude/plugins/known_marketplaces.json`에 마켓플레이스 `"fable-lite" → "C:\Users\example\fable-lite"`가 새로 등록되어 있었다.
+- `~/.claude/plugins/installed_plugins.json`에 `"fable-lite@fable-lite"`(캐시 경로: `~/.claude/plugins/cache/fable-lite/fable-lite/0.1.0`)가, `~/.claude/plugins/known_marketplaces.json`에 마켓플레이스 `"fable-lite" → "<작업폴더>\fable-lite"`가 새로 등록되어 있었다.
 - **이것은 이번 실험이 야기한 것이 아니다.** 근거: (1) 이번 세션 전체에서 실행한 명령은 `--plugin-dir`(세션 한정, "for this session only") 3회뿐이고 `claude plugin install`/`marketplace add` 류는 한 번도 호출하지 않았다. (2) `--plugin-dir` 세션은 항상 `"fable-lite@inline"` 형태로 기록되는데(P5 리포트에서 확인된 명명 규칙), 이번에 새로 생긴 항목은 `"fable-lite@fable-lite"` — 실제 `claude plugin install`이 만드는 명명 규칙이며 실제 캐시 디렉토리까지 존재한다. (3) 같은 시간대에 `~/.claude/CLAUDE.md`에 "플러그인 fable-lite@fable-lite 훅이 자동 강제"라는 블록이 추가된 것을 시스템이 확인해줬다(의도된 변경이라고 명시됨) — 다른 pane이 이 시점에 fable-lite를 실제로 정식 설치했다는 정황과 일치한다.
 - 따라서 이 변경은 **다른 작업자(pane)가 수행한, 의도된 실제 배포 작업**으로 판단하며, 되돌리지 않았다 — 남의 정당한 작업을 임의로 되돌리는 것이 오히려 부적절한 개입이라 판단.
 - `settings.local.json`은 이번에도 변경 없음(확인 완료).
