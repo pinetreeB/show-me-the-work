@@ -133,7 +133,7 @@ def test_fixed_repo_pool_filters_paths_before_read_and_lines_after_read(tmp_path
         def files(self, root, revision):
             assert self.commits[str(root)] == revision
             return [".codex/config.toml", "docs/credentials.txt", "eval/pilot/hidden.md",
-                    "docs/guide.md", "smtw/module.py"]
+                    "docs/fake-fixture.md", "docs/guide.md", "smtw/module.py"]
         def git(self, root, operation, object_id):
             revision, name = object_id.split(":", 1)
             assert operation == "show" and self.commits[str(root)] == revision
@@ -278,3 +278,111 @@ def test_cli_rejects_invalid_bounds_before_collecting_sources(tmp_path, scope_fi
                          option, value])
     assert error.value.code == 2
     assert not (tmp_path / "bad").exists()
+
+
+
+def realistic_pool():
+    rows = []
+    for case, prefix, revision in [("example-case", "example-repo", "a"),
+                                   ("other-case", "other-repo", "b")]:
+        for index in range(80):
+            word = ("primary" if case == "example-case" else "secondary") + f"_setting_{index:03d}"
+            quote = f"{word} = 7000000"
+            rows.append({"case": case, "path": f"~/{prefix}/module-{index:03d}.py",
+                         "line": 1, "quote": quote, "window": {1: quote, 2: "90000000"},
+                         "text": f"1: {quote}\n2: 90000000", "redactions": {}, "report_line": 1,
+                         "observation": "source-observation", "category": "code",
+                         "source": "git_show", "revision": revision * 40})
+    return rows
+
+
+def quoted_claim(claim):
+    import re
+    match = re.search(r":(\d+) (does not contain|contains) the quotation ", claim)
+    assert match
+    quoted, _ = json.JSONDecoder().raw_decode(claim[match.end():])
+    return int(match.group(1)), match.group(2) == "does not contain", quoted
+
+
+def test_mutations_use_actual_repository_tokens_and_preserve_literal_truth(tmp_path, scope_file):
+    import re
+    rows = realistic_pool()
+    result = generate(rows, tmp_path / "natural", scope_file=scope_file)
+    folder = tmp_path / "natural/packets"
+    sent = load_sent_items(folder)
+    truth = json.loads((tmp_path / "natural/truth/answers.json").read_text(encoding="utf-8"))["items"]
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    assert result["items"] == 200 and result["unique_originals"] >= 60
+    originals = {r["path"]: r["quote"] for r in rows}
+    words = {case: {r["quote"].split()[0] for r in rows if r["case"] == case}
+             for case in ["example-case", "other-case"]}
+    markers = re.compile(r"altered|tamper|fake|missing_\d", re.I)
+    kinds = set()
+    for key, item in sent.items():
+        assert not markers.search(json.dumps(item))
+        n, negated, quote = quoted_claim(item["claim"])
+        lines = {int(m[1]): m[2] for line in item["excerpts"][0]["text"].splitlines()
+                 if (m := re.match(r"(\d+): ?(.*)", line))}
+        answer = truth[key]
+        if answer["verdict"] == "supported":
+            assert not negated and quote in lines[n]
+            continue
+        kind = answer["mutation"]
+        kinds.add(kind)
+        if kind == "negation":
+            assert negated and quote in lines[n]
+        else:
+            assert not negated and quote not in lines[n]
+        if kind in {"quote_token", "identifier", "number"}:
+            assert all(quote not in line for line in lines.values())
+        if kind in {"quote_token", "identifier"}:
+            original = originals[item["excerpts"][0]["path"]]
+            replacement = quote.split()[0]
+            assert replacement != original.split()[0]
+            assert replacement in words[manifest["item_cases"][key]]
+    assert kinds == {"quote_token", "line_move", "identifier", "number", "negation"}
+    assert_no_answer_hints(folder)
+
+
+@pytest.mark.parametrize("number", ["0", "9", "10", "99", "100", "009"])
+def test_number_mutations_are_adjacent_and_keep_width(number):
+    import random,re
+    from smtw.claims.judge_eval import mutate
+    quote = "configured_limit = " + number
+    row = {**pool()[0], "quote": quote, "window": {1: quote, 2: "Other setting is available."},
+           "text": "1: " + quote + "\n2: Other setting is available."}
+    for seed in range(8):
+        mutated = mutate(row, "number", random.Random(seed))
+        assert mutated is not None
+        _, _, changed = quoted_claim(mutated)
+        value = changed.split(" = ")[1]
+        assert value.isdecimal() and len(value) == len(number)
+        assert abs(int(value) - int(number)) == 1
+
+
+def test_mutation_retries_observed_alternatives_instead_of_creating_a_false_label():
+    import random
+    from smtw.claims.judge_eval import mutate
+    row = {**pool()[0], "quote": "primary_limit = 7",
+           "window": {1: "primary_limit = 7", 2: "secondary_limit = 7", 3: "fallback_limit = 9"},
+           "text": "1: primary_limit = 7\n2: secondary_limit = 7\n3: fallback_limit = 9"}
+    for seed in range(8):
+        altered = mutate(row, "identifier", random.Random(seed))
+        assert quoted_claim(altered)[2] == "fallback_limit = 7"
+    row["window"] = {1: "primary_limit = 7", 2: "primary_limit = 6", 3: "primary_limit = 8"}
+    row["text"] = "\n".join(f"{n}: {value}" for n, value in row["window"].items())
+    assert mutate(row, "number", random.Random(0)) is None
+
+
+def test_marker_bearing_sources_do_not_enter_packets(tmp_path, scope_file):
+    import re
+    rows = pool()
+    for marker in ["altered_token", "tamper_variant", "fake_marker"]:
+        row = dict(rows[0])
+        row["quote"] = f"{marker} = 7; another_setting = 2"
+        row["window"] = {1: row["quote"], 2: "another_setting = 3"}
+        row["text"] = "1: " + row["quote"] + "\n2: another_setting = 3"
+        rows.append(row)
+    generate(rows, tmp_path / "clean", scope_file=scope_file)
+    for path in (tmp_path / "clean/packets").glob("*.json"):
+        assert not re.search(r"altered|tamper|fake|missing_\d", path.read_text(encoding="utf-8"), re.I)

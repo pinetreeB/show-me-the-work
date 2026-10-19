@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+from collections import Counter, defaultdict
 import hashlib
 import json
 from pathlib import Path
@@ -21,6 +21,56 @@ from .sources import Repositories
 HERE = Path(__file__).resolve().parent
 KINDS = ("quote_token", "line_move", "identifier", "number", "negation")
 
+MARKER = re.compile(r"altered|tamper|fake|missing_\d+", re.I)
+TOKEN = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
+COMMON_WORDS = set("""a an the this that it its to by on at be are was were have has
+and as assert async await break case class const continue def default delete do else
+except export false finally for from function if import in instanceof is let match
+new none not null of or pass raise return switch throw true try typeof var void when
+while with yield""".split())
+
+
+def source_has_marker(row):
+    return any(MARKER.search(str(row.get(key, "")))
+               for key in ("case", "path", "citation_path", "quote", "text"))
+
+
+def source_tokens(row):
+    return {m.group() for text in row["window"].values() for m in TOKEN.finditer(text)
+            if len(m.group()) >= 2 and m.group().casefold() not in COMMON_WORDS
+            and not MARKER.search(m.group())}
+
+
+def token_source_key(row, scope):
+    path = display_path(row["path"]).replace(chr(92), "/").casefold()
+    prefix = max((p.casefold() for p in scope.cases[row["case"]]
+                  if path.startswith(p.casefold())), key=len)
+    repository = (row["case"], prefix, row.get("revision", ""))
+    return repository, path
+
+
+def token_inventory(pool, scope):
+    files, repositories = defaultdict(set), defaultdict(set)
+    for row in pool:
+        if source_has_marker(row):
+            continue
+        repository, path = token_source_key(row, scope)
+        tokens = source_tokens(row)
+        files[(repository, path)].update(tokens)
+        repositories[repository].update(tokens)
+    return {key: (tuple(sorted(tokens)), tuple(sorted(repositories[key[0]])))
+            for key, tokens in files.items()}
+
+
+def token_style(word):
+    if word.isupper():
+        return "upper"
+    if "_" in word:
+        return "snake"
+    if re.search(r"[a-z][A-Z]", word):
+        return "camel"
+    return "word"
+
 
 def allowed_source(case, path, scope: JudgeScope):
     visible = display_path(path).replace(chr(92), "/").casefold()
@@ -35,7 +85,7 @@ DOCUMENT_SUFFIXES = {".md", ".rst", ".txt"}
 def corpus_file(name: str) -> bool:
     """Filter metadata before any blob read; never inspect settings or eval trees."""
     path = Path(name)
-    return (bool(name) and not sensitive_path(name)
+    return (bool(name) and not sensitive_path(name) and not MARKER.search(name)
             and not any(part.startswith(".") or part in {"tests", "eval", "research", "reviews", "pilot"}
                         for part in path.parts)
             and (len(path.parts) == 1 or path.parts[0] in {"smtw", "core", "adapters", "docs"})
@@ -88,11 +138,11 @@ def collect_pool(scope_file: Path):
             for number, content in lines.items():
                 quote = content.strip()
                 if (not 20 <= len(quote) <= 180 or quote in seen
-                        or sensitive_reference(quote) or redact(quote)[0] != quote):
+                        or MARKER.search(quote) or sensitive_reference(quote) or redact(quote)[0] != quote):
                     continue
                 window = {n: lines[n] for n in range(max(1, number-1), number+2) if n in lines}
                 excerpt = "\n".join(f"{n}: {v}" for n, v in window.items())
-                if any(sensitive_reference(v) for v in window.values()):
+                if any(sensitive_reference(v) or MARKER.search(v) for v in window.values()):
                     continue
                 safe, redactions = redact(excerpt, preserve_source_lines=True)
                 if redactions or safe != excerpt or len(safe) > 1500:
@@ -120,25 +170,70 @@ def statement(row, quote=None, number=None, negated=False):
             + json.dumps(row["quote"] if quote is None else quote, ensure_ascii=False) + ".")
 
 
-def mutate(row, kind, rng):
+def mutate(row, kind, rng, token_groups=None):
     quote = row["quote"]
+    if source_has_marker(row) or quote not in row["window"].get(row["line"], ""):
+        return None
     if kind == "negation":
-        return statement(row,negated=True)
+        return statement(row, negated=True)
     if kind == "line_move":
-        targets=[n for n,text in row["window"].items()
-                 if n!=row["line"] and quote not in text and len(text.strip())>=8
-                 and redact(text)[0]==text]
-        return statement(row,number=rng.choice(targets)) if targets else None
+        targets = [n for n, text in row["window"].items()
+                   if n != row["line"] and quote not in text and len(text.strip()) >= 8
+                   and redact(text)[0] == text]
+        return statement(row, number=rng.choice(targets)) if targets else None
+
+    def replacement(match, value):
+        changed = quote[:match.start()] + value + quote[match.end():]
+        # A neighboring captured line may already contain the apparent change.
+        # Such an example cannot be used as a fabricated-quotation negative.
+        if changed == quote or any(changed in text for text in row["window"].values()):
+            return None
+        return statement(row, quote=changed)
+
     if kind == "number":
-        match=re.search(r"\d+",quote)
-        if not match:return None
-        changed=str(int(match[0]) + rng.choice([-1,1]))
-    else:
-        matches=list(re.finditer(r"[A-Za-z_][A-Za-z_0-9]*",quote))
-        if not matches:return None
-        match=matches[-1] if kind=="quote_token" else matches[0]
-        changed=("missing_" if kind=="identifier" else "altered_")+str(rng.randrange(100000,999999))
-    return statement(row,quote=quote[:match.start()]+changed+quote[match.end():])
+        # Integers only: do not change an identifier suffix or a decimal digit
+        # by 0.1 while labeling it as an adjacent integer mutation.
+        matches = list(re.finditer(r"(?<![\w.])\d+(?![\w.])", quote))
+        rng.shuffle(matches)
+        for match in matches:
+            digits = match.group()
+            deltas = [-1, 1]
+            rng.shuffle(deltas)
+            for delta in deltas:
+                value = int(digits) + delta
+                if value < 0:
+                    continue
+                changed = str(value)
+                if len(digits) > 1 and digits.startswith("0"):
+                    changed = changed.zfill(len(digits))
+                if len(changed) != len(digits):
+                    continue
+                result = replacement(match, changed)
+                if result:
+                    return result
+        return None
+
+    groups = token_groups or (tuple(sorted(source_tokens(row))),)
+    matches = [m for m in TOKEN.finditer(quote)
+               if len(m.group()) >= 2 and m.group().casefold() not in COMMON_WORDS]
+    if kind == "quote_token":
+        matches.reverse()
+    for match in matches:
+        # Prefer a similarly shaped token from the file, then the repository.
+        # Every fallback still comes from captured, approved source text.
+        same_style = [tuple(word for word in group if token_style(word) == token_style(match.group()))
+                      for group in groups]
+        seen = set()
+        for group in [*same_style, *groups]:
+            candidates = [word for word in group
+                          if word.casefold() != match.group().casefold() and word not in seen]
+            rng.shuffle(candidates)
+            for word in candidates:
+                seen.add(word)
+                result = replacement(match, word)
+                if result:
+                    return result
+    return None
 
 
 def generation_bounds(batch_size, limit_items):
@@ -160,13 +255,16 @@ def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2,
     scope = load_scope(scope_file)
     if any(not allowed_source(row["case"],row["path"],scope) for row in pool):
         raise ValueError("corpus source outside the fixed allowlist")
+    inventory = token_inventory(pool, scope)
     rng=random.Random(seed)
     items, truth, item_cases, used = [], {}, {}, set()
     item_sources = {}
     for kind in KINDS:
         eligible = []
         for row in pool:
-            altered = mutate(row, kind, rng)
+            if source_has_marker(row):
+                continue
+            altered = mutate(row, kind, rng, inventory.get(token_source_key(row, scope)))
             if (altered and len(altered) <= 300 and len(statement(row)) <= 300
                     and redact(altered)[0] == altered
                     and redact(statement(row))[0] == statement(row)):
