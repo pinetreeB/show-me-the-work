@@ -264,7 +264,7 @@ pointer_missing/no_read_of_file/partial_range는 명시 SHA `--commit 저장소=
 
 ### Phase1 assist — 패킷 dry-run
 
-`smtw claims assist --report report.md --codex transcript.jsonl --dry-run --out private-packets`은 빈 출력 폴더에 패킷과 manifest를 쓴다. 모델/CLI/API 실행은 없으며 manifest의 `model_calls`는 0이다. 발췌는 전사에서 연결된 읽기 도구 결과 또는 `--commit 저장소=SHA`의 고정 git show만 허용한다. `--source-file`은 선행 대조에만 쓰며 패킷 발췌에는 쓰지 않는다. 웹·현재 파일·보고서 자신을 발췌하지 않는다.
+`smtw claims assist --report report.md --codex transcript.jsonl --dry-run --out private-packets`은 빈 출력 폴더에 패킷과 manifest를 쓴다. 모델/CLI/API 실행은 없으며 manifest의 `model_calls`는 0이다. 발췌는 결과 머리의 File Path가 호출 경로와 일치하는 AGY 파일 읽기 결과 또는 `--commit 저장소=SHA`로 도구가 직접 실행한 고정 git show만 허용한다. 셸·코드 실행 출력과 전사 속 git show 출력은 쓰지 않는다. `--source-file`은 선행 대조에만 쓰며 패킷 발췌에는 쓰지 않는다. 웹·현재 파일·보고서 자신을 발췌하지 않는다.
 
 주장 300자, 앞뒤 문맥 각 200자, 번호가 유지된 발췌 3개×1500자, 직렬화된 항목 6000자, 지시문 포함 호출 30000자 상한이다. 발췌 순서는 섞고 ref는 보낸 순서로 고정한다. 충돌 판들을 모두 3개 이내에 담지 못하면 `incomplete_conflict`, 연결 근거가 없으면 `no_excerpt`다. 민감 경로(별칭 해석 포함)는 `skipped_sensitive`, 발췌의 가림 4곳 이상은 `redaction_limit`, 항목 크기 초과는 `packet_too_large`로 제외한다. 주장·문맥도 저장 전에 가리며 토큰/JWT/전화/주민번호/이메일/password 패턴을 처리한다.
 
@@ -304,7 +304,7 @@ P1F 가림 예외는 정확한 40자리 Git SHA 구분자, SHA256/digest/checksu
 ### 대조기와 패킷 출처의 분리
 
 대조기의 수집·귀속·판정은 75512be 기준을 유지한다. assist 전용 packet_reads 파서가
-패킷에 넣을 출력에만 단일 읽기·고정 커밋·표시 전용 꼬리·명령 토큰 하드 제외 규칙을 적용한다.
+패킷에 넣을 출력에만 자기 식별 파일 읽기(File Path 머리·범위 일치) 규칙을 적용하고 셸·코드 실행 출력은 제외한다.
 공용 전사 어댑터의 기본 파서는 바뀌지 않으며 opaque_version 관측판을 만들지 않는다.
 
 공개 12건의 익명 원자 기준은 tests/fixtures/claims-check-75512be.json에 고정했다.

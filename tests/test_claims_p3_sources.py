@@ -102,8 +102,13 @@ def test_work_cli_excerpt_and_judge_preflight_without_model(tmp_path, kind):
                  "--case-id", "work-example", "--scope-file", scope, "--blocklist-file", blocklist, "--format", "json")
     assert result.returncode == 0, result.stdout + result.stderr
     manifest = json.loads(result.stdout)
+    if kind == "codex":
+        # p3-1h: Codex shell output is never packet evidence, and work
+        # documents never come from git, so nothing is sent.
+        assert manifest["sent_count"] == 0 and manifest["skipped_counts"] == {"no_excerpt": 2}
+        return
     sent = load_sent_items(out)
-    assert sent and manifest["skipped_hard_exclude"] == (2 if kind == "agy" else 1)
+    assert sent and manifest["skipped_hard_exclude"] == 2
     excerpts = [e for item in sent.values() for e in item["excerpts"]]
     assert {e["path"] for e in excerpts} == {work + "/card.md", checkpoint}
     assert all(len(e["text"]) <= 1500 and len(e["text"].splitlines()) < 201 for e in excerpts)

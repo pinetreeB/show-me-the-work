@@ -1,4 +1,4 @@
-"""Closed shell-read provenance; all command text and output are synthetic."""
+"""Shell output is never packet provenance (p3-1h); all text is synthetic."""
 import json
 from pathlib import Path
 
@@ -7,7 +7,7 @@ import pytest
 from smtw.claims.assist import select_candidates
 from smtw.claims.model import Budget
 from smtw.claims.packets import build_packets, transcript_sources
-from smtw.claims.packet_reads import parse_packet_result, simple_read_path
+from smtw.claims.packet_reads import parse_packet_result
 from smtw.claims.transcripts import Call
 
 ROOT = "C:/synthetic/tasks/example"
@@ -67,16 +67,15 @@ def test_r12_compound_variants_drop_entire_file_output(tmp_path, kind, command):
     sources, packets, summary = sources_for(tmp_path, kind, command,
         "IdentAaa returns seven ms. APPROVED_MARKER\nEXCLUDED_MARKER customer row\n")
     assert not sources and not packets and summary["sent_count"] == 0
-    assert not simple_read_path(command)
 
 
 @pytest.mark.parametrize("kind", ["agy", "codex"])
 @pytest.mark.parametrize("reader", ["cat", "Get-Content -LiteralPath", "type"])
-def test_single_simple_file_read_still_produces_excerpt(tmp_path, kind, reader):
+def test_single_simple_file_read_is_not_packet_evidence(tmp_path, kind, reader):
+    # Intended yield loss: even a well-formed single read is shell output.
     sources, packets, summary = sources_for(tmp_path, kind, f"{reader} {ROOT}/card.md",
-                                           "IdentAaa returns seven ms. APPROVED_MARKER\n")
-    assert len(sources) == 1 and sources[0].path == ROOT + "/card.md"
-    assert summary["sent_count"] and "APPROVED_MARKER" in json.dumps(packets)
+                                           "IdentAaa returns seven ms. EXCLUDED_MARKER\n")
+    assert not sources and not packets and summary["sent_count"] == 0
 
 
 @pytest.mark.parametrize("suffix", ["; printenv", " && whoami", " || whoami",
@@ -88,12 +87,30 @@ def test_output_headers_cannot_restore_ambiguous_shell_binding(tmp_path, suffix,
     assert not sources and not packets
 
 
-def test_all_command_tokens_are_checked(monkeypatch):
-    from smtw.claims import packets
-    visited = []
-    monkeypatch.setattr(packets, "hard_excluded", lambda token: visited.append(token) or False)
-    assert simple_read_path("Get-Content -LiteralPath card.md -Raw") == "card.md"
-    assert set(["Get-Content", "-LiteralPath", "card.md", "-Raw"]) <= set(visited)
+@pytest.mark.parametrize("kind,expected", [("agy", 1), ("codex", None)])
+def test_single_excluded_literal_keeps_hard_exclude_category(tmp_path, kind, expected):
+    # AGY shell output stays a body-free control record with its category;
+    # Codex output is not parsed for packets at all.
+    report = tmp_path / "report.md"
+    text = "IdentAaa returns 7 ms.\n"
+    report.write_text(text, encoding="utf-8")
+    command = f"cat {ROOT}/customer-data/list.md"
+    if kind == "agy":
+        rows = [{"type": "PLANNER_RESPONSE", "tool_calls": [
+            {"name": "run_command", "args": {"CommandLine": command}}]},
+            {"type": "GENERIC", "status": "DONE", "content": "EXCLUDED_MARKER"}]
+    else:
+        rows = [{"type": "response_item", "payload": {
+            "type": "function_call", "name": "exec_command", "call_id": "x",
+            "arguments": json.dumps({"cmd": command})}},
+            {"type": "response_item", "payload": {
+                "type": "function_call_output", "call_id": "x",
+                "output": json.dumps({"output": "EXCLUDED_MARKER", "exit_code": 0})}}]
+    transcript = tmp_path / (kind + ".jsonl")
+    transcript.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
+    stats = {}
+    assert not transcript_sources(transcript, kind, report, text, {}, Budget(30), stats)
+    assert stats.get("skipped_hard_exclude") == expected
 
 
 def test_explicit_path_argument_cannot_bypass_command_grammar(tmp_path):
@@ -107,8 +124,10 @@ def test_explicit_path_argument_cannot_bypass_command_grammar(tmp_path):
     'python -c "print(open(\'card.md\').read())"', "cat card.md > result",
     "Get-Content -LiteralPath", "Get-Content -Unknown card.md", "cat card.md#comment",
 ])
-def test_unknown_or_dynamic_read_forms_are_not_file_evidence(command):
-    assert not simple_read_path(command)
+def test_unknown_or_dynamic_read_forms_are_not_file_evidence(tmp_path, command):
+    for kind in ("agy", "codex"):
+        sources, packets, _ = sources_for(tmp_path, kind, command, "1: EXCLUDED_MARKER\n")
+        assert not sources and not packets
 
 
 @pytest.mark.parametrize("command", ["(Get-Content card.md).Count", "@(Get-Content card.md).Length",

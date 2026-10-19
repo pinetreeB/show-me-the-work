@@ -37,7 +37,9 @@ def test_packet_policy_cannot_be_called_by_check(monkeypatch, tmp_path):
     from smtw.claims import packet_reads
     def forbidden(*args, **kwargs):
         raise AssertionError("packet policy called by checker")
-    monkeypatch.setattr(packet_reads, "simple_read_path", forbidden)
+    monkeypatch.setattr(packet_reads, "parse_packet_result", forbidden)
+    monkeypatch.setattr(packet_reads, "self_identified_read", forbidden)
+    monkeypatch.setattr(packet_reads.PacketResultParser, "__call__", forbidden)
     report, transcript = make_case(tmp_path, chr(96)+"widget.py:1"+chr(96)+' "missing phrase"', [
         agy_call("view_file", AbsolutePath="C:/synthetic/widget.py"),
         view("C:/synthetic/widget.py", "present source phrase"),

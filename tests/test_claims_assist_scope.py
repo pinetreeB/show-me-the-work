@@ -98,12 +98,15 @@ def test_assist_scope_cli_to_injected_judge_and_verifier(tmp_path, kind):
     assert manifest["case_id"] == CASE
     assert manifest["scope_sha256"] == hashlib.sha256(scope_file.read_bytes()).hexdigest()
     assert manifest["model_calls"] == 0 and manifest["sent_count"] == 1
-    # One excluded transcript observation plus one pinned-commit source.
-    assert manifest["skipped_out_of_scope"] == 2
+    # AGY: one excluded transcript observation plus one pinned-commit source.
+    # Codex shell output is never packet evidence (p3-1h); only the tool's
+    # own fixed-commit read remains.
+    transcript_read = kind == "agy"
+    assert manifest["skipped_out_of_scope"] == (2 if transcript_read else 1)
     sent = load_sent_items(folder)
     excerpts = [e for item in sent.values() for e in item["excerpts"]]
     assert excerpts and all(e["path"].endswith("/approved/alpha.py") for e in excerpts)
-    assert all(e["source"] == "transcript_read" for e in excerpts)
+    assert all(e["source"] == ("transcript_read" if transcript_read else "fixed_commit") for e in excerpts)
     assert all("OUTSIDE_ONLY_MARKER" not in e["text"] and
                "SENSITIVE_PATH_MARKER" not in e["text"] for e in excerpts)
     scope = load_scope(scope_file)

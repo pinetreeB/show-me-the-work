@@ -1,4 +1,4 @@
-"""Synthetic packet-only fixed-blob provenance and checker isolation."""
+"""Transcript git show output is never packet provenance (p3-1h); synthetic."""
 import json
 
 import pytest
@@ -6,7 +6,7 @@ import pytest
 from smtw.claims.model import Budget
 from smtw.claims.packets import transcript_sources
 from smtw.claims.transcripts import Call, read_transcript
-from smtw.claims.packet_reads import parse_packet_result, simple_read_path
+from smtw.claims.packet_reads import parse_packet_result
 from tests.claims_support import agy_call, generic, make_case
 
 PATH = "C:/synthetic/project/widget.py"
@@ -31,7 +31,7 @@ def git_rows(tail="", body="VALUE = 2"):
 
 @pytest.mark.parametrize("tail", TAILS)
 @pytest.mark.parametrize("kind", ["agy", "codex"])
-def test_fixed_blob_display_tail_preserves_revision_and_excerpt(tmp_path, tail, kind):
+def test_transcript_fixed_blob_output_is_not_packet_evidence(tmp_path, tail, kind):
     text = quoted("widget.py:1") + " " + quoted("VALUE = 2")
     command = git_command(tail, root=True)
     if kind == "agy":
@@ -47,13 +47,10 @@ def test_fixed_blob_display_tail_preserves_revision_and_excerpt(tmp_path, tail, 
     report, transcript = make_case(tmp_path, text, rows)
     evidence = read_transcript(transcript, kind, report, text, {}, Budget(10),
                                result_parser=parse_packet_result).evidence
-    assert len(evidence) == 1
-    e = evidence[0]
-    assert e.path.casefold() == PATH.casefold() and e.revision == REV and e.lines == {1: "VALUE = 2"}
-    assert e.complete == ("Select-Object" not in tail)
-    sources = transcript_sources(transcript, kind, report, text, {}, Budget(10))
-    assert len(sources) == 1 and sources[0].revision == REV
-    assert sources[0].lines == {1: "VALUE = 2"}
+    # Only blobs the tool itself reads (packets.fixed_sources) carry a revision.
+    assert evidence and all(e.control_only and not e.lines and not e.text and not e.revision
+                            for e in evidence)
+    assert not transcript_sources(transcript, kind, report, text, {}, Budget(10))
 
 
 
@@ -69,7 +66,6 @@ def test_fixed_blob_display_tail_preserves_revision_and_excerpt(tmp_path, tail, 
 ])
 def test_unlisted_git_tails_remain_non_sources(tmp_path, tail):
     command = git_command(tail)
-    assert not simple_read_path(command)
     text = quoted("widget.py:1") + " " + quoted("EXCLUDED_MARKER")
     report, transcript = make_case(tmp_path, text, [
         agy_call("run_command", CommandLine=command), generic("EXCLUDED_MARKER")])
@@ -82,8 +78,11 @@ def test_unlisted_git_tails_remain_non_sources(tmp_path, tail):
     f"git show {REV}:widget.py {REV}:other.py",
     f'git show "{REV}:$(whoami).py"', "git show HEAD:widget.py",
 ])
-def test_git_sensitive_or_unfixed_operands_rejected(command):
-    assert not simple_read_path(command)
+def test_git_sensitive_or_unfixed_operands_rejected(tmp_path, command):
+    text = quoted("widget.py:1") + " " + quoted("EXCLUDED_MARKER")
+    report, transcript = make_case(tmp_path, text, [
+        agy_call("run_command", CommandLine=command), generic("EXCLUDED_MARKER")])
+    assert not transcript_sources(transcript, "agy", report, text, {}, Budget(10))
 
 
 
@@ -100,7 +99,7 @@ def test_rejected_git_read_exposes_no_packet_body_or_version(tmp_path):
         assert e.total_bytes is None and e.total_lines is None and not e.complete
 
 
-def test_git_source_number_prefix_is_literal_content(tmp_path):
+def test_git_output_with_number_prefix_stays_control_only(tmp_path):
     e, = parse_packet_result(Call("run_command", {"CommandLine":git_command()}, 1, ""),
                       "17: literal source text", "synthetic-origin", tmp_path, Budget(10))
-    assert e.lines == {1: "17: literal source text"}
+    assert e.control_only and not e.lines and not e.text

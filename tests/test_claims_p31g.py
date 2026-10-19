@@ -57,9 +57,9 @@ def test_codemode_extra_or_invalid_indices_are_rejected(tmp_path,outputs):
     assert not packet_sources(tmp_path,code_rows(literal(),outputs))
 
 
-def test_codemode_single_literal_control_survives(tmp_path):
-    sources=packet_sources(tmp_path,code_rows(literal(),output(index=0)))
-    assert len(sources)==1 and sources[0].lines[1]==BODY
+def test_codemode_single_literal_is_not_packet_evidence(tmp_path):
+    # p3-1h: code-mode output is never packet evidence, even when unambiguous.
+    assert not packet_sources(tmp_path,code_rows(literal(),output(index=0)))
 
 
 @pytest.mark.parametrize("outputs", [
@@ -82,9 +82,8 @@ def test_duplicate_output_rows_do_not_reuse_a_call(tmp_path):
     [output("second"),output()],
     [output(index=1)],
 ])
-def test_codemode_fully_parsed_unique_mapping_survives(tmp_path,outputs):
-    sources=packet_sources(tmp_path,code_rows(literal("first.md")+literal("card.md"),outputs))
-    assert sources and any(BODY in s.lines.values() for s in sources)
+def test_codemode_fully_parsed_unique_mapping_is_not_packet_evidence(tmp_path,outputs):
+    assert not packet_sources(tmp_path,code_rows(literal("first.md")+literal("card.md"),outputs))
 
 
 @pytest.mark.parametrize("interruption", [None,"ERROR_MESSAGE","SYSTEM_MESSAGE"])
