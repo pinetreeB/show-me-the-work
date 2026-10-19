@@ -193,6 +193,23 @@ def test_compact_schema_retains_original_object_and_empty_tools():
 def test_native_executable_discovery_uses_files_only(tmp_path,monkeypatch):
     binary=tmp_path/"node_modules/@anthropic-ai/claude-code/bin/claude.exe"
     binary.parent.mkdir(parents=True);binary.write_bytes(b"fake only")
-    monkeypatch.setattr(runner.os,"name","nt")
+    monkeypatch.setattr(runner,"os",SimpleNamespace(name="nt"))
     monkeypatch.setattr(runner.shutil,"which",lambda name:str(tmp_path/"claude.cmd") if name=="claude" else None)
     assert runner.resolve_executable()==str(binary.resolve())
+
+
+@pytest.mark.parametrize("stamp,known",[
+    (1_700_000_000,True),(1_700_000_000_000,True),
+    (1_699_999_399,False),(1_699_999_399_000,False),
+    (1_700_000_061_000,False),(0,False),(True,False),
+    (float("nan"),False),(float("inf"),False),
+])
+def test_usage_widget_milliseconds_seconds_and_invalid_clocks(tmp_path,monkeypatch,stamp,known):
+    monkeypatch.setattr(runner.time,"time",lambda:1_700_000_000)
+    cache=tmp_path/"usage.json"
+    value={"services":{"claude_personal":{"as_of":stamp,"error":None,
+           "rows":[{"label":"5시간","used":59},{"label":"주간 전체","used":69}]}}}
+    cache.write_text(json.dumps(value),encoding="utf-8")
+    result=runner.read_usage(cache)
+    assert result["known"] is known
+    if known:assert result=={"known":True,"five_hour":59,"weekly":69}

@@ -45,7 +45,14 @@ def child_environment(parent):
 def read_usage(path: Path = CACHE) -> dict:
     try:
         service = read_json(path)["services"]["claude_personal"]
-        if service.get("error") or time.time() - service["as_of"] > 600:
+        stamp = service["as_of"]
+        if (service.get("error") or type(stamp) not in {int, float}
+                or not 0 < stamp < 100_000_000_000_000):
+            return {"known": False}
+        # The personal widget stores epoch milliseconds; tolerate older seconds
+        # caches too, but never treat an implausible future timestamp as fresh.
+        seconds = stamp / 1000 if stamp >= 100_000_000_000 else stamp
+        if not -60 <= time.time() - seconds <= 600:
             return {"known": False}
         values = {}
         for row in service["rows"]:
