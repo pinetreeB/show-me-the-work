@@ -184,3 +184,11 @@ def test_source_policy_contract_rejects_pre_p31h_packets():
     validate_contract({"judge_contract": current})
     with pytest.raises(ValueError, match="regenerate packets"):
         validate_contract({"judge_contract": {**current, "source_policy": "single-read-v1"}})
+
+
+@pytest.mark.parametrize("numbers", [[1, 2, 1], [2, 1], [1, 1], [1, 3, 2], [1, 2, 2, 3]])
+def test_duplicate_or_reordered_raw_line_numbers_are_dropped(tmp_path, numbers):
+    # The shared parser keys lines by number; the packet check reads raw order.
+    rows = "\n".join(f"{n}: {LEAK} {i}" for i, n in enumerate(numbers))
+    body = f"File Path: {CARD}\nShowing lines 1 to {max(numbers)}\n{rows}"
+    assert not sources(tmp_path, [agy_call("view_file", AbsolutePath=CARD), generic(body)])

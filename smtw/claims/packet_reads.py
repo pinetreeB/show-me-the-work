@@ -65,6 +65,12 @@ def self_identified_read(call: Call, body: str, e: Evidence) -> bool:
     keys = sorted(e.lines)
     if keys != list(range(keys[0], keys[0] + len(keys))):
         return False
+    # The shared parser keys lines by number, so a repeated number silently
+    # overwrites earlier text. Check the raw result order: every numbered row
+    # must appear once, ascending by one, with no duplicates or gaps.
+    raw = [int(m.group(1)) for row in rows if (m := NUMBERED.match(row))]
+    if raw != keys:
+        return False
     shown = [re.match(r"Showing lines (\d+) to (\d+)\s*$", row) for row in rows[:first_numbered]]
     shown = [m for m in shown if m]
     if len(shown) > 1:
