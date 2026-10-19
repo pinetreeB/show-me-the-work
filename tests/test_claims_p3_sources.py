@@ -68,6 +68,8 @@ def test_work_cli_excerpt_and_judge_preflight_without_model(tmp_path, kind):
     work = "C:/synthetic/tasks/example"
     checkpoint = "C:/synthetic/checkpoints/example.md"
     scope = scope_file(tmp_path, [work], checkpoint)
+    blocklist = tmp_path / "synthetic-blocklist.txt"
+    blocklist.write_text("Synthetic Blocked Example\n", encoding="utf-8")
     report = tmp_path / "report.md"
     report.write_text("card.md:1 WorkStatus 설명.\nWorkStatus returns 7 ms.\n", encoding="utf-8")
     # These source files deliberately do not exist: only captured read output is allowed.
@@ -97,7 +99,7 @@ def test_work_cli_excerpt_and_judge_preflight_without_model(tmp_path, kind):
     transcript.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
     out = tmp_path / "packets"
     result = cli("--report", report, "--" + kind, transcript, "--dry-run", "--out", out,
-                 "--case-id", "work-example", "--scope-file", scope, "--format", "json")
+                 "--case-id", "work-example", "--scope-file", scope, "--blocklist-file", blocklist, "--format", "json")
     assert result.returncode == 0, result.stdout + result.stderr
     manifest = json.loads(result.stdout)
     sent = load_sent_items(out)
@@ -117,7 +119,7 @@ def test_work_cli_excerpt_and_judge_preflight_without_model(tmp_path, kind):
             for key in sent]}}))
     output = tmp_path / "judge-output"
     result = judge.judge(out, scope_file=scope, output_root=output, executor=fake, tty=lambda: True,
-                         parent_env={}, executable="claude-p",
+                         parent_env={}, executable="claude-p", blocklist_file=blocklist,
                          usage_reader=lambda: {"known": True, "five_hour": 1, "weekly": 2})
     assert result["execution"] == "injected" and len(launches) == 1
     record = json.loads((output / "calls.jsonl").read_text(encoding="utf-8"))

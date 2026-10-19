@@ -574,7 +574,8 @@ def _excerpt(item: dict, source: PacketSource, aliases: dict[str, str], cache: d
 
 
 def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
-                  aliases: dict[str, str] | None = None, rng=None) -> tuple[list[dict], dict]:
+                  aliases: dict[str, str] | None = None, rng=None, blocklist=None) -> tuple[list[dict], dict]:
+    from .privacy import privacy_reason
     aliases = aliases or {}
     rng = rng or random.SystemRandom()
     items, skipped, totals = [], [], Counter()
@@ -583,6 +584,10 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
     for selected in selection["items"]:
         def skip(reason):
             skipped.append({"id": selected["id"], "reason_code": reason})
+        reason = privacy_reason("\n".join(selected[k] for k in ("claim", "before", "after")), blocklist)
+        if reason:
+            skip(reason)
+            continue
         if (any(sensitive_path(p) or sensitive_path(normalize_path(p, aliases)) for p in selected["paths"])
                 or any(sensitive_reference(selected[k]) for k in ("claim", "before", "after"))):
             skip("skipped_sensitive")
@@ -592,6 +597,7 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
             continue
         excerpts, identities = [], set()
         too_sensitive = False
+        private_reason = ''
         for source in sources:
             if (source.kind not in {"transcript_read", "fixed_commit"} or not source.lines
                     or source.kind == "fixed_commit" and not re.fullmatch(r"[0-9a-f]{40}", source.revision)
@@ -602,6 +608,13 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
             if not found:
                 continue
             text, counts = found
+            # Screen the captured original lines as well as the transmitted text:
+            # redaction and clipping must not conceal a name from the blocklist.
+            numbers = [int(n) for n in re.findall(r"(?m)^(\d+):", text)]
+            original = "\n".join(source.lines[n] for n in numbers if n in source.lines)
+            private_reason = privacy_reason("\n".join((source.path, original, text)), blocklist)
+            if private_reason:
+                break
             if sum(counts.values()) >= 4:
                 too_sensitive = True
                 break
@@ -614,6 +627,9 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
                              "_path_sha256": hashlib.sha256(source.path.encode("utf-8")).hexdigest(),
                              "observation": source.observation, "scope_basis": source.scope_basis, "text": text,
                              "redactions": dict(Counter(counts) + Counter(path_counts))})
+        if private_reason:
+            skip(private_reason)
+            continue
         if too_sensitive:
             skip("redaction_limit")
             continue
@@ -655,7 +671,8 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
     return packets, {"selected_count": selection["selected_count"], "sent_count": len(items),
                      "deferred_count": selection["deferred_count"], "skipped": skipped,
                      "skipped_counts": dict(Counter(x["reason_code"] for x in skipped)),
-                     "redactions": dict(totals), "source_path_hashes": source_path_hashes}
+                     "redactions": dict(totals), "source_path_hashes": source_path_hashes,
+                     "blocklist": blocklist.metadata() if blocklist else None}
 
 
 def write_packets(folder: Path, packets: list[dict], summary: dict) -> dict:

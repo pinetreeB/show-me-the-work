@@ -11,7 +11,7 @@
 ```powershell
 python -X utf8 scripts/claims_eval.py generate --scope-file "<WORK>/judge-scope.json" --out-root "<WORK>/l4-run"
 python -X utf8 scripts/claims_eval.py summary --scope-file "<WORK>/judge-scope.json" --packets "<WORK>/l4-run/packets"
-python -X utf8 scripts/claims_judge.py --scope-file "<WORK>/judge-scope.json" --packets "<WORK>/l4-run/packets" --out-root "<WORK>" --max-calls 5
+python -X utf8 scripts/claims_judge.py --scope-file "<WORK>/judge-scope.json" --packets "<WORK>/l4-run/packets" --out-root "<WORK>" --max-calls 5 --blocklist-file "<WORK>/blocklist.txt"
 ```
 
 두 번째 표의 출처와 가림 수를 직접 확인한 후에만 세 번째 줄을 실행합니다.
@@ -100,8 +100,8 @@ select-only·verify에서도 둘 중 하나를 지정하면 두 인자가 모두
 범위 인자를 쓰지 않는 select-only·verify는 기존 오프라인 동작을 유지합니다.
 
 ```powershell
-python -X utf8 -m smtw claims assist --report "<WORK>/report.md" --agy "<WORK>/transcript.jsonl" --repo "<REPO>" --commit "<REPO>=<COMMIT_SHA>" --case-id "<CASE_ID>" --scope-file "<WORK>/judge-scope.json" --dry-run --out "<WORK>/l2-packets" --format json
-python -X utf8 scripts/claims_judge.py --packets "<WORK>/l2-packets" --scope-file "<WORK>/judge-scope.json" --out-root "<WORK>" --max-calls 4
+python -X utf8 -m smtw claims assist --report "<WORK>/report.md" --agy "<WORK>/transcript.jsonl" --repo "<REPO>" --commit "<REPO>=<COMMIT_SHA>" --case-id "<CASE_ID>" --scope-file "<WORK>/judge-scope.json" --dry-run --out "<WORK>/l2-packets" --format json --blocklist-file "<WORK>/blocklist.txt"
+python -X utf8 scripts/claims_judge.py --packets "<WORK>/l2-packets" --scope-file "<WORK>/judge-scope.json" --out-root "<WORK>" --max-calls 4 --blocklist-file "<WORK>/blocklist.txt"
 ```
 
 Codex 전사는 첫 명령의 --agy 대신 --codex를 사용합니다. 두 번째 명령은 좌상이 패킷을 확인한 뒤 실행합니다.
@@ -180,3 +180,16 @@ tokens.txt, pw.md, accounting 및 같은 민감 이름 계열은 제외합니다
 심볼릭 링크와 Windows 짧은 이름은 내용 읽기 없이 실제 경로를 해석해 다시 검사합니다.
 해석하지 못한 짧은 이름·네트워크/장치 경로는 근거로 허용하지 않습니다.
 정규화 인용은 정확 일치 줄을 먼저 보존하고, 승격 결과가 가림 표지를 포함하거나 200자를 넘으면 표시하지 않습니다.
+
+
+### 비공개 이름 차단과 업무 문서 경로
+assist --dry-run과 judge에 동일한 --blocklist-file을 지정합니다.
+한 줄에 이름 하나를 적고 한글/영문 표기는 각각 등록합니다. 대소문자·공백·전각은 비교할 때 무시합니다.
+실제 목록은 비공개 작업 폴더에만 둡니다. 저장소 예시는 합성 이름뿐입니다.
+manifest와 호출 기록에는 유효 이름 건수와 파일 SHA 앞 8자만 기록합니다. 이름·목록 본문은 출력하지 않습니다.
+work_roots 또는 checkpoint를 쓰는 범위에서는 목록이 필수이며 파일 없음·빈 목록·변경은 거부합니다.
+assist는 claim·앞뒤 문맥·원문 발췌·표시 경로 적중 항목을 통째 제외하고 skipped_blocklist로 집계합니다.
+클라우드 동기화/Documents 폴더 아래 docx/xlsx/pdf/hwp 경로도 항목에서 제외합니다.
+경로에 깨진 글자가 있어도 감지하며 skipped_business_doc로 집계합니다.
+judge는 모든 패킷을 첫 호출 전 및 매 호출 직전에 검사하고, 하나라도 적중하면 전체 호출을 거부합니다.
+무시·사람 승인·강제 통과 옵션은 없습니다. privacy_policy=blocklist-v1 이전 패킷은 재생성해야 합니다.

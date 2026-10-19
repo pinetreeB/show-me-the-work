@@ -8,6 +8,7 @@ from .assist import select_candidates
 from .check import run
 from .paths import mapping
 from .model import Budget
+from .privacy import load_blocklist, needs_blocklist
 from .judge_scope import load_scope, work_source_basis
 from .packets import build_packets, fixed_sources, transcript_sources, write_packets
 from .transcripts import discover_agy, resolve_agy
@@ -34,6 +35,8 @@ def run_assist(args) -> int:
             scope = load_scope(scope_file)
             if case_id not in scope.cases:
                 raise ValueError("--case-id는 --scope-file의 cases에 등록된 키여야 합니다.")
+        blocklist = (load_blocklist(getattr(args, 'blocklist_file', None), required=needs_blocklist(scope))
+                     if args.dry_run else None)
         if args.verify:
             from .advisory import render_advisory, render_with_advisory, verify_files
             if args.packets is None:
@@ -95,7 +98,7 @@ def run_assist(args) -> int:
                         scoped_sources.append(source)
                 elif allowed_source(case_id, source.path, scope):
                     scoped_sources.append(source)
-            packets, summary = build_packets(result, scoped_sources, report=args.report, aliases=aliases)
+            packets, summary = build_packets(result, scoped_sources, report=args.report, aliases=aliases, blocklist=blocklist)
             summary.update(case_id=case_id, scope_sha256=scope.sha256,
                            skipped_out_of_scope=len(sources) - len(scoped_sources), **source_stats)
             manifest = write_packets(args.out, packets, summary)

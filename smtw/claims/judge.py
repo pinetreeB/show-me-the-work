@@ -20,6 +20,7 @@ from .judge_scope import JudgeScope, load_scope
 from .advisory import load_sent_items, read_json, verify_judgments
 from .packets import display_path, sensitive_path, hard_excluded, sent_sources, redact
 from .judge_scope import work_source_basis
+from .privacy import load_blocklist, needs_blocklist, validate_packet_privacy
 
 MODEL = "claude-sonnet-5-5"
 HERE = Path(__file__).resolve().parent
@@ -216,7 +217,7 @@ def _judgments(raw: str):
 
 def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int = 4, allow_unknown_usage: bool = False,
           executor=None, tty=None, usage_reader=None, parent_env=None,
-          executable=None, lean_context: bool = False) -> dict:
+          executable=None, lean_context: bool = False, blocklist_file: Path | None = None) -> dict:
     if type(max_calls) is not int or not 1 <= max_calls <= 8:
         raise ValueError("max-calls must be between 1 and 8")
     if not (tty or (lambda: sys.stdin.isatty() and sys.stdout.isatty()))():
@@ -227,6 +228,8 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
     scope = load_scope(scope_file)
     validate_scope(manifest, sent, scope)
     validate_contract(manifest)
+    blocklist = load_blocklist(blocklist_file, required=needs_blocklist(scope) or bool(manifest.get('blocklist')))
+    validate_packet_privacy(folder, manifest, blocklist)
     if not sent or not 1 <= len(manifest["packets"]) <= max_calls:
         raise ValueError("empty packet folder or max-calls exceeded")
     schema = SCHEMA.read_text(encoding="utf-8")
@@ -252,6 +255,10 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
         validate_contract(manifest)
         if load_scope(scope_file).sha256 != scope.sha256:
             raise ValueError("scope changed after preflight")
+        current_blocklist = load_blocklist(blocklist_file, required=blocklist is not None)
+        if current_blocklist != blocklist:
+            raise ValueError("blocklist changed after preflight")
+        validate_packet_privacy(folder, manifest, current_blocklist)
         subset = {key: sent[key] for key in entry["item_ids"]}
         validate_scope(manifest, sent, scope)  # Scan again immediately before every send.
         prompt = instructions + data.decode("utf-8")
@@ -284,6 +291,7 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
             "sent_sources": sent_sources(subset),
             "model": MODEL, "argv": argv, **manifest["judge_contract"], "exit_code": exit_code,
             "scope_sha256": scope.sha256, "lean_context": lean_context,
+            "blocklist": blocklist.metadata() if blocklist else None,
             "usage": _token_usage(raw),
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "output_sha256": sha(raw.encode("utf-8")), "usage_before": before,
@@ -314,6 +322,7 @@ def main(argv=None):
     parser.add_argument("--packets", type=Path, required=True)
     parser.add_argument("--scope-file", type=Path, required=True)
     parser.add_argument("--out-root", type=Path, required=True)
+    parser.add_argument("--blocklist-file", type=Path)
     parser.add_argument("--max-calls", type=int, default=4)
     parser.add_argument("--allow-unknown-usage", action="store_true")
     parser.add_argument("--lean-context", action="store_true",
@@ -323,7 +332,7 @@ def main(argv=None):
         result = judge(args.packets, scope_file=args.scope_file, output_root=args.out_root,
                        max_calls=args.max_calls,
                        allow_unknown_usage=args.allow_unknown_usage,
-                       lean_context=args.lean_context)
+                       lean_context=args.lean_context, blocklist_file=args.blocklist_file)
     except (OSError, ValueError, KeyError, TypeError):
         print("Judge refused or failed; check packet/usage/TTY and receipts.", file=sys.stderr)
         return 2
