@@ -314,6 +314,10 @@ def preceding_quote_sources(line: str, pos: int, ref_spans) -> tuple[str, ...]:
 def non_file_quote(line: str, pos: int, headers: list[str]) -> bool:
     visible = masked(line)
     a, b = sentence_span(line, pos)
+    parent = parent_span(line, pos)
+    if parent and REFERENCE.search(line[parent[0]:pos]):
+        # A parenthetical citation owns its wording, not an outer output note.
+        a, b = max(a, parent[0]), min(b, parent[1])
     prefix, suffix = visible[a:pos], visible[pos:b]
     if line.lstrip().startswith('|'):
         cell = next((i for i, (x, y) in enumerate(cell_spans(line)) if x <= pos <= y), -1)
@@ -669,7 +673,15 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if not c.path and not c.binding_candidates:
                 c.path = previous_path or heading_path
             snippets.append((0, len(line), numbered.group(2), line.strip(), True))
-        snippet_ticks = [m for m in ticks if numbered_snippet(m.group(1)) or code_snippet(m.group(1))]
+        def measured_tick(match):
+            # Explicit literal quotes need not have Python/code punctuation.
+            return any(b <= match.start() and same_quote_scope(line, a, match.start())
+                       and re.fullmatch(r'[\s`*:：,，;()\[\]{}-]*(?:실측|원문|인용|actual|quote)'
+                                        r'[\s`*:：,，;()\[\]{}-]*',
+                                        masked(line)[b:match.start()], re.I)
+                       for a, b, _ in ref_spans)
+        snippet_ticks = [m for m in ticks if numbered_snippet(m.group(1))
+                         or code_snippet(m.group(1)) or measured_tick(m)]
         for m in ticks:
             if line.lstrip().startswith('>') and QUOTE.fullmatch(m.group(1)):
                 continue
@@ -677,7 +689,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 continue
             ordered_snippet = explicitly_ordered_quotes(line, snippet_ticks, len(ref_spans))
             if (numbered_snippet(m.group(1))
-                    or code_snippet(m.group(1)) and (len(m.group(1)) >= 8 or ordered_snippet)):
+                    or (code_snippet(m.group(1)) or measured_tick(m))
+                    and (len(m.group(1)) >= 8 or ordered_snippet)):
                 snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
         # Retain proposed/non-file quotations, but do not attach them as file facts.
         active_snippets = []
