@@ -634,7 +634,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         quote_matches = list(QUOTE.finditer(line))
         for m in quote_matches:
             if any(t.start() <= m.start() < t.end() and
-                   not QUOTE.fullmatch(t.group(1)) for t in ticks):
+                   not (line.lstrip().startswith('>') and QUOTE.fullmatch(t.group(1))) for t in ticks):
                 continue
             if re.search(r'번역\s*:', sentence(line, m.start())):
                 continue
@@ -671,7 +671,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             snippets.append((0, len(line), numbered.group(2), line.strip(), True))
         snippet_ticks = [m for m in ticks if numbered_snippet(m.group(1)) or code_snippet(m.group(1))]
         for m in ticks:
-            if QUOTE.fullmatch(m.group(1)):
+            if line.lstrip().startswith('>') and QUOTE.fullmatch(m.group(1)):
                 continue
             if paths_in(m.group(1)) or REFERENCE.search(m.group(1)) or LOCATION.fullmatch(m.group(1)) or re.fullmatch(r'[\d,.]+', m.group(1)):
                 continue

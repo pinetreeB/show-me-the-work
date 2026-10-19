@@ -138,6 +138,8 @@ def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False
     usage_reader = usage_reader or read_usage
     before = usage_reader()
     usage_gate(before, allow_unknown_usage)
+    if not before.get("known"):
+        print("Warning: usage is unknown; explicit operator override applied.", file=sys.stderr)
     output_root.mkdir(parents=True, exist_ok=True)
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
     destination = output_root / "judge-runs" / run_id

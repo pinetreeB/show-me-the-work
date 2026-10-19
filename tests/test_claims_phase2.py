@@ -66,3 +66,17 @@ def test_proposal_quotes_retained_unverifiable(tmp_path,prefix):
     result=run(r,agy=str(t))
     assert result["status"]!="FAIL"
     assert any(c["check_type"]=="K5" and c["reason_code"]=="non_file_quote" for c in result["claims"])
+
+
+def test_plain_code_string_note_does_not_attach_previous_line_reference(tmp_path):
+    r,t=make_case(tmp_path,'`file.py:1` reference\nThe next UI message is `"a different code string"` in the example.',[
+        agy_call("view_file",AbsolutePath="C:/sample/file.py"),
+        view("C:/sample/file.py","original code string")])
+    result=run(r,agy=str(t))
+    assert result["status"]!="FAIL"
+    assert next(c for c in result["claims"] if c["check_type"]=="K1")["verdict"]=="range_only"
+
+
+def test_recognized_optional_type_but_not_arbitrary_value_is_exempt():
+    assert redact("token: Optional[str]")==("token: Optional[str]",{})
+    assert redact("token: Optional[secret_hunter2]")[1]

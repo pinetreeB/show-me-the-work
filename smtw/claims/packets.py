@@ -248,7 +248,16 @@ def _safe_assignment(match: re.Match, view: str) -> bool:
         tree = ast.parse(value.rstrip(")"), mode="eval")
     except (SyntaxError, ValueError, UnicodeError, RecursionError):
         return False
-    return ("#" not in match["value"] and isinstance(tree.body, ast.Name)
+    type_names = {"str", "string", "int", "integer", "float", "number", "bool",
+                  "boolean", "bytes", "Any", "None", "Optional", "Union", "List",
+                  "Dict", "Tuple", "Set", "Sequence", "Mapping"}
+    def type_node(node):
+        return (isinstance(node, ast.Name) and node.id in type_names
+                or isinstance(node, ast.Constant) and node.value is None
+                or isinstance(node, ast.Subscript) and type_node(node.value) and type_node(node.slice)
+                or isinstance(node, ast.Tuple) and all(type_node(item) for item in node.elts))
+    return (type_node(tree.body)
+            or "#" not in match["value"] and isinstance(tree.body, ast.Name)
             and _identifier_words(tree.body.id) == _identifier_words(key))
 
 
