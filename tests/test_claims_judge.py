@@ -49,9 +49,9 @@ def test_fake_judge_verified_and_append_only_logs(tmp_path):
     a=invoke(folder,tmp_path)
     b=invoke(folder,tmp_path)
     assert a["calls"]==b["calls"]==1
-    logs=[json.loads(s) for s in (tmp_path/"out/calls.jsonl").read_text().splitlines()]
+    logs=[json.loads(s) for s in (tmp_path/"out/calls.jsonl").read_text(encoding="utf-8").splitlines()]
     assert len(logs)==2 and all(x["execution"]=="injected" for x in logs)
-    result=json.loads((Path(a["run"])/"verified-001.json").read_text())
+    result=json.loads((Path(a["run"])/"verified-001.json").read_text(encoding="utf-8"))
     assert result["counts"]["supported"]==1
 
 
@@ -89,13 +89,13 @@ def test_sensitive_environment_values_never_looked_up():
 @pytest.mark.parametrize("mutation",["hash","missing","case","source","size","secret"])
 def test_packet_validation_refuses_before_fake(tmp_path,mutation):
     folder=packet_folder(tmp_path)
-    manifest=json.loads((folder/"manifest.json").read_text())
+    manifest=json.loads((folder/"manifest.json").read_text(encoding="utf-8"))
     path=folder/"packet-001.json"
     if mutation=="missing":path.unlink()
     elif mutation=="hash":path.write_text("{}")
     elif mutation=="case":manifest["case_id"]="excluded-customer"
     else:
-        packet=json.loads(path.read_text())
+        packet=json.loads(path.read_text(encoding="utf-8"))
         if mutation=="source":packet["data_block"][0]["excerpts"][0]["path"]="~/customer/task.md"
         elif mutation=="secret":packet["data_block"][0]["claim"]="password=synthetic1234"
         else:packet["padding"]="x"*30001
@@ -143,17 +143,17 @@ def test_nonzero_and_malformed_output_are_logged_without_stderr(tmp_path):
     folder=packet_folder(tmp_path)
     def fake(*args):return SimpleNamespace(returncode=7,stdout="{}",stderr="synthetic-private-note")
     with pytest.raises(ValueError):invoke(folder,tmp_path,executor=fake)
-    log=(tmp_path/"out/calls.jsonl").read_text()
+    log=(tmp_path/"out/calls.jsonl").read_text(encoding="utf-8")
     assert "synthetic-private-note" not in log and '"exit_code": 7' in log
 
 
 def test_prompt_schema_hashes_frozen_in_manifest_and_call(tmp_path):
     from smtw.claims.judge_contract import contract
     folder=packet_folder(tmp_path)
-    manifest=json.loads((folder/"manifest.json").read_text())
+    manifest=json.loads((folder/"manifest.json").read_text(encoding="utf-8"))
     assert manifest["judge_contract"]==contract()
     invoke(folder,tmp_path)
-    row=json.loads((tmp_path/"out/calls.jsonl").read_text().splitlines()[0])
+    row=json.loads((tmp_path/"out/calls.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert row["prompt_sha256"]==contract()["prompt_sha256"]
     assert row["schema_sha256"]==contract()["schema_sha256"]
     assert runner.SCHEMA.name=="judge-output.schema.json"
@@ -162,7 +162,7 @@ def test_prompt_schema_hashes_frozen_in_manifest_and_call(tmp_path):
 @pytest.mark.parametrize("field",["prompt_sha256","schema_sha256","version"])
 def test_changed_contract_refuses_before_executor(tmp_path,field):
     folder=packet_folder(tmp_path)
-    path=folder/"manifest.json";manifest=json.loads(path.read_text())
+    path=folder/"manifest.json";manifest=json.loads(path.read_text(encoding="utf-8"))
     manifest["judge_contract"][field]="changed";path.write_text(json.dumps(manifest))
     def fail(*args):pytest.fail("changed contract was executed")
     with pytest.raises(ValueError):invoke(folder,tmp_path,executor=fail)
@@ -176,13 +176,13 @@ def test_prompt_treats_injection_as_data_and_schema_is_bounded(tmp_path):
         return fake_judge(argv,prompt,env)
     invoke(folder,tmp_path,executor=fake)
     assert "untrusted data" in seen[0] and "not_enough_evidence" in seen[0]
-    schema=json.loads(runner.SCHEMA.read_text())
+    schema=json.loads(runner.SCHEMA.read_text(encoding="utf-8"))
     assert schema["items"]["properties"]["evidence_quote"]["maxLength"]==200
     assert schema["items"]["properties"]["rationale"]["maxLength"]==120
 
 
 def test_compact_schema_retains_original_object_and_empty_tools():
-    original=runner.SCHEMA.read_text()
+    original=runner.SCHEMA.read_text(encoding="utf-8")
     argv=runner.command(original,"claude-p.cmd")
     assert "\n" not in argv[-1] and "\r" not in argv[-1]
     assert json.loads(argv[-1])==json.loads(original)

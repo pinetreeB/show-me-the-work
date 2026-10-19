@@ -40,7 +40,7 @@ def test_200_paired_items_truth_separation_and_no_answer_hints(tmp_path):
     result=generate(pool(),tmp_path/"eval")
     assert result["items"]==200 and result["unique_originals"]==1 and result["model_calls"]==0
     folder=tmp_path/"eval/packets";sent=load_sent_items(folder)
-    truth=json.loads((tmp_path/"eval/truth/answers.json").read_text())
+    truth=json.loads((tmp_path/"eval/truth/answers.json").read_text(encoding="utf-8"))
     assert sum(v["verdict"]=="supported" for v in truth["items"].values())==100
     assert sum(v["verdict"]=="contradicted" for v in truth["items"].values())==100
     assert set(truth["items"])==set(sent)
@@ -51,7 +51,7 @@ def test_200_paired_items_truth_separation_and_no_answer_hints(tmp_path):
             for child in value.values():walk(child)
         elif isinstance(value,list):
             for child in value:walk(child)
-    for file in folder.glob("*.json"):walk(json.loads(file.read_text()))
+    for file in folder.glob("*.json"):walk(json.loads(file.read_text(encoding="utf-8")))
     assert {p.name for p in folder.iterdir()}=={"manifest.json",*[p.name for p in folder.glob("packet-*.json")]}
     assert "| Packet | Items |" in summarize(folder)
 
@@ -65,7 +65,7 @@ def test_outside_case_and_source_rejected(tmp_path):
 def test_scores_and_three_run_agreement_are_from_verified_outputs(tmp_path):
     generate(pool(),tmp_path/"eval",per_kind=1)
     folder=tmp_path/"eval/packets";sent=load_sent_items(folder)
-    truth_file=tmp_path/"eval/truth/answers.json";truth=json.loads(truth_file.read_text())["items"]
+    truth_file=tmp_path/"eval/truth/answers.json";truth=json.loads(truth_file.read_text(encoding="utf-8"))["items"]
     runs=[make_run(tmp_path/f"r{i}",sent,truth,wrong=i==2) for i in range(3)]
     result=score(folder,truth_file,runs)
     assert result["runs"][0]["recall"]==1 and result["runs"][0]["precision"]==1
@@ -79,10 +79,10 @@ def test_scores_and_three_run_agreement_are_from_verified_outputs(tmp_path):
 def test_bad_quote_not_displayed_and_forged_verifier_rejected(tmp_path):
     generate(pool(),tmp_path/"eval",per_kind=1)
     folder=tmp_path/"eval/packets";sent=load_sent_items(folder)
-    truth_file=tmp_path/"eval/truth/answers.json";truth=json.loads(truth_file.read_text())["items"]
+    truth_file=tmp_path/"eval/truth/answers.json";truth=json.loads(truth_file.read_text(encoding="utf-8"))["items"]
     run=make_run(tmp_path/"run",sent,truth,bad_quote=True)
     assert score(folder,truth_file,[run])["runs"][0]["quote_not_in_excerpt_rate"]==0.1
-    path=run/"verified-001.json";value=json.loads(path.read_text());value["counts"]["quote_verified"]+=1
+    path=run/"verified-001.json";value=json.loads(path.read_text(encoding="utf-8"));value["counts"]["quote_verified"]+=1
     path.write_text(json.dumps(value))
     with pytest.raises(ValueError):score(folder,truth_file,[run])
 
