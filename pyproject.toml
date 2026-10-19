@@ -24,7 +24,7 @@ include = ["adapters*", "core*", "fable_lite*", "goals*", "smtw*"]
 
 [tool.setuptools.package-data]
 core = ["release_receipts/*.json"]
-"smtw.claims" = ["*.schema.json"]
+"smtw.claims" = ["*.schema.json", "judge-scope.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

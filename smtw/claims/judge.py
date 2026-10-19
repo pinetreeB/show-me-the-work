@@ -1,0 +1,201 @@
+"""Manual, terminal-only subscription judge; every test injects the executor."""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+import uuid
+
+from .advisory import load_sent_items, read_json, verify_judgments
+from .packets import HEADER, display_path, sensitive_path, redact
+
+MODEL = "claude-sonnet-5-5"
+HERE = Path(__file__).resolve().parent
+EVAL = Path(r"C:\Users\example\tmp\smtw-rework-20261018\eval\phase2")
+CACHE = Path.home() / ".ai-limits-widget" / "limits-cache.json"
+
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def child_environment(parent):
+    # Iterate names and filter BEFORE looking up any value.
+    names = list(parent)
+    if "ANTHROPIC_API_KEY" in names:
+        raise ValueError("ANTHROPIC_API_KEY is present; subscription execution refused")
+    return {key: parent[key] for key in names
+            if not key.upper().endswith(("_API_KEY", "_TOKEN"))}
+
+
+def read_usage(path: Path = CACHE) -> dict:
+    try:
+        service = read_json(path)["services"]["claude_personal"]
+        if service.get("error") or time.time() - service["as_of"] > 600:
+            return {"known": False}
+        values = {}
+        for row in service["rows"]:
+            label = row["label"]
+            if label in {"5시간", "5h", "five_hour"}:
+                values["five_hour"] = row["used"]
+            elif label in {"주간 전체", "weekly", "seven_day"}:
+                values["weekly"] = row["used"]
+        if set(values) != {"five_hour", "weekly"} or any(
+                type(v) not in {int, float} or not math.isfinite(v) or not 0 <= v <= 100
+                for v in values.values()):
+            return {"known": False}
+        return {"known": True, **values}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"known": False}
+
+
+def usage_gate(usage: dict, allow_unknown: bool):
+    if not usage.get("known"):
+        if not allow_unknown:
+            raise ValueError("usage unknown; --allow-unknown-usage is required")
+        return
+    if usage["five_hour"] >= 60 or usage["weekly"] >= 70:
+        raise ValueError("personal subscription usage threshold reached")
+
+
+def validate_scope(manifest: dict, sent: dict):
+    scope = read_json(HERE / "judge-scope.json")["cases"]
+    item_cases = manifest.get("item_cases", {})
+    if not isinstance(item_cases, dict):
+        raise ValueError("invalid case mapping")
+    for key, item in sent.items():
+        case = item_cases.get(key, manifest.get("case_id"))
+        if case not in scope:
+            raise ValueError("case outside the fixed Phase 2 allowlist")
+        for field in ("claim", "before", "after"):
+            value = item.get(field, "")
+            if redact(value)[0] != value:
+                raise ValueError("unredacted pattern in report input")
+        for excerpt in item["excerpts"]:
+            if redact(excerpt["text"], preserve_source_lines=True)[0] != excerpt["text"]:
+                raise ValueError("unredacted pattern in excerpt input")
+            path = display_path(excerpt["path"]).replace("\\", "/").casefold()
+            parts = path.split("/")
+            if (".." in parts or sensitive_path(path)
+                    or not any(path.startswith(prefix.casefold()) for prefix in scope[case])):
+                raise ValueError("excerpt outside approved source roots")
+
+
+def command(schema: str, executable: str) -> list[str]:
+    if Path(executable).name.casefold() not in {"claude-p", "claude-p.cmd", "claude-p.exe"}:
+        raise ValueError("only the personal claude-p launcher is allowed")
+    # The CLI accepts JSON text: read it from the frozen schema file.
+    return [executable, "--model", MODEL, "-p", "--tools", "",
+            "--no-session-persistence", "--output-format", "json", "--json-schema", schema]
+
+
+def _launch(argv: list[str], prompt: str, env: dict) -> subprocess.CompletedProcess:
+    """The sole real execution point. Tests must never enter this function."""
+    return subprocess.run(argv, input=prompt, env=env, capture_output=True,
+                          encoding="utf-8", errors="strict", timeout=300)
+
+
+def _judgments(raw: str):
+    value = json.loads(raw)
+    if isinstance(value, dict):
+        if value.get("is_error"):
+            raise ValueError("judge reported an error")
+        value = value.get("structured_output", value.get("result"))
+        if isinstance(value, str):
+            value = json.loads(value)
+    return value
+
+
+def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False,
+          executor=None, tty=None, usage_reader=None, parent_env=None,
+          executable=None, output_root: Path = EVAL) -> dict:
+    if type(max_calls) is not int or not 1 <= max_calls <= 10:
+        raise ValueError("max-calls must be between 1 and 10")
+    if not (tty or (lambda: sys.stdin.isatty() and sys.stdout.isatty()))():
+        raise ValueError("a visible terminal on stdin and stdout is required")
+    env = child_environment(os.environ if parent_env is None else parent_env)
+    sent = load_sent_items(folder)  # Validate every hash and file before any call.
+    manifest = read_json(folder / "manifest.json")
+    validate_scope(manifest, sent)
+    if not sent or not 1 <= len(manifest["packets"]) <= max_calls:
+        raise ValueError("empty packet folder or max-calls exceeded")
+    schema = (HERE / "judge-output.schema.json").read_text(encoding="utf-8")
+    executable = executable or shutil.which("claude-p")
+    if not executable:
+        raise ValueError("personal claude-p launcher is unavailable")
+    argv = command(schema, executable)
+    usage_reader = usage_reader or read_usage
+    before = usage_reader()
+    usage_gate(before, allow_unknown_usage)
+    output_root.mkdir(parents=True, exist_ok=True)
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    destination = output_root / "judge-runs" / run_id
+    destination.mkdir(parents=True)
+    results = []
+    for index, entry in enumerate(manifest["packets"], 1):
+        before = usage_reader()
+        usage_gate(before, allow_unknown_usage)
+        data = (folder / entry["file"]).read_bytes()
+        if sha(data) != entry["sha256"] or len(data.decode("utf-8")) > 30000:
+            raise ValueError("packet changed after preflight")
+        prompt = HEADER + "\n\n" + data.decode("utf-8")
+        started = time.monotonic()
+        raw, exit_code, error = "", None, None
+        try:
+            completed = (executor or _launch)(argv, prompt, env)
+            raw, exit_code = completed.stdout, completed.returncode
+            if exit_code != 0:
+                error = "judge_nonzero_exit"
+        except Exception as exc:
+            # Never log exception text or stderr: either can contain environment data.
+            error = type(exc).__name__
+        after = usage_reader()
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "packet_sha256": entry["sha256"], "item_ids": entry["item_ids"],
+            "model": MODEL, "argv": argv, "exit_code": exit_code,
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "output_sha256": sha(raw.encode("utf-8")), "usage_before": before,
+            "usage_after": after, "error": error, "run_id": run_id,
+            "execution": "injected" if executor else "personal_subscription",
+        }
+        with (output_root / "calls.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+        (destination / f"raw-{index:03d}.json").write_text(raw, encoding="utf-8")
+        if error:
+            raise ValueError("judge execution failed; see call receipt")
+        rows = _judgments(raw)
+        subset = {key: sent[key] for key in entry["item_ids"]}
+        verified = verify_judgments(rows, subset)
+        (destination / f"judgments-{index:03d}.json").write_text(
+            json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+        (destination / f"verified-{index:03d}.json").write_text(
+            json.dumps(verified, ensure_ascii=False, indent=2), encoding="utf-8")
+        results.append(verified)
+    return {"run": str(destination), "calls": len(results),
+            "execution": "injected" if executor else "personal_subscription",
+            "unknown_usage_allowed": allow_unknown_usage}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--packets", type=Path, required=True)
+    parser.add_argument("--max-calls", type=int, default=4)
+    parser.add_argument("--allow-unknown-usage", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        result = judge(args.packets, max_calls=args.max_calls,
+                       allow_unknown_usage=args.allow_unknown_usage)
+    except (OSError, ValueError, KeyError, TypeError):
+        print("Judge refused or failed; check packet/usage/TTY and receipts.", file=sys.stderr)
+        return 2
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
