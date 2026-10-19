@@ -108,7 +108,7 @@ def run_assist(args) -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
             print(f"참고 후보 {result['candidate_count']}건 / 선별 {result['selected_count']}건 / 미판정 {result['deferred_count']}건")
-            print(json.dumps(result["branch_counts"], ensure_ascii=False))
+            print(json.dumps({key: result[key] for key in ("branch_counts", "selected_branch_counts")}, ensure_ascii=False))
         return 0
     except Exception as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False))

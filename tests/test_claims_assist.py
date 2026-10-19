@@ -60,12 +60,12 @@ def test_unextracted_sentence_on_same_line_and_code_punctuation():
     claims = [{"report_line": 1, "check_type": "K1", "text": "alpha.py:1 첫 설명",
                "verdict": "range_only", "reason_code": "range_only"}]
     result = select_candidates(report, {"claims": claims})
-    assert len(result["items"]) == 2
-    missing = next(x for x in result["items"] if x["branch"].startswith("not_extracted"))
-    assert missing["claim"] == "renderWidget 호출은 7 ms였다."
-    assert missing["before"] == "alpha.py:1 첫 설명."
-    assert missing["after"] == "일반 설명."
-    assert "renderWidget" in missing["identifiers"]
+    assert len(result["items"]) == 1
+    merged = result["items"][0]
+    assert merged["claim"] == report
+    assert set(merged["branches"]) == {"range_only", "not_extracted_numeric_or_quote"}
+    assert "renderWidget" in merged["identifiers"]
+    assert "alpha.py" in merged["paths"]
 
 
 def test_unextracted_triggers_and_plain_text_exclusion():

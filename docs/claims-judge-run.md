@@ -137,3 +137,11 @@ supported와 contradicted 모두 근거가 되는 한 줄 전체를 줄 번호 �
 raw_evidence_quote에 원본을 보존합니다. 서로 다른 여러 줄에 맞는 인용은 표시하지 않습니다.
 검증 인용 재현성은 verified_quote_agreement_3(정규화)와
 raw_verified_quote_agreement_3(원본)을 함께 출력합니다.
+
+
+### 선별 다양성
+같은 보고서 줄의 여러 원자는 한 항목으로 합치고 경로·범위·식별자 후보를 보존합니다.
+observation_conflict를 먼저 선별하고, 나머지 갈래를 우선순위 순으로 한 개씩 순환합니다.
+따라서 한 갈래의 후보가 많아도 다른 갈래가 기본 상한 40 안에 들어올 수 있습니다.
+branch_counts는 합친 후보 수, selected_branch_counts는 실제 선별 수입니다.
+복수 갈래인 줄은 우선순위가 가장 높은 대표 갈래로 집계하며 branches에 전체 갈래를 남깁니다.

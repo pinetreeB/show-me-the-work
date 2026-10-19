@@ -140,7 +140,35 @@ def select_candidates(report: str, checked: dict, *, limit: int = 40,
             branch = "not_extracted_numeric_or_quote" if numeric_or_quote else "not_extracted_other"
             candidates.append(make_item(i, branch))
     candidates.sort(key=lambda item: (item["priority"], item["report_line"], item["id"]))
-    selected = candidates[:limit]
+    # One report row consumes one slot, retaining all eligible evidence pointers.
+    grouped = {}
+    for candidate in candidates:
+        line = candidate["report_line"]
+        if line not in grouped:
+            grouped[line] = {**candidate, "branches": [candidate["branch"]],
+                             "paths": list(candidate["paths"]), "ranges": list(candidate["ranges"]),
+                             "identifiers": list(candidate["identifiers"])}
+            continue
+        item = grouped[line]
+        if candidate["branch"] not in item["branches"]:
+            item["branches"].append(candidate["branch"])
+        for field in ("paths", "ranges", "identifiers"):
+            item[field].extend(value for value in candidate[field] if value not in item[field])
+        item["claim"] = report.splitlines()[line - 1].strip()
+    candidates = list(grouped.values())
+    # Conflicting observations retain strict precedence. Then round-robin by branch
+    # so a large numeric/quote family cannot starve range and missing-pointer rows.
+    conflicts = [item for item in candidates if item["branch"] == "observation_conflict"]
+    queues = {}
+    for item in candidates:
+        if item["branch"] != "observation_conflict":
+            queues.setdefault(item["branch"], deque()).append(item)
+    ranked = list(conflicts)
+    while any(queues.values()):
+        for queue in queues.values():
+            if queue:
+                ranked.append(queue.popleft())
+    selected = ranked[:limit]
     return {"version": 1, "report_sha256": report_id, "limit": limit,
             "candidate_count": len(candidates), "selected_count": len(selected),
             "deferred_count": max(0, len(candidates) - limit),
