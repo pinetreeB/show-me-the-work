@@ -394,3 +394,127 @@ def test_legacy_direct_judgment_array_remains_supported():
     raw = json.dumps(rows)
     assert runner._reported_error(raw) == {}
     assert runner._judgments(raw) == rows
+
+def test_lean_disabled_preserves_argv_bytes_and_executor_signature(tmp_path):
+    schema = runner.SCHEMA.read_text(encoding="utf-8")
+    baseline = ["claude-p", "--model", "claude-sonnet-5-5", "-p", "--tools", "",
+                "--no-session-persistence", "--output-format", "json", "--json-schema",
+                runner.cli_schema(schema)]
+    encode = lambda argv: json.dumps(argv, ensure_ascii=True).encode("ascii")
+    assert encode(runner.command(schema, "claude-p")) == encode(baseline)
+    assert encode(runner.command(schema, "claude-p", lean_context=False)) == encode(baseline)
+    before = Path.cwd()
+    def injected(argv, prompt, env):
+        assert argv == baseline and Path.cwd() == before
+        return SimpleNamespace(returncode=0, stdout=SUCCESS_NULL_STATUS)
+    invoke(packet_folder(tmp_path), tmp_path, executor=injected)
+    record = json.loads((tmp_path / "out/calls.jsonl").read_text(encoding="utf-8"))
+    assert record["lean_context"] is False
+    assert record["usage"] == json.loads(SUCCESS_NULL_STATUS)["usage"]
+
+
+def test_lean_each_packet_has_new_empty_cwd_and_removes_it(tmp_path):
+    original = packet_folder(tmp_path)
+    first = json.loads((original / "packet-001.json").read_text(encoding="utf-8"))
+    second = json.loads(json.dumps(first))
+    second["data_block"][0]["id"] = "q-002"
+    folder = tmp_path / "two-packets"
+    write_packets(folder, [first, second], {"case_id": "example-case"})
+    visited, parent_cwd = [], Path.cwd()
+    baseline = runner.command(runner.SCHEMA.read_text(encoding="utf-8"), "claude-p")
+    def injected(argv, prompt, env, *, cwd):
+        assert Path.cwd() == parent_cwd
+        directory = Path(cwd)
+        assert directory.is_absolute()
+        assert directory.parent == Path(runner.tempfile.gettempdir())
+        assert list(directory.iterdir()) == []
+        assert all(not old.exists() for old in visited)
+        visited.append(directory)
+        assert argv == baseline + ["--disable-slash-commands", "--strict-mcp-config",
+                                   "--system-prompt-file", str(runner.PROMPT.resolve())]
+        assert argv[argv.index("--tools") + 1] == ""
+        assert not {"--bare", "--mcp-config", "--setting-sources",
+                    "--dangerously-skip-permissions", "--permission-mode"}.intersection(argv)
+        assert "ANTHROPIC_API_KEY" not in env
+        (directory / "synthetic-child-output.txt").write_text("synthetic only", encoding="utf-8")
+        response = json.loads(SUCCESS_NULL_STATUS)
+        response["structured_output"]["judgments"][0]["id"] = "q-" + str(len(visited)).zfill(3)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(response))
+    result = invoke(folder, tmp_path, executor=injected, lean_context=True)
+    assert result["calls"] == 2
+    assert len(set(visited)) == 2 and all(not p.exists() for p in visited)
+    records = [json.loads(line) for line in (tmp_path / "out/calls.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert all(row["lean_context"] is True for row in records)
+    assert all(row["usage"] == json.loads(SUCCESS_NULL_STATUS)["usage"] for row in records)
+    assert len(list(Path(result["run"]).glob("verified-*.json"))) == 2
+    assert Path.cwd() == parent_cwd
+
+
+@pytest.mark.parametrize("failure", ["exception", "timeout", "nonzero", "reported"])
+def test_lean_cleans_cwd_on_failure_and_records_mode(tmp_path, failure):
+    visited, before = [], Path.cwd()
+    def injected(argv, prompt, env, *, cwd):
+        directory = Path(cwd)
+        assert list(directory.iterdir()) == []
+        visited.append(directory)
+        (directory / "synthetic.txt").write_text("synthetic only", encoding="utf-8")
+        if failure == "exception":
+            raise RuntimeError("synthetic error")
+        if failure == "timeout":
+            raise runner.subprocess.TimeoutExpired("synthetic", 1)
+        response = json.loads(SUCCESS_NULL_STATUS)
+        if failure == "reported":
+            response["is_error"] = True
+        return SimpleNamespace(returncode=7 if failure == "nonzero" else 0, stdout=json.dumps(response))
+    with pytest.raises(ValueError):
+        invoke(packet_folder(tmp_path), tmp_path, executor=injected, lean_context=True)
+    assert len(visited) == 1 and not visited[0].exists()
+    assert Path.cwd() == before
+    record = json.loads((tmp_path / "out/calls.jsonl").read_text(encoding="utf-8"))
+    assert record["lean_context"] is True and record["error"]
+    assert "synthetic error" not in json.dumps(record)
+
+
+@pytest.mark.parametrize("lean", [False, True])
+def test_lean_cli_is_explicit_and_defaults_off(monkeypatch, lean):
+    seen = []
+    def injected(folder, **kwargs):
+        seen.append(kwargs)
+        return {"execution": "injected"}
+    monkeypatch.setattr(runner, "judge", injected)
+    args = ["--packets", "synthetic-packets", "--scope-file", "synthetic-scope.json",
+            "--out-root", "synthetic-output"]
+    assert runner.main(args + (["--lean-context"] if lean else [])) == 0
+    assert seen[0]["lean_context"] is lean
+
+
+@pytest.mark.parametrize("lean", [False, True])
+@pytest.mark.parametrize("flag", ["--bare", "--setting-sources", "--permission-mode",
+                                 "--dangerously-skip-permissions", "--mcp-config",
+                                 "--disable-slash-commands", "--strict-mcp-config", "--system-prompt-file"])
+def test_extra_cli_flags_are_not_operator_passthrough(lean, flag):
+    args = ["--packets", "synthetic-packets", "--scope-file", "synthetic-scope.json",
+            "--out-root", "synthetic-output", flag]
+    with pytest.raises(SystemExit) as error:
+        runner.main(args + (["--lean-context"] if lean else []))
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("lean", [False, True])
+def test_bare_cannot_be_passed_as_an_executable(lean):
+    with pytest.raises(ValueError):
+        runner.command(runner.SCHEMA.read_text(encoding="utf-8"), "--bare", lean_context=lean)
+
+
+@pytest.mark.parametrize("raw", ["invalid json", "[]", "{}", '{"usage": null}',
+                               '{"usage": {"input_tokens": true, "output_tokens": -1, "cache_read_input_tokens": "12"}}'])
+def test_usage_copies_only_nonnegative_integer_counters(raw):
+    assert runner._token_usage(raw) == {
+        "input_tokens": None, "output_tokens": None,
+        "cache_read_input_tokens": None, "cache_creation_input_tokens": None}
+
+
+@pytest.mark.parametrize("lean", ["false", 1, None])
+def test_lean_context_requires_a_boolean(lean):
+    with pytest.raises(ValueError, match="boolean"):
+        runner.command(runner.SCHEMA.read_text(encoding="utf-8"), "claude-p", lean_context=lean)

@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 
 import pytest
 
@@ -25,7 +26,8 @@ class Echo {
  static void Main(string[] args) {
   Console.WriteLine(new JavaScriptSerializer().Serialize(new {
    argv=args, config=Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR"),
-   plugins=Environment.GetEnvironmentVariable("CLAUDE_CODE_PLUGIN_CACHE_DIR")
+   plugins=Environment.GetEnvironmentVariable("CLAUDE_CODE_PLUGIN_CACHE_DIR"),
+   cwd=Environment.CurrentDirectory, entries=System.IO.Directory.GetFileSystemEntries(".").Length
   }));
  }
 }""",encoding="utf-8")
@@ -40,16 +42,24 @@ class Echo {
 
 
 @pytest.mark.parametrize("route",[0,1],ids=["fake-native-exe","fake-cmd-two-stage"])
-def test_schema_tools_and_model_roundtrip_exactly(echo_chain,route):
+@pytest.mark.parametrize("lean",[False,True],ids=["default-context","lean-context"])
+def test_schema_tools_and_model_roundtrip_exactly(echo_chain,route,lean):
     executable=echo_chain[route]
     original=judge.SCHEMA.read_text(encoding="utf-8")
-    argv=judge.command(original,str(executable))
+    argv=judge.command(original,str(executable),lean_context=lean)
     env=judge.child_environment({name:os.environ[name] for name in
         ["SystemRoot","WINDIR","COMSPEC","PATH","TEMP","TMP"] if name in os.environ})
     assert executable.is_relative_to(echo_chain[0].parent)
     # Explicit fake transport executor; neither _launch nor any installed model runs.
-    completed=subprocess.run(argv,capture_output=True,env=env,encoding="utf-8",check=True)
-    echoed=json.loads(completed.stdout)
+    if lean:
+        with tempfile.TemporaryDirectory(prefix="smtw-fake-echo-") as cwd:
+            completed=subprocess.run(argv,capture_output=True,env=env,encoding="utf-8",check=True,cwd=cwd)
+            echoed=json.loads(completed.stdout)
+            assert Path(echoed["cwd"])==Path(cwd) and echoed["entries"]==0
+        assert not Path(cwd).exists()
+    else:
+        completed=subprocess.run(argv,capture_output=True,env=env,encoding="utf-8",check=True)
+        echoed=json.loads(completed.stdout)
     assert echoed["argv"]==argv[1:]
     actual=echoed["argv"]
     expected=json.loads(original);expected.pop("$schema")

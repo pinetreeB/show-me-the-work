@@ -19,6 +19,15 @@ python -X utf8 scripts/claims_judge.py --scope-file "<WORK>/judge-scope.json" --
 claude-p와 동일하게 CLAUDE_CONFIG_DIR=~/.claude-personal 및 CLAUDE_CODE_PLUGIN_CACHE_DIR=~/.claude/plugins를 지정합니다. 도구는 비활성화되고 세션은 저장하지 않습니다.
 사용량 5시간 60% 이상 또는 주간 70% 이상이면 거부합니다. 사용량 자료가 없거나 오래됐으면
 기본 거부이며, 좌상이 사용량을 확인하고 명시적으로 --allow-unknown-usage를 줄 때만 허용됩니다.
+관제탑이 승인한 문맥 축소는 Phase 2 판정 호출에만 적용하며, 좌상이 명시적으로 --lean-context를 붙일 때 켜집니다.
+기본값은 꺼짐이며 기존 호출 인자는 유지됩니다. 켜면 --disable-slash-commands, --strict-mcp-config,
+--system-prompt-file <저장소 판정 지시문>만 추가합니다. --mcp-config 없이 MCP를 비활성화하고 --tools ""를 유지합니다.
+각 호출은 시스템 TEMP 아래 고객 자료·비밀이 없는 새 빈 폴더를 cwd로 사용하고 호출 종료·실패 때 삭제합니다.
+--setting-sources·권한 관련 플래그·--bare는 허용하지 않으며 API 키 금지와 구독 사용량 검사는 그대로입니다.
+calls.jsonl의 lean_context에 활성 여부를, usage 객체에는 원응답의 input_tokens·output_tokens·
+cache_read_input_tokens·cache_creation_input_tokens를 복사합니다. 없거나 음수·비정수이면 null로 기록합니다.
+이 옵션의 실제 사용량 감소는 좌상의 명시적 호출로 확인해야 합니다.
+
 회차 상한은 기본 4, 최대 10입니다. 패킷 수가 상한을 넘으면 호출 전에 모두 거부합니다.
 백그라운드·예약·훅 실행은 금지입니다. stdin과 stdout 모두 TTY여야 합니다.
 

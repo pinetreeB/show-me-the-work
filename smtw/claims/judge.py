@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -125,7 +126,9 @@ def resolve_executable() -> str:
     return launcher
 
 
-def command(schema: str, executable: str) -> list[str]:
+def command(schema: str, executable: str, *, lean_context: bool = False) -> list[str]:
+    if type(lean_context) is not bool:
+        raise ValueError("lean-context must be a boolean")
     name = Path(executable).name.casefold()
     if name not in {"claude-p", "claude-p.cmd", "claude-p.exe", "claude.exe"}:
         raise ValueError("only the personal launcher or native claude.exe is allowed")
@@ -134,14 +137,19 @@ def command(schema: str, executable: str) -> list[str]:
     # Batch CALL splits literal newlines. Compact JSON also preserves empty args
     # and schema quotes through the legacy two-shim Windows chain.
     compact = cli_schema(schema)
-    return [executable, "--model", MODEL, "-p", "--tools", "",
+    argv = [executable, "--model", MODEL, "-p", "--tools", "",
             "--no-session-persistence", "--output-format", "json", "--json-schema", compact]
+    # Closed flag allowlist: these are added only on explicit operator opt-in.
+    if lean_context:
+        argv += ["--disable-slash-commands", "--strict-mcp-config",
+                 "--system-prompt-file", str(PROMPT.resolve())]
+    return argv
 
 
-def _launch(argv: list[str], prompt: str, env: dict) -> subprocess.CompletedProcess:
+def _launch(argv: list[str], prompt: str, env: dict, *, cwd: str | None = None) -> subprocess.CompletedProcess:
     """The sole real execution point. Tests must never enter this function."""
     return subprocess.run(argv, input=prompt, env=env, capture_output=True,
-                          encoding="utf-8", errors="strict", timeout=300)
+                          encoding="utf-8", errors="strict", timeout=300, cwd=cwd)
 
 
 def _is_error_response(value: dict) -> bool:
@@ -168,6 +176,19 @@ def _reported_error(raw: str) -> dict:
             "api_error_status": status if type(status) is int else None}
 
 
+def _token_usage(raw: str) -> dict:
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        value = {}
+    usage = value.get("usage") if isinstance(value, dict) else None
+    usage = usage if isinstance(usage, dict) else {}
+    # Copy only numeric counters, never arbitrary response metadata.
+    return {key: usage[key] if type(usage.get(key)) is int and usage[key] >= 0 else None
+            for key in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                        "cache_creation_input_tokens")}
+
+
 def _judgments(raw: str):
     value = json.loads(raw)
     if isinstance(value, dict):
@@ -185,7 +206,7 @@ def _judgments(raw: str):
 
 def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int = 4, allow_unknown_usage: bool = False,
           executor=None, tty=None, usage_reader=None, parent_env=None,
-          executable=None) -> dict:
+          executable=None, lean_context: bool = False) -> dict:
     if type(max_calls) is not int or not 1 <= max_calls <= 10:
         raise ValueError("max-calls must be between 1 and 10")
     if not (tty or (lambda: sys.stdin.isatty() and sys.stdout.isatty()))():
@@ -201,7 +222,7 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
     schema = SCHEMA.read_text(encoding="utf-8")
     instructions = PROMPT.read_text(encoding="utf-8")
     executable = executable or resolve_executable()
-    argv = command(schema, executable)
+    argv = command(schema, executable, lean_context=lean_context)
     usage_reader = usage_reader or read_usage
     before = usage_reader()
     usage_gate(before, allow_unknown_usage)
@@ -226,7 +247,14 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
         raw, exit_code, error = "", None, None
         error_details = {}
         try:
-            completed = (executor or _launch)(argv, prompt, env)
+            execute = executor or _launch
+            if lean_context:
+                # A new empty system TEMP child per call; no process-wide chdir.
+                # The context also cleans up after errors and timeouts.
+                with tempfile.TemporaryDirectory(prefix="smtw-judge-") as cwd:
+                    completed = execute(argv, prompt, env, cwd=cwd)
+            else:
+                completed = execute(argv, prompt, env)
             raw = completed.stdout
             exit_code = completed.returncode
             error_details = _reported_error(raw)
@@ -242,7 +270,8 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "packet_sha256": entry["sha256"], "item_ids": entry["item_ids"],
             "model": MODEL, "argv": argv, **manifest["judge_contract"], "exit_code": exit_code,
-            "scope_sha256": scope.sha256,
+            "scope_sha256": scope.sha256, "lean_context": lean_context,
+            "usage": _token_usage(raw),
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "output_sha256": sha(raw.encode("utf-8")), "usage_before": before,
             "usage_after": after, "error": error, "run_id": run_id,
@@ -274,11 +303,14 @@ def main(argv=None):
     parser.add_argument("--out-root", type=Path, required=True)
     parser.add_argument("--max-calls", type=int, default=4)
     parser.add_argument("--allow-unknown-usage", action="store_true")
+    parser.add_argument("--lean-context", action="store_true",
+                        help="opt in to Phase 2 lean context with an empty temporary cwd")
     args = parser.parse_args(argv)
     try:
         result = judge(args.packets, scope_file=args.scope_file, output_root=args.out_root,
                        max_calls=args.max_calls,
-                       allow_unknown_usage=args.allow_unknown_usage)
+                       allow_unknown_usage=args.allow_unknown_usage,
+                       lean_context=args.lean_context)
     except (OSError, ValueError, KeyError, TypeError):
         print("Judge refused or failed; check packet/usage/TTY and receipts.", file=sys.stderr)
         return 2
