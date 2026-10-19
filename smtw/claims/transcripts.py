@@ -743,8 +743,6 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
             body = ''.join(rows)
     if BROWSER_READ.search(call.name) and not SEARCH_TOOL.search(call.name) and not re.search(r'read_url|open_url', call.name, re.I):
         urls = re.findall(r'(?:["\']?(?:URL|pageUrl|page_url|currentUrl)["\']?\s*[:=]\s*["\']?|^\s*[-*]?\s*Page URL:\s*)(https?://[^\s"\'<>]+)', body, re.I | re.M)
-        if not urls:
-            urls = re.findall(r'https?://[^\s"\'<>]+', body)
         urls = list(dict.fromkeys(u.rstrip('.,;)]}') for u in urls))
         if call.url:
             urls = [u for u in urls if normalize_url(u) == normalize_url(call.url)]
@@ -762,6 +760,14 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
     if exit_code not in (None, 0) or re.search(r'^(?:Error:|Error executing|File not found|Access denied)|"isError"\s*:\s*true|"success"\s*:\s*false|"status"\s*:\s*"(?:ERROR|FAILED)"', body, re.M | re.I):
         e.problem = '읽기 도구 실패'
         e.problem_code = 'read_failed'
+    if e.url and re.match(
+            r'\s*(?:HTTP(?:/\d(?:\.\d)?)?\s+(?:Error\s+)?[45]\d\d\b'
+            r'|[45]\d\d\s+(?:Not Found|Forbidden|Unauthorized|Bad Gateway|Service Unavailable)\b'
+            r'|Timeout(?:Error)?\b|(?:Request|Connection)\s+timed\s+out\b'
+            r'|Blocked\s*[:\n]|Access\s+blocked\b)', body, re.I):
+        e.problem, e.problem_code = 'URL 읽기 도구 실패', 'read_failed'
+    if e.url and e.problem:
+        return [e]
     if e.url and not e.problem:
         saved = re.search(r'\bsaved\s+to:\s*([^\r\n]+)', body, re.I)
         if saved:

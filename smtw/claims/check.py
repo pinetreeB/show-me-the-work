@@ -696,10 +696,15 @@ class Checker:
             c.reason_code = 'value_match' if okay else 'value_mismatch'
             return
         if c.check_type == 'K8':
-            relevant = self.select(replace(c, web_quote=True, path=c.value))
-            if any(not e.problem and e.complete for e in relevant):
+            # A successful response confirms the visit even when its body is a
+            # storage pointer or a partial capture. Quotation evidence is separate.
+            relevant = [e for e in self.transcript.evidence
+                        if e.url and not e.control_only and (c.current or not e.after_report)
+                        and normalize_url(e.url) == normalize_url(c.value)]
+            successful = [e for e in relevant if not e.problem or e.problem_code == 'partial_range']
+            if successful:
                 c.verdict, c.reason = 'match', '성공한 URL 읽기 결과 확인'
-                c.source = next(e.metadata() for e in relevant if not e.problem and e.complete)
+                c.source = successful[0].metadata()
                 c.reason_code = 'visited_url'
             else:
                 c.verdict = 'unverifiable' if relevant or not self.transcript.valid or not self.transcript.version else 'absent'

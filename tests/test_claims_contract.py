@@ -421,10 +421,10 @@ def test_k6_line_count_uses_shared_k2_logic():
         assert check_one(c, e, Budget(10))[0] == 'mismatch'
 
 
-def test_missing_aux_and_failed_read_precede_absence(tmp_path):
+def test_successful_url_pointer_confirms_visit_without_aux(tmp_path):
     r, t = make_case(tmp_path, 'https://example.invalid/doc', [agy_call('read_url_content', Url='https://example.invalid/doc'),
         generic('has been saved to: C:/fake-brain/steps/99/content.md')])
-    assert run(r, agy=str(t))['claims'][0]['verdict'] == 'unverifiable'
+    assert run(r, agy=str(t))['claims'][0]['verdict'] == 'match'
 
 
 def test_quoted_web_aux_content(tmp_path):
