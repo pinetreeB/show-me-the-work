@@ -169,7 +169,12 @@ def quote_scope(line: str, a: int, b: int) -> bool:
 
 
 def reported_claim(line: str, pos: int) -> bool:
-    """Only third-party claims before an explicit correction are attributed."""
+    """Recognize explicitly attributed metrics and corrected third-party claims."""
+    metric = NUMBER.match(line, pos)
+    if metric and re.match(
+            r'[\s`*"\u201d\u2019\x27]*(?:주장|라고\s*함|이라\s*적음|claimed\b|vs\b)',
+            line[metric.end():], re.I):
+        return True
     a, b = sentence_span(line, pos)
     visible = masked(line)
     sentence_text = visible[a:b]
@@ -430,6 +435,8 @@ def metric_context(line: str, start: int, end: int, paths, unit: str, header: st
     if unit == '줄':
         if re.search(r'\d+\s*lines?\b', local, re.I) or reported_claim(line, start):
             return True
+        if re.match(r'(?:이다|입니다)(?=\W|$)', line[end:]):
+            return True  # An explicit own line-count assertion still needs checking.
         correction_prefix = masked(line[a:start])
         if re.search(r'(?:실제(?:로)?|사실은|\b(?:actually|in fact)\b)[^.;]{0,24}$',
                      correction_prefix, re.I):

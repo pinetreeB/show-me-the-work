@@ -43,3 +43,37 @@ def test_other_saved_file_is_not_a_page_content_pointer(tmp_path, suffix):
         generic(PAGE + " Storage was saved to: " + CONTENT + suffix)])
     claim, = [c for c in run(r, agy=str(t))["claims"] if c["check_type"] == "K5"]
     assert claim["verdict"] == "match"
+
+
+@pytest.mark.parametrize("marker", ["주장", "라고 함", "이라 적음", "claimed", "vs"])
+def test_attributed_line_count_is_retained_unverifiable(tmp_path, marker):
+    report = f"¤sample.md¤: 53줄 {marker} 31~32".replace("¤", chr(96))
+    r, t = make_case(tmp_path, report, [
+        agy_call("view_file", AbsolutePath="C:/synthetic/sample.md"),
+        view("C:/synthetic/sample.md", "one\ntwo\nthree\n")])
+    claim, = [c for c in run(r, agy=str(t))["claims"] if c["check_type"] == "K2"]
+    assert claim["verdict"] == "unverifiable"
+    assert claim["reason_code"] == "reported_claim"
+
+
+def test_count_claim_inside_measured_quote_is_attributed(tmp_path):
+    report = "(체크포인트 ¤checkpoint.md:45¤ 실측: ¤'observed-state'¤, ¤config 53줄 주장 vs 31~32¤)"
+    text = "before\n" * 44 + "padding " * 70 + "'observed-state'\n"
+    r, t = make_case(tmp_path, report.replace("¤", chr(96)), [
+        agy_call("view_file", AbsolutePath="C:/synthetic/checkpoint.md"),
+        view("C:/synthetic/checkpoint.md", text)])
+    result = run(r, agy=str(t))
+    claim, = [c for c in result["claims"] if c["check_type"] == "K2"]
+    assert claim["verdict"] == "unverifiable"
+    assert claim["reason_code"] == "reported_claim"
+    assert result["status"] != "FAIL"
+
+
+def test_own_false_line_count_still_fails(tmp_path):
+    report = "config는 53줄이다(¤config.json¤)".replace("¤", chr(96))
+    r, t = make_case(tmp_path, report, [
+        agy_call("view_file", AbsolutePath="C:/synthetic/config.json"),
+        view("C:/synthetic/config.json", '{\n  "enabled": true\n}\n')])
+    result = run(r, agy=str(t))
+    claim, = [c for c in result["claims"] if c["check_type"] == "K2"]
+    assert claim["verdict"] == "mismatch" and result["status"] == "FAIL"
