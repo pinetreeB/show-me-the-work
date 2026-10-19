@@ -64,7 +64,7 @@ def test_new_explicit_source_does_not_borrow_earlier_range(tmp_path, source):
 
 @pytest.mark.parametrize("prefix,expected", [
     ("`alpha.py:1`", "FAIL"),
-    ("`alpha.py:1` 및 `beta.py:1`", "INCOMPLETE"),
+    ("`alpha.py:1` 및 `beta.py:1`", "FAIL"),
 ])
 def test_unscoped_quote_uses_unique_candidate_or_stays_ambiguous(tmp_path, prefix, expected):
     result = inspect_files(tmp_path, '| ① ' + prefix + ' 설명 ② "there is no such text" |',

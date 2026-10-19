@@ -36,3 +36,33 @@ def test_web_anchor_without_read_stays_unverifiable(tmp_path):
         agy_call("view_file",AbsolutePath="C:/sample/state.json"),view("C:/sample/state.json",'original string actually observed')])
     claims=[c for c in run(r,agy=str(t))["claims"] if c["check_type"]=="K5"]
     assert len(claims)==1 and claims[0]["verdict"]=="unverifiable"
+
+from smtw.claims.packets import redact
+
+@pytest.mark.parametrize("text", [
+    "commit auth " + "a1"*20, "| token | " + "a1"*20 + " |",
+    "admin_password=12345678", "account_token=987654321012",
+    "password=test-1234", "password=secret.hunter2", "password=MyPassword",
+    "SHA256 verified then key " + "a1"*32, "config.json: " + "a1"*32,
+    "token: int; actual synthetic_value_4821", "token=None # actual synthetic_value_4821",
+])
+def test_exemption_secret_pairs_are_redacted(text):
+    out, counts = redact(text)
+    assert counts and out != text
+    assert text.rsplit(" ",1)[-1] not in out or text.endswith(" |")
+
+@pytest.mark.parametrize("text", [
+    "commit " + "a1"*20, "SHA256: " + "a1"*32,
+    "max_tokens: 4096", "ownerToken: string",
+    "login(user, password=password)", "api_key=apiKey",
+])
+def test_exemption_benign_pairs_preserved(text):
+    assert redact(text)[0] == text
+
+@pytest.mark.parametrize("prefix", ["제안", "권고", "변경 후", "예:", "수정 예", "→"])
+def test_proposal_quotes_retained_unverifiable(tmp_path,prefix):
+    r,t=make_case(tmp_path,'`sample.py:1` ① '+prefix+' `if value > 42:`',[
+        agy_call("view_file",AbsolutePath="C:/sample/sample.py"),view("C:/sample/sample.py","if value > 10:")])
+    result=run(r,agy=str(t))
+    assert result["status"]!="FAIL"
+    assert any(c["check_type"]=="K5" and c["reason_code"]=="non_file_quote" for c in result["claims"])

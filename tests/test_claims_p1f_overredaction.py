@@ -31,7 +31,7 @@ def test_overredaction_controls(name, text):
     "password: str", "ownerToken: string", "max_tokens: 4096",
     "const SECRET_KEY_LENGTH = 32", "connect(password=password)",
     "tokenizer = AutoTokenizer.from_pretrained(name)",
-    "client_secret = requestToken", "access_token = request_token",
+    "client_secret = clientSecret", "access_token = accessToken",
     "request_handler_registry_configuration_factory",
 ])
 def test_types_limits_and_code_references_are_not_credentials(text):
@@ -54,8 +54,7 @@ def test_secret_key_overrides_hash_context(length):
 
 
 @pytest.mark.parametrize("template", [
-    "SHA-256: {}", "digest {}", "checksum={}", "manifest.json | {}",
-    "{}  module.py", "module.py: {}", "{}.json",
+    "SHA-256: {}", "digest {}", "checksum={}", "{}  module.py",
 ])
 def test_sha256_metadata_context(template):
     text = template.format("abcdef0123456789" * 4)
@@ -82,3 +81,11 @@ def test_redaction_does_not_expand_the_source_window_past_its_original_budget():
     assert summary["sent_count"] == 1
     text = packets[0]["data_block"][0]["excerpts"][0]["text"]
     assert text == "1: [REDACTED:password]"
+
+
+@pytest.mark.parametrize("text", [
+    "client_secret = requestToken", "access_token = request_token",
+    "manifest.json | " + H64, "module.py: " + H64, H64 + ".json",
+])
+def test_unproven_reference_and_filename_hash_are_not_exempt(text):
+    assert redact(text)[1]

@@ -301,19 +301,28 @@ def explicit_quote_source(line: str, pos: int, paths, ref_spans) -> tuple[tuple[
     title = named[1] if named else ''
     named_document = bool(re.fullmatch(
         r'.+(?:지시서|문서|설명서|보고서|가이드|지침|계획서|기준서|정책|안내서)', title))
-    declaration = bool(names or named_document)
+    declaration = bool(names or named_document or re.search(r'\bthe\s+\w+\s+(?:says|states)\s*$', gap, re.I))
     return names, declaration
 
 
 def preceding_quote_sources(line: str, pos: int, ref_spans) -> tuple[str, ...]:
-    """The nearest preceding item with references, across empty item boundaries."""
-    start, _ = sentence_span(line, pos, cells=False)
-    local_start, _ = quote_span(line, pos)
-    prior = [(a, c.path) for a, b, c in ref_spans if start <= a and b <= local_start]
-    if not prior:
-        return ()
-    scope = quote_span(line, prior[-1][0])
-    return tuple(dict.fromkeys(path for a, path in prior if quote_span(line, a) == scope))
+    """All references in this sentence/enumeration, including following sources."""
+    start, end = sentence_span(line, pos, cells=False)
+    return tuple(dict.fromkeys(c.path for a, b, c in ref_spans if start <= a and b <= end))
+
+
+def non_file_quote(line: str, pos: int, headers: list[str]) -> bool:
+    visible = masked(line)
+    a, b = sentence_span(line, pos)
+    prefix, suffix = visible[a:pos], visible[pos:b]
+    if line.lstrip().startswith('|'):
+        cell = next((i for i, (x, y) in enumerate(cell_spans(line)) if x <= pos <= y), -1)
+        if 0 <= cell < len(headers):
+            prefix = headers[cell] + ' ' + prefix
+    return bool(re.search(
+        r'제안|권고|변경\s*후|수정\s*예|예\s*:|예를\s*들|→|출력|실행하면|시험\s*결과|사용자|요청|이전\s*요약|터미널',
+        prefix)
+        or re.search(r'라고\s*잘못|존재하지\s*않|(?:가|는|이)\s*없다|라고\s*요청', suffix))
 
 
 def adjacent_snippet(line: str, span: tuple[int, int], snippet: tuple) -> bool:
@@ -670,6 +679,20 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if (numbered_snippet(m.group(1))
                     or code_snippet(m.group(1)) and (len(m.group(1)) >= 8 or ordered_snippet)):
                 snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
+        # Retain proposed/non-file quotations, but do not attach them as file facts.
+        active_snippets = []
+        for snippet in snippets:
+            if non_file_quote(line, snippet[0], table_headers):
+                claim = quote_claims.get(snippet[0])
+                if claim is None:
+                    claim = add('K5', snippet[3], snippet[0], quote=snippet[2],
+                                quote_code=snippet[4])
+                    quote_claims[snippet[0]] = claim
+                claim.contextual_reason = 'non_file_quote'
+                claim.binding_candidates = ()
+            else:
+                active_snippets.append(snippet)
+        snippets = active_snippets
         quote_origins = {}
         for snippet in snippets:
             if quote_claims.get(snippet[0]) and quote_claims[snippet[0]].web_quote:
@@ -689,7 +712,11 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 claim = add('K5', snippet[3], snippet[0], path='', quote=snippet[2], quote_code=snippet[4])
                 quote_claims[snippet[0]] = claim
             claim.path = origins[0] if len(origins) == 1 else ''
-            claim.binding_candidates = origins if len(origins) > 1 else ()
+            claim.binding_candidates = ()
+            if len(origins) > 1:
+                claim.candidate_quotes = ((claim.quote, claim.quote_code),)
+                claim.candidate_ranges = tuple((path, 0, 0) for path in origins)
+                claim.candidate_group_closed = True
             if not origins:
                 claim.contextual_reason = 'binding_ambiguous'
         attached: dict[int, list[tuple]] = {}

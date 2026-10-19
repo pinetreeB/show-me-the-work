@@ -624,6 +624,7 @@ class Checker:
             c.reason = {
                 'binding_ambiguous': '여러 줄 번호와 인용의 대응 관계 미확정',
                 'reported_claim': '다른 보고의 옛 주장 인용으로 현재 사실을 확정하지 않음',
+                'non_file_quote': '제안·발화·출력·부재 설명은 파일 원문 인용으로 확정하지 않음',
                 'proposed_name': '제안·가정·도입 예정인 이름은 현재 존재 주장으로 확정하지 않음',
                 'item_token_only': '항목 번호 뒤 토큰·숫자만으로 항목 설명을 확정하지 않음',
             }[c.contextual_reason]

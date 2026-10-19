@@ -26,11 +26,11 @@ def test_header_candidate_stays_available_across_empty_enumerated_items(tmp_path
 
 
 @pytest.mark.parametrize("prefix", ["", "`alpha.py:1` 및 `beta.py:1` 확인"])
-def test_no_or_multiple_preceding_files_remain_ambiguous(tmp_path, prefix):
+def test_no_source_is_unknown_and_multiple_sources_check_all(tmp_path, prefix):
     result = inspect_files(tmp_path, prefix + ' ① “a fabricated quotation”', FILES)
     quotes = [c for c in result["claims"] if c["check_type"] == "K5"]
     assert len(quotes) == 1
-    assert (quotes[0]["verdict"], quotes[0]["reason_code"]) == ("unverifiable", "binding_ambiguous")
+    assert (quotes[0]["verdict"], quotes[0]["reason_code"]) == (("mismatch", "quote_mismatch") if prefix else ("unverifiable", "binding_ambiguous"))
 
 
 @pytest.mark.parametrize("intro", ["§3", "문서에서", "문서 §제한에서", "§제한에서"])
@@ -62,7 +62,7 @@ def test_named_document_without_file_is_an_unknown_source(tmp_path):
     assert quotes and all(c["reason_code"] == "binding_ambiguous" for c in quotes)
 
 
-def test_nearest_preceding_item_supersedes_older_file(tmp_path):
+def test_all_referenced_files_are_candidates(tmp_path):
     result = inspect_files(tmp_path, '`beta.py:1` ① `alpha.py:1` ② “present quote in the file”', FILES)
     quotes = [c for c in result["claims"] if c["check_type"] == "K5"]
     assert quotes and all(c["verdict"] == "match" for c in quotes)
