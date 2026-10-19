@@ -22,7 +22,15 @@ claude-p와 동일하게 CLAUDE_CONFIG_DIR=~/.claude-personal 및 CLAUDE_CODE_PL
 회차 상한은 기본 4, 최대 10입니다. 패킷 수가 상한을 넘으면 호출 전에 모두 거부합니다.
 백그라운드·예약·훅 실행은 금지입니다. stdin과 stdout 모두 TTY여야 합니다.
 
-판정자 --json-schema 인자는 저장소의 Phase 1 schema 파일에서 읽어 compact 한 줄로 직렬화한 JSON 내용으로 고정됩니다.
+판정자 --json-schema 인자는 Phase 1 배열 스키마에서 $schema·$id·$comment 메타만 제거하고,
+judgments 배열 필드가 필수인 최상위 object로 감싼 뒤 compact 한 줄 JSON으로 전달합니다.
+Phase 1 원본 스키마와 재검증기의 배열 계약은 유지합니다.
+프롬프트 계약은 v1.1이며 manifest의 judge_contract와 calls.jsonl에
+원본 schema_sha256·prompt_sha256·CLI 전달용 cli_schema_sha256을 함께 기록합니다.
+이전 v1 패킷은 재생성해야 합니다. 결과의 structured_output.judgments 또는 result 문자열의
+judgments를 기존 검증·인용 재검증에 넘깁니다.
+is_error: true 또는 api_error_status가 있으면 중단하고 stdout을 raw 파일에 그대로 보존합니다.
+호출 기록의 원인은 result 앞 200자에 가림을 적용한 값만 사용하며 환경값·stderr·예외 문구는 넣지 않습니다.
 여러 줄 JSON을 .cmd 인자로 보내지 않습니다. native 경로를 찾지 못한 경우에만 claude-p를 사용합니다.
 기존 패킷을 수정하거나 프롬프트·스키마가 바뀌면 새로 생성해야 합니다.
 패킷 SHA·출처 목록·가림 패턴·30,000자 한도를 실행 직전에 다시 확인합니다.

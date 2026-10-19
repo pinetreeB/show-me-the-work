@@ -34,7 +34,7 @@ def fake_judge(argv, prompt, env):
     assert argv[1:8] == ["--model",runner.MODEL,"-p","--tools","","--no-session-persistence","--output-format"]
     rows=[{"id":"q-001","verdict":"supported","evidence_ref":1,
            "evidence_quote":"MAX_LIMIT = 7","rationale":"Literal excerpt."}]
-    return SimpleNamespace(returncode=0,stdout=json.dumps({"structured_output":rows}))
+    return SimpleNamespace(returncode=0,stdout=json.dumps({"structured_output":{"judgments":rows}}))
 
 
 def invoke(folder,tmp_path,**kw):
@@ -158,10 +158,13 @@ def test_prompt_schema_hashes_frozen_in_manifest_and_call(tmp_path):
     row=json.loads((tmp_path/"out/calls.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert row["prompt_sha256"]==contract()["prompt_sha256"]
     assert row["schema_sha256"]==contract()["schema_sha256"]
+    assert row["cli_schema_sha256"]==contract()["cli_schema_sha256"]
+    assert row["cli_schema_sha256"]==runner.sha(row["argv"][-1].encode("utf-8"))
+    assert contract()["version"]=="v1.1"
     assert runner.SCHEMA.name=="judge-output.schema.json"
 
 
-@pytest.mark.parametrize("field",["prompt_sha256","schema_sha256","version"])
+@pytest.mark.parametrize("field",["prompt_sha256","schema_sha256","cli_schema_sha256","version"])
 def test_changed_contract_refuses_before_executor(tmp_path,field):
     folder=packet_folder(tmp_path)
     path=folder/"manifest.json";manifest=json.loads(path.read_text(encoding="utf-8"))
@@ -183,11 +186,13 @@ def test_prompt_treats_injection_as_data_and_schema_is_bounded(tmp_path):
     assert schema["items"]["properties"]["rationale"]["maxLength"]==120
 
 
-def test_compact_schema_retains_original_object_and_empty_tools():
+def test_compact_cli_schema_retains_array_constraints_and_empty_tools():
     original=runner.SCHEMA.read_text(encoding="utf-8")
     argv=runner.command(original,"claude-p.cmd")
     assert "\n" not in argv[-1] and "\r" not in argv[-1]
-    assert json.loads(argv[-1])==json.loads(original)
+    expected=json.loads(original);expected.pop("$schema")
+    assert json.loads(argv[-1])["properties"]["judgments"]==expected
+    assert json.loads(argv[-1])["type"]=="object"
     assert argv[argv.index("--tools")+1]==""
     assert argv[argv.index("--model")+1]==runner.MODEL
 
@@ -246,3 +251,84 @@ def test_scope_hash_mismatch_refuses_before_fake(tmp_path):
         pytest.fail("changed scope executed")
     with pytest.raises(ValueError, match="scope changed"):
         invoke(folder, tmp_path, executor=fail)
+
+
+
+def test_cli_schema_wraps_array_and_preserves_phase1_constraints():
+    original = json.loads(runner.SCHEMA.read_text(encoding="utf-8"))
+    schema = {**original, "$id": "urn:synthetic:judgments", "$comment": "local metadata"}
+    delivered = json.loads(runner.command(json.dumps(schema), "claude-p")[-1])
+    expected = {key: value for key, value in original.items() if key != "$schema"}
+    assert delivered == {"type": "object", "properties": {"judgments": expected},
+                         "required": ["judgments"], "additionalProperties": False}
+    assert "$schema" in original and original["type"] == "array"
+    assert "$schema" not in json.dumps(delivered) and "$id" not in json.dumps(delivered)
+
+
+@pytest.mark.parametrize("envelope", ["structured_output", "result"])
+def test_wrapped_judgments_reach_existing_quote_verifier(tmp_path, envelope):
+    rows = [{"id": "q-001", "verdict": "supported", "evidence_ref": 1,
+             "evidence_quote": "MAX_LIMIT = 7", "rationale": "Literal source text."}]
+    payload = {"judgments": rows}
+    def injected(*args):
+        return SimpleNamespace(returncode=0, stdout=json.dumps({
+            envelope: json.dumps(payload) if envelope == "result" else payload}))
+    result = invoke(packet_folder(tmp_path), tmp_path, executor=injected)
+    output = json.loads((Path(result["run"]) / "verified-001.json").read_text(encoding="utf-8"))
+    assert output["counts"]["supported"] == 1
+    assert json.loads((Path(result["run"]) / "judgments-001.json").read_text(encoding="utf-8")) == rows
+
+
+@pytest.mark.parametrize("flags", [{"is_error": True}, {"api_error_status": 400}, {"is_error": True, "api_error_status": 400}])
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_cli_api_errors_preserve_raw_and_record_bounded_reason(tmp_path, flags, exit_code):
+    reason = "API Error: 400 input_schema.type must be object. " + "detail " * 50
+    raw = json.dumps({**flags, "result": reason}) + "\n"
+    calls = []
+    def injected(*args):
+        calls.append(1)
+        return SimpleNamespace(returncode=exit_code, stdout=raw, stderr="environment text must not be logged")
+    with pytest.raises(ValueError):
+        invoke(packet_folder(tmp_path), tmp_path, executor=injected)
+    assert calls == [1]
+    row, = [json.loads(line) for line in (tmp_path / "out/calls.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert row["error"] == "judge_reported_error"
+    assert row["error_reason"] == reason[:200]
+    assert row.get("api_error_status") == flags.get("api_error_status")
+    raw_file, = (tmp_path / "out/judge-runs").glob("*/raw-001.json")
+    assert raw_file.read_bytes() == raw.encode("utf-8")
+    assert row["output_sha256"] == runner.sha(raw_file.read_bytes())
+    assert not list((tmp_path / "out/judge-runs").glob("*/judgments-*.json"))
+    assert "environment text" not in json.dumps(row)
+
+
+def test_error_reason_masks_synthetic_keyed_value_without_environment_lookup(tmp_path):
+    value = "synthetic_only_value_" * 3
+    key = "EXAMPLE_" + "TOKEN"
+    raw = json.dumps({"is_error": True, "result": f"API error: {key}={value}"})
+    def injected(*args):
+        return SimpleNamespace(returncode=0, stdout=raw)
+    with pytest.raises(ValueError):
+        invoke(packet_folder(tmp_path), tmp_path, executor=injected)
+    row = json.loads((tmp_path / "out/calls.jsonl").read_text(encoding="utf-8"))
+    assert row["error"] == "judge_reported_error"
+    assert value not in row["error_reason"] and len(row["error_reason"]) <= 200
+
+
+
+def test_cli_api_error_stops_before_the_next_packet(tmp_path):
+    original = packet_folder(tmp_path)
+    first = json.loads((original / "packet-001.json").read_text(encoding="utf-8"))
+    second = json.loads(json.dumps(first))
+    second["data_block"][0]["id"] = "q-002"
+    folder = tmp_path / "two-packets"
+    write_packets(folder, [first, second], {"case_id": "example-case"})
+    calls = []
+    def injected(*args):
+        calls.append(1)
+        return SimpleNamespace(returncode=0, stdout=json.dumps({
+            "is_error": True, "api_error_status": 400, "result": "Schema rejected."}))
+    with pytest.raises(ValueError):
+        invoke(folder, tmp_path, executor=injected)
+    assert calls == [1]
+    assert len((tmp_path / "out/calls.jsonl").read_text(encoding="utf-8").splitlines()) == 1

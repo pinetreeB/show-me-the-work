@@ -111,7 +111,7 @@ def test_all_wrapper_calls_in_pipeline_use_injected_fake(tmp_path, scope_file):
         data=json.loads(prompt.split("PACKET DATA\n",1)[1])
         rows=[{"id":item["id"],"verdict":"not_enough_evidence","rationale":"Fake pipeline only."}
               for item in data["data_block"]]
-        return SimpleNamespace(returncode=0,stdout=json.dumps({"structured_output":rows}))
+        return SimpleNamespace(returncode=0,stdout=json.dumps({"structured_output":{"judgments":rows}}))
     result=judge.judge(tmp_path/"eval/packets",executor=fake,tty=lambda:True,
         parent_env={},usage_reader=lambda:{"known":True,"five_hour":0,"weekly":0},
         executable="claude-p",output_root=tmp_path/"calls",scope_file=scope_file)

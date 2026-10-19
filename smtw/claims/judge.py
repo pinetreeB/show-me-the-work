@@ -14,7 +14,7 @@ import sys
 import time
 import uuid
 
-from .judge_contract import PROMPT, SCHEMA, validate_contract
+from .judge_contract import PROMPT, SCHEMA, cli_schema, validate_contract
 from .judge_scope import JudgeScope, load_scope
 from .advisory import load_sent_items, read_json, verify_judgments
 from .packets import display_path, sensitive_path, redact
@@ -133,7 +133,7 @@ def command(schema: str, executable: str) -> list[str]:
         raise ValueError("native executable requires a resolved absolute path")
     # Batch CALL splits literal newlines. Compact JSON also preserves empty args
     # and schema quotes through the legacy two-shim Windows chain.
-    compact = json.dumps(json.loads(schema), ensure_ascii=True, separators=(",", ":"))
+    compact = cli_schema(schema)
     return [executable, "--model", MODEL, "-p", "--tools", "",
             "--no-session-persistence", "--output-format", "json", "--json-schema", compact]
 
@@ -144,14 +144,34 @@ def _launch(argv: list[str], prompt: str, env: dict) -> subprocess.CompletedProc
                           encoding="utf-8", errors="strict", timeout=300)
 
 
+def _reported_error(raw: str) -> dict:
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(value, dict) or not (value.get("is_error") is True or "api_error_status" in value):
+        return {}
+    result = value.get("result", "")
+    # Only the CLI's bounded cause is eligible for the receipt. Never inspect
+    # environment values or persist exception/stderr text as the cause.
+    reason = redact(result[:200])[0][:200] if isinstance(result, str) else ""
+    status = value.get("api_error_status")
+    return {"error": "judge_reported_error", "error_reason": reason,
+            "api_error_status": status if type(status) is int else None}
+
+
 def _judgments(raw: str):
     value = json.loads(raw)
     if isinstance(value, dict):
-        if value.get("is_error"):
+        if value.get("is_error") is True or "api_error_status" in value:
             raise ValueError("judge reported an error")
-        value = value.get("structured_output", value.get("result"))
+        value = value.get("structured_output", value.get("result", value))
         if isinstance(value, str):
             value = json.loads(value)
+    if isinstance(value, dict) and "judgments" in value:
+        if set(value) != {"judgments"}:
+            raise ValueError("unexpected fields in judgments wrapper")
+        value = value["judgments"]
     return value
 
 
@@ -196,10 +216,15 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
         prompt = instructions + data.decode("utf-8")
         started = time.monotonic()
         raw, exit_code, error = "", None, None
+        error_details = {}
         try:
             completed = (executor or _launch)(argv, prompt, env)
-            raw, exit_code = completed.stdout, completed.returncode
-            if exit_code != 0:
+            raw = completed.stdout
+            exit_code = completed.returncode
+            error_details = _reported_error(raw)
+            if error_details:
+                error = error_details["error"]
+            elif exit_code != 0:
                 error = "judge_nonzero_exit"
         except Exception as exc:
             # Never log exception text or stderr: either can contain environment data.
@@ -214,10 +239,11 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
             "output_sha256": sha(raw.encode("utf-8")), "usage_before": before,
             "usage_after": after, "error": error, "run_id": run_id,
             "execution": "injected" if executor else "personal_subscription",
+            **error_details,
         }
         with (output_root / "calls.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
-        (destination / f"raw-{index:03d}.json").write_text(raw, encoding="utf-8")
+        (destination / f"raw-{index:03d}.json").write_bytes(raw.encode("utf-8"))
         if error:
             raise ValueError("judge execution failed; see call receipt")
         rows = _judgments(raw)

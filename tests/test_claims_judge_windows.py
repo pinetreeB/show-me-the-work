@@ -52,9 +52,12 @@ def test_schema_tools_and_model_roundtrip_exactly(echo_chain,route):
     echoed=json.loads(completed.stdout)
     assert echoed["argv"]==argv[1:]
     actual=echoed["argv"]
-    assert json.loads(actual[actual.index("--json-schema")+1])==json.loads(original)
+    expected=json.loads(original);expected.pop("$schema")
+    wrapped=json.loads(actual[actual.index("--json-schema")+1])
+    assert wrapped=={"type":"object","properties":{"judgments":expected},
+                    "required":["judgments"],"additionalProperties":False}
     assert actual[actual.index("--json-schema")+1]==json.dumps(
-        json.loads(original),ensure_ascii=True,separators=(",",":"))
+        wrapped,ensure_ascii=True,separators=(",",":"))
     assert actual[actual.index("--tools")+1]==""
     assert actual[actual.index("--model")+1]=="claude-sonnet-5-5"
     assert echoed["config"]==str(Path.home()/".claude-personal")
