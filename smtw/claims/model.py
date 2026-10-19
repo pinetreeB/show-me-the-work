@@ -36,6 +36,7 @@ class Claim:
     start: int = 0
     end: int = 0
     quote: str = ""
+    web_quote: bool = False
     quote_code: bool = False
     binding_candidates: tuple[str, ...] = ()
     candidate_ranges: tuple[tuple[str, int, int], ...] = ()

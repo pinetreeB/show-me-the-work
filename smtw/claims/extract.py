@@ -41,7 +41,7 @@ def marked(context: str) -> bool:
 
 def paths_in(line: str) -> list[tuple[int, int, str]]:
     result = []
-    covered = []
+    covered = [(m.start(), m.end()) for m in URL.finditer(line)]
     for m in TICK.finditer(line):
         value = m.group(1)
         # Preserve spaces and parentheses in explicitly quoted paths.
@@ -624,7 +624,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         quote_claims = {}
         quote_matches = list(QUOTE.finditer(line))
         for m in quote_matches:
-            if any(t.start() <= m.start() < t.end() for t in ticks):
+            if any(t.start() <= m.start() < t.end() and
+                   not QUOTE.fullmatch(t.group(1)) for t in ticks):
                 continue
             if re.search(r'번역\s*:', sentence(line, m.start())):
                 continue
@@ -642,17 +643,16 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 quote_path = local_paths[0] if len(local_paths) == 1 else ''
                 ambiguous = local_paths if len(local_paths) > 1 else ()
             urls = list(URL.finditer(line))
-            if not quote_path and len(urls) == 1:
-                quote_path = urls[0].group().rstrip('.,;)]}')
-            c = add('K5', m.group(), m.start(), path=quote_path, quote=value)
+            # Explicit local sources win; inherited local context cannot own a web quote.
+            web_quote = not paths and bool(urls or re.search(
+                r'#[A-Za-z][\w-]*|원문\s*인용|웹\s*(?:문서|인용)', line[:m.start()]))
+            if web_quote:
+                quote_path = urls[0].group().rstrip('.,;)]}') if len(urls) == 1 else ''
+                ambiguous = ()
+            c = add('K5', m.group(), m.start(), path=quote_path, quote=value,
+                    web_quote=web_quote)
             c.binding_candidates = ambiguous
             quote_claims[m.start()] = c
-        if line.lstrip().startswith('>'):
-            value = re.sub(r'^\s*>\s?', '', line)
-            if len(value) >= 8 and not re.search(r'번역\s*:', value):
-                quoted.append((0, value))
-                add('K5', value, 0, quote=value)
-                snippets.append((0, len(line), value, line.strip(), False))
         numbered = re.match(r'^\s*(?:`)?(\d+):\s+(.{8,}?)(?:`)?$', line)
         if numbered:
             c = add('K5', line.strip(), 0, quote=numbered.group(2), quote_code=True,
@@ -662,6 +662,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             snippets.append((0, len(line), numbered.group(2), line.strip(), True))
         snippet_ticks = [m for m in ticks if numbered_snippet(m.group(1)) or code_snippet(m.group(1))]
         for m in ticks:
+            if QUOTE.fullmatch(m.group(1)):
+                continue
             if paths_in(m.group(1)) or REFERENCE.search(m.group(1)) or LOCATION.fullmatch(m.group(1)) or re.fullmatch(r'[\d,.]+', m.group(1)):
                 continue
             ordered_snippet = explicitly_ordered_quotes(line, snippet_ticks, len(ref_spans))
@@ -670,6 +672,9 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
         quote_origins = {}
         for snippet in snippets:
+            if quote_claims.get(snippet[0]) and quote_claims[snippet[0]].web_quote:
+                quote_origins[snippet[0]] = ()
+                continue
             origins, declared = explicit_quote_source(line, snippet[0], paths, ref_spans)
             if (not declared and (binding_boundaries(line) or line.lstrip().startswith('|'))
                     and not any(same_quote_scope(line, snippet[0], a) for a, _, _ in ref_spans)
@@ -797,7 +802,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     claims.append(target)
                 target.quote, target.quote_code = snippet[2], snippet[4]
                 target.text = reference_text + ' ' + snippet[3]
-        if not refs and previous_refs and snippets:
+        if not refs and previous_refs and snippets and not any(c.web_quote for c in quote_claims.values()):
             for c in previous_refs:
                 if c.report_line == line_no-1 and not c.quote and (
                     not snippets[0][4] or numbered_snippet(snippets[0][2]) or

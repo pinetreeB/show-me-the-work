@@ -66,7 +66,7 @@ def test_r2_same_basename_even_same_contents_is_ambiguous(tmp_path):
 
 
 def test_r2_quote_after_multiple_files_is_ambiguous(tmp_path):
-    result = inspect(tmp_path, '`widget.py` 및 `other.py`\n> second source line')
+    result = inspect(tmp_path, '`widget.py` 및 `other.py`\n> “second source line”')
     assert atoms(result, 'K5')[0]['reason_code'] == 'binding_ambiguous'
 
 
@@ -158,7 +158,7 @@ def test_r5_sha_boundaries(text, expected):
 
 
 @pytest.mark.parametrize('quote', ['“정확한 원문 인용 문장”', '"정확한 원문 인용 문장"',
-    "'정확한 원문 인용 문장'", '‘정확한 원문 인용 문장’', '\n> 정확한 원문 인용 문장', '\n1: 정확한 원문 인용 문장'])
+    "'정확한 원문 인용 문장'", '‘정확한 원문 인용 문장’', '\n> “정확한 원문 인용 문장”', '\n1: 정확한 원문 인용 문장'])
 def test_r6_quote_forms(tmp_path, quote):
     assert atoms(inspect(tmp_path, '`widget.py` '+quote, '정확한 원문 인용 문장'), 'K5')[0]['verdict'] == 'match'
 

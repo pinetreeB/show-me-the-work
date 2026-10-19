@@ -400,6 +400,10 @@ class Checker:
         self.loaded: dict[tuple[str, str], Evidence] = {}
 
     def select(self, c: Claim) -> list[Evidence]:
+        if c.web_quote:
+            return [e for e in self.transcript.evidence
+                    if e.url and not e.control_only and (c.current or not e.after_report)
+                    and (not c.path or normalize_url(c.path) == normalize_url(e.url))]
         observed = [e for e in self.transcript.evidence
                     if not e.control_only and (c.current or not e.after_report)
                     and c.path and (matches_path(c.path, e.path, self.aliases)
@@ -710,6 +714,18 @@ class Checker:
                 c.verdict, c.reason, c.reason_code = 'unverifiable', 'SHA가 속한 저장소 범위 미확정', 'repo_scope_unknown'
             return
         observations = self.select(c)
+        if c.web_quote:
+            results = [(check_one(c, e, self.budget), e) for e in observations]
+            c.source = {'observations': [e.metadata() for _, e in results],
+                        'search_scope': 'captured URL reads only'}
+            match = next((r for r, _ in results if r.verdict == 'match'), None)
+            if match:
+                c.verdict, c.reason, c.reason_code = match.verdict, match.reason, match.code
+            elif results and all(r.verdict == 'mismatch' for r, _ in results):
+                c.verdict, c.reason, c.reason_code = 'mismatch', results[0][0].reason, 'quote_mismatch'
+            else:
+                c.reason, c.reason_code = '웹 원문 읽기 근거 미확보', 'web_evidence_missing'
+            return
         if not c.path and c.check_type == 'K4':
             results = []
             for e in self.transcript.evidence:
