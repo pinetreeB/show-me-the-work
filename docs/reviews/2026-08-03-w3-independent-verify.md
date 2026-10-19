@@ -1,7 +1,7 @@
 # friction-fix W3 독립 검증 결과 (P4)
 
 - 일자: 2026-08-03 · 담당: qwen(우하)
-- 대상: `C:\Users\example\fable-lite` 브랜치 `worker/friction-w3-r2-opaque-whitelist`
+- 대상: `<작업폴더>\fable-lite` 브랜치 `worker/friction-w3-r2-opaque-whitelist`
 - 검증 대상 상태: **현재 HEAD `5177b99`**(지시의 `85c5f23` 이후 W0 scorecard fix 병합 포함). 지시대로 checkout 없이 현재 상태 그대로 검증. 읽기·임시 스크립트 실행만 수행, 추적 파일 무변경.
 - 재현 스크립트: `tmp/friction-fix/_pwsh_bypass.py`, `tmp/friction-fix/_adversarial_r2.py`, 신규 `tmp/friction-fix/_w3_independent_verify.py` (실제 R2 게이트 `evaluate_r2_destructive_gate` + 공유 분류기 `is_proven_read_only_command` 사용)
 

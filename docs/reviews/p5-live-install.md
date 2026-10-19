@@ -7,7 +7,7 @@
 
 ## 0. 설치 방법 선택
 
-`.claude-plugin/marketplace.json`이 없어 `plugin.json`과 일치시켜 신규 작성(name/description/version 동일화, `plugins[0].source="./"`). `claude plugin validate "C:/Users/example/fable-lite"` → **✔ Validation passed** (읽기 전용 검증, 상태 변경 없음).
+`.claude-plugin/marketplace.json`이 없어 `plugin.json`과 일치시켜 신규 작성(name/description/version 동일화, `plugins[0].source="./"`). `claude plugin validate "<작업폴더>/fable-lite"` → **✔ Validation passed** (읽기 전용 검증, 상태 변경 없음).
 
 설치 방법은 두 가지를 저울질했다:
 - **`claude --plugin-dir <path>`**: `claude --help`에 "Load a plugin from a directory ... **for this session only**"로 명시됨 — 세션 종료 시 아무 것도 영구화하지 않는다.

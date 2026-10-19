@@ -2,7 +2,7 @@
   "description": "arm 정체 매핑 — 블라인드 채점 완료 전까지 열람 금지. A/B 라벨은 픽스처마다 독립적으로 배정됨(고정 패턴 아님).",
   "arms": {
     "off": "fable-lite 플러그인 미적용 (claude -p --setting-sources project --no-session-persistence, 순정)",
-    "on": "fable-lite 플러그인 적용 (동일 + --plugin-dir C:\\Users\\example\\fable-lite)"
+    "on": "fable-lite 플러그인 적용 (동일 + --plugin-dir <작업폴더>\\fable-lite)"
   },
   "mapping": {
     "f1-bugfix-simple": { "A": "off", "B": "on" },

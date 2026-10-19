@@ -1,6 +1,6 @@
 # 사건 기록: 진짜 프로젝트 루트에서 빌드 산출물이 provenance 예산을 소진 (2026-07-16)
 
-> 기록 목적: **홈 루트가 아닌 정상 프로젝트 루트**(`private-repo`)에서 Stop 게이트가 `scope_too_large`/`byte_limit`으로 차단된 실측 사례.
+> 기록 목적: **홈 루트가 아닌 정상 프로젝트 루트**(`example-app`)에서 Stop 게이트가 `scope_too_large`/`byte_limit`으로 차단된 실측 사례.
 > 07-15 사건([[2026-07-15-home-root-provenance-scope-incident]])의 권고 A(홈 루트 → `unsupported` skip)는 **이미 구현·작동 중**이며, 본 건은 그 뒤에서 드러난 **별개 경로**다.
 > 발생 세션: wmux 좌상 Claude(Opus 4.8 1M), `/wmux-project-start`로 ERP 4-pane 셋업 중. **파일 변경 0건인 턴에서 차단**.
 > 성격: 코드 결함 아님. **스캔 예산과 빌드 산출물의 불일치** — 설정(`provenance-config.json`)으로 해소 가능.
@@ -9,7 +9,7 @@
 
 | | 07-15 (홈 루트) | **07-16 (본 건, 프로젝트 루트)** |
 |---|---|---|
-| 루트 | `C:\Users\example` (홈) | `C:\Users\example\private-repo` (**정상 프로젝트**) |
+| 루트 | `<작업폴더>` (홈) | `<작업폴더>\example-app` (**정상 프로젝트**) |
 | 게이트 판정 | `scope_too_large` | `scope_too_large` (동일 증상) |
 | 현재 상태 | **해소됨** — A안 구현으로 `unsupported`/`home_root` 판정 → 게이트 통과 | **차단 지속** |
 | 예산 초과 주체 | `.claude/projects` 세션 로그 (61%) | **`.next` 빌드 산출물 (73%)** |
@@ -31,12 +31,12 @@
 같은 세션 ID가 **두 루트의 ledger에 동시 등재**된다.
 
 ```
-# 홈 ledger: C:\Users\example\.fable-lite\ledger.json
+# 홈 ledger: <작업폴더>\.fable-lite\ledger.json
 active_turns["claude_code:e9f5b954-…:claude"]
   provenance_status        = 'unsupported'
   provenance_status_reason = 'home_root'        ← A안 작동 (차단 안 함)
 
-# 프로젝트 ledger: C:\Users\example\private-repo\.fable-lite\ledger.json
+# 프로젝트 ledger: <작업폴더>\example-app\.fable-lite\ledger.json
 active_turns["claude_code:e9f5b954-…:claude"]
   provenance_status        = 'scope_too_large'
   provenance_status_reason = 'byte_limit'       ← 실제 차단 주체
@@ -44,11 +44,11 @@ active_turns["claude_code:e9f5b954-…:claude"]
   provenance_incomplete    = False
 ```
 
-세션 cwd는 홈이지만 **Bash 도구의 작업 디렉토리가 `private-repo`**였다. 어댑터가 그 경로를 루트로 관측하여 프로젝트 ledger를 갱신하고, 거기서 `byte_limit`이 발생해 차단된다. 홈 쪽은 A안 덕에 조용히 통과하므로, **차단 원인이 홈이라고 오인하기 쉽다**(실제로 1차 조사에서 그렇게 오판했다 — §오진단 유발).
+세션 cwd는 홈이지만 **Bash 도구의 작업 디렉토리가 `example-app`**였다. 어댑터가 그 경로를 루트로 관측하여 프로젝트 ledger를 갱신하고, 거기서 `byte_limit`이 발생해 차단된다. 홈 쪽은 A안 덕에 조용히 통과하므로, **차단 원인이 홈이라고 오인하기 쉽다**(실제로 1차 조사에서 그렇게 오판했다 — §오진단 유발).
 
 게이트(`core/verify_state.py:236`)는 `status == SCOPE_TOO_LARGE AND mutation_capable is True`이면 **변경 0건이어도 무조건 block**. clean을 증명할 수 없으니 clean을 주장하지 않는다는 설계로, 동작 자체는 정직하다.
 
-### 예산 대비 실측 (`private-repo`, PowerShell 실측)
+### 예산 대비 실측 (`example-app`, PowerShell 실측)
 
 예산: `DEFAULT_MAX_SCAN_BYTES` = **256MB** (`core/provenance_types.py:11`)
 
@@ -72,8 +72,8 @@ active_turns["claude_code:e9f5b954-…:claude"]
 
 본 건에서 실제로 발생한 조사 궤적:
 
-1. 메시지("루트를 좁히세요")를 그대로 수용 → **"홈 루트가 원인"이라고 판단** → 사용자에게 "세션을 `private-repo`에서 재시작하자"고 제안.
-2. 그 제안은 **틀렸다**. 루트는 이미 `private-repo`로 관측되고 있었고, 재시작해도 `.next` 812MB는 그대로라 차단이 계속됐을 것이다.
+1. 메시지("루트를 좁히세요")를 그대로 수용 → **"홈 루트가 원인"이라고 판단** → 사용자에게 "세션을 `example-app`에서 재시작하자"고 제안.
+2. 그 제안은 **틀렸다**. 루트는 이미 `example-app`로 관측되고 있었고, 재시작해도 `.next` 812MB는 그대로라 차단이 계속됐을 것이다.
 3. ledger를 직접 읽고 나서야 `byte_limit`·프로젝트 루트가 드러남.
 
 **교훈**: 게이트 메시지는 `scope_too_large`의 **가장 흔한 원인(홈 루트)을 단정**해 안내한다. 07-15 사건 이후 홈 루트는 `unsupported`로 분기됐으므로, **남은 `scope_too_large`는 정의상 홈 루트가 아니다**. 그런데 메시지는 여전히 홈 루트 시절의 처방("루트를 좁히세요")을 준다. 이는 실행 불가능한 지시일 뿐 아니라 **적극적으로 오답을 가리킨다**.
@@ -95,7 +95,7 @@ active_turns["claude_code:e9f5b954-…:claude"]
 
 ## 해결 (본 건)
 
-`private-repo/.fable-lite/provenance-config.json` 신설:
+`example-app/.fable-lite/provenance-config.json` 신설:
 
 ```json
 {
@@ -113,7 +113,7 @@ active_turns["claude_code:e9f5b954-…:claude"]
 
 ```python
 from core.provenance_lifecycle_scope import scan_snapshot
-snap = scan_snapshot(Path(r'C:\Users\example\private-repo'), None, frozenset(), True)
+snap = scan_snapshot(Path(r'<작업폴더>\example-app'), None, frozenset(), True)
 ```
 
 | 항목 | 적용 전 | **적용 후 (실측)** |
@@ -131,7 +131,7 @@ snap = scan_snapshot(Path(r'C:\Users\example\private-repo'), None, frozenset(), 
 
 ### ⚠️ config 적용 후에도 ledger의 `active_turn`은 stale하게 남는다
 
-설정을 넣고 스캐너가 `complete`을 반환해도, `private-repo/.fable-lite/ledger.json`의 해당 턴은 **`scope_too_large`/`byte_limit` 그대로 유지**된다(실측: `blocks.stop=2`로 cap에 도달해 멈춘 턴).
+설정을 넣고 스캐너가 `complete`을 반환해도, `example-app/.fable-lite/ledger.json`의 해당 턴은 **`scope_too_large`/`byte_limit` 그대로 유지**된다(실측: `blocks.stop=2`로 cap에 도달해 멈춘 턴).
 
 - ledger 항목은 **그 루트에서 어댑터 훅이 다시 돌 때만** 갱신된다. 라이브러리를 직접 호출한 스캔(`scan_snapshot`)은 관측 경로가 아니므로 기록을 갱신하지 않는다.
 - 세션 cwd가 다른 곳(예: 홈)이면 **Bash의 `cd`만으로는 그 루트에서 훅이 돌지 않는다** — 루트는 훅 payload의 `project_root`/cwd에서 결정된다(`adapters/claude_code/common.py:42-52`).

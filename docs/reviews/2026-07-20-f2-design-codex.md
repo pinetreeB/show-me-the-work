@@ -378,7 +378,7 @@ recovery ledger save 직후 coordination 호출 전에 process-death를 주입�
 
 ```powershell
 & 'C:\Program Files\Git\bin\bash.exe' -lc \
-  'cd /c/Users/example/fable-lite-dev && PYTHONIOENCODING=utf-8 python -m pytest \
+  'cd <작업폴더>/fable-lite-dev && PYTHONIOENCODING=utf-8 python -m pytest \
    tests/test_multiagent_f3_observation.py \
    tests/test_provenance_lifecycle.py \
    tests/test_scorecard_coordination.py \

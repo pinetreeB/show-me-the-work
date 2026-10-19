@@ -43,7 +43,7 @@
 증거: `private-repo/.fable-lite/scorecard/coordination.jsonl:4` — 오늘(2026-07-20T12:27:38Z) 같은 세션의 두 번째 r2_deny, reason_code=unresolvable_target — 첫 차단(state_dir_protected, 10:51)과 21~22초 간격 패턴이 gates.jsonl의 `pretool.contract_missing`(10:51:22, 12:27:16) 뒤에 반복돼, 동일 워크플로 내 재시도로 명령 형태가 바뀌었음을 시사.
 신뢰도: 높음(채택) — 오늘 관측된 정확한 사유 문자열·시퀀스를 코드 실행만으로 재현한 유일한 가설.
 
-가설 4(경쟁): Windows 260자 장경로 제한으로 `Path.resolve()`가 실제 `OSError`를 던져 `canonicalization_unavailable`→`unresolvable_target`이 됐다(2026-07-19 client-a 서버 장경로 조사, `daa47b5`와 같은 유형이 destructive_guard의 resolve() 호출에도 있는가).
+가설 4(경쟁): Windows 260자 장경로 제한으로 `Path.resolve()`가 실제 `OSError`를 던져 `canonicalization_unavailable`→`unresolvable_target`이 됐다(2026-07-19 고객사A 서버 장경로 조사, `daa47b5`와 같은 유형이 destructive_guard의 resolve() 호출에도 있는가).
 증거: 프로브 Group H — 261자 상대경로(예상 절대경로 324자)로 `_canonicalize_target`을 직접 호출해도 `disposition='in_root'`로 정상 해석됨(이 머신 `LongPathsEnabled=1` 확인, 레지스트리값 조회로 검증).
 증거: 실제 대상 후보 경로(네임스페이스 계약 파일명·일반 보고서 경로)는 private-repo 루트 기준 150자 미만으로, 260자 경계에 근접하지 않음.
 기각: 가설 4 — 이 머신 조건에서 재현되지 않았고, 실제 대상 경로 길이도 임계값에 크게 못 미쳐 개연성이 낮다. (다른 물리 머신에서 실행됐을 가능성은 로그의 `host` 필드가 어댑터명일 뿐 물리 호스트명이 아니라 완전히 배제할 수는 없으나, 경로 길이 자체가 짧아 결정적 반증으로 충분하다.)

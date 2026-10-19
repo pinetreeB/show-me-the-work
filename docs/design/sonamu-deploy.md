@@ -2,7 +2,7 @@
 
 ## 1. 조사 결과 요약 (Online 및 파일 상태)
 * **네트워크 상태**: `pinetree-b` SSH 접속 가능 (Online 확인됨, Hostname: `Pinetree_B`)
-* **Repo 존재 여부**: `C:\Users\example\fable-lite` 디렉토리가 존재하지 않음 (`dir` 결과 "파일을 찾을 수 없습니다" 에러 확인). 원격에 복사하거나 clone 해야 함.
+* **Repo 존재 여부**: `<작업폴더>\fable-lite` 디렉토리가 존재하지 않음 (`dir` 결과 "파일을 찾을 수 없습니다" 에러 확인). 원격에 복사하거나 clone 해야 함.
 
 ## 2. 소나무봇 환경 (종속성 및 CLI 확인)
 * **Python 환경**: 시스템 전역 Python이 연결되어 있지 않음. `python --version` 실행 시 `uv trampoline failed to spawn Python child process. Caused by: entity not found (os error 2)` 발생. (설치 또는 `uv` 연결 필요)

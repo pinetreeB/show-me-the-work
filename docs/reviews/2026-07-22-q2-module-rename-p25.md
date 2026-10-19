@@ -1,6 +1,6 @@
 # P2.5 미션모드 심사 기록 — v2.6 Q2 모듈명 통일 (2026-07-22)
 
-> 대상 스펙: `docs/specs/v2.6-q2-module-rename.md` · 심사자: codex@고객사A(gpt-5.6-sol high, 격리 재현 실험 동반) + agy(Gemini 3.6 Flash High) + 좌상 Claude(중재·게이트)
+> 대상 스펙: `docs/specs/v2.6-q2-module-rename.md` · 심사자: codex@client-a(gpt-5.6-sol high, 격리 재현 실험 동반) + agy(Gemini 3.6 Flash High) + 좌상 Claude(중재·게이트)
 
 ## 라운드 요약
 - **1R**: codex 58 REJECT(critical 4: CI canonical 미검증·R3 클린 게이트 부재·혼재 설치 버전 오출력 실측·-W error 양립 불가) / agy 88 REJECT(critical 2: shim 템플릿 미고정·filterwarnings 부재) → rev2 반영.
@@ -11,7 +11,7 @@
 ## 원문 1 — agy 1R 심사 전문
 # v2.6 Q2 모듈명 통일 스펙 (`v2.6-q2-module-rename.md`) P2.5 미션모드 적대 심사 보고서
 
-- **심사 대상**: [v2.6-q2-module-rename.md](file:///C:/Users/example/fable-lite/docs/specs/v2.6-q2-module-rename.md)
+- **심사 대상**: [v2.6-q2-module-rename.md](file:///WORKDIR/fable-lite/docs/specs/v2.6-q2-module-rename.md)
 - **심사자**: wmux 좌하 리뷰분석 담당 (Antigravity `agy`, Gemini 3.6 Flash High)
 - **심사 일시**: 2026-07-22
 - **판정 점수**: **88점** / 100점 (미션모드 하드게이트 95점 미달 — **Critical 2건 적발**)
@@ -49,7 +49,7 @@
 - **관련 항목**: 스펙 §2-2, §4 수용기준 5 ("pytest 전체 green"), §5 R4
 - **증거 및 가설검증 (경쟁 가설 3개)**:
   - **가설 A (경고 발행 시 pytest `-W error` 파괴)**:
-    - **실측/근거**: 스펙은 `import fable_lite` 시 DeprecationWarning을 1회 발행하도록 규정하였습니다. 그러나 [pyproject.toml](file:///C:/Users/example/fable-lite/pyproject.toml#L25-L27) 및 pytest configuration에 `filterwarnings` ignore 설정이 수록되어 있지 않습니다. 타 에이전트나 사용자/CI 환경이 `pytest -W error` 또는 `PYTHONWARNINGS=error` 상태로 수용기준 5번 게이트(`pytest`)를 실행하거나 shim 테스트를 수행할 경우, `DeprecationWarning`이 즉시 처리되지 않은 예외(Uncaught Exception)로 승격되어 전체 CI/게이트가 Red(실패)로 파괴됩니다.
+    - **실측/근거**: 스펙은 `import fable_lite` 시 DeprecationWarning을 1회 발행하도록 규정하였습니다. 그러나 [pyproject.toml](file:///WORKDIR/fable-lite/pyproject.toml#L25-L27) 및 pytest configuration에 `filterwarnings` ignore 설정이 수록되어 있지 않습니다. 타 에이전트나 사용자/CI 환경이 `pytest -W error` 또는 `PYTHONWARNINGS=error` 상태로 수용기준 5번 게이트(`pytest`)를 실행하거나 shim 테스트를 수행할 경우, `DeprecationWarning`이 즉시 처리되지 않은 예외(Uncaught Exception)로 승격되어 전체 CI/게이트가 Red(실패)로 파괴됩니다.
   - **가설 B (stdout/stderr 계약 오염)**:
     - **실측/근거**: 훅 어댑터(`adapters/claude_code/user_prompt_submit.py` 등)는 stdout JSON을 주고 받습니다. `warnings.warn()`은 `sys.stderr`로 흘러가므로 standard stdout JSON 파싱은 무사하나, stderr와 stdout을 병합 파싱하는 구버전 래퍼나 `eval/design_e2e.py` 등의 서브프로세스 래퍼에서 `json.JSONDecodeError`가 발생할 수 있습니다.
   - **가설 C (1회/프로세스 제어 미흡으로 스팸 발생)**:
@@ -64,7 +64,7 @@
 
 - **심사 결과**: **안전 (Fail-closed 마비 없음)**
 - **분석 내용**:
-  스펙대로 `fable_lite/__main__.py` 물리 파일이 유지되고 `smtw.cli:main`을 포워딩할 경우, 구버전 플러그인 캐시나 훅이 `-m fable_lite`를 실행하더라도 실행 엔진은 신버전 `smtw` 코어를 그대로 거치게 됩니다. v2.5.0에서 통일된 [core/state_layout.py](file:///C:/Users/example/fable-lite/core/state_layout.py#L90-L103)의 `state_dir()` Facade가 `.smtw/` 및 `.fable-lite/` 상태 경로를 원자적으로 판별하므로 R2 차단, Provenance 스냅샷 검사, Verification Epoch 게이트는 원본과 동일하게 **fail-closed**로 완벽히 가동됩니다.
+  스펙대로 `fable_lite/__main__.py` 물리 파일이 유지되고 `smtw.cli:main`을 포워딩할 경우, 구버전 플러그인 캐시나 훅이 `-m fable_lite`를 실행하더라도 실행 엔진은 신버전 `smtw` 코어를 그대로 거치게 됩니다. v2.5.0에서 통일된 [core/state_layout.py](file:///WORKDIR/fable-lite/core/state_layout.py#L90-L103)의 `state_dir()` Facade가 `.smtw/` 및 `.fable-lite/` 상태 경로를 원자적으로 판별하므로 R2 차단, Provenance 스냅샷 검사, Verification Epoch 게이트는 원본과 동일하게 **fail-closed**로 완벽히 가동됩니다.
 
 ---
 
@@ -83,7 +83,7 @@
 - **위험도**: **Medium**
 - **관련 항목**: 스펙 §2-4, §2-6 (`fable-lite-cli.py`)
 - **분석 내용**:
-  [fable-lite-cli.py](file:///C:/Users/example/fable-lite/fable-lite-cli.py#L12)는 레거시 훅들의 절대경로 실행 계약입니다. `fable-lite-cli.py` 내부에서 `smtw.cli`를 호출할 경우 [cli.py](file:///C:/Users/example/fable-lite/fable_lite/cli.py#L40)의 `prog=\"smtw\"` 로 변경됨에 따라 도움말 및 에러 메시지가 `[smtw] ...`로 출력됩니다.
+  [fable-lite-cli.py](file:///WORKDIR/fable-lite/fable-lite-cli.py#L12)는 레거시 훅들의 절대경로 실행 계약입니다. `fable-lite-cli.py` 내부에서 `smtw.cli`를 호출할 경우 [cli.py](file:///WORKDIR/fable-lite/fable_lite/cli.py#L40)의 `prog=\"smtw\"` 로 변경됨에 따라 도움말 및 에러 메시지가 `[smtw] ...`로 출력됩니다.
   만약 구버전 어댑터나 훅의 정규식이 `fable_lite check`라는 문자열만 고정하여 파싱할 경우, 가이드 메시지 치환이 동작하지 않을 가능성이 있습니다.
 - **권고**: CLI 안내 문구 통합 시 구버전 어댑터 정규식 패턴과 호환되는지 `adapters/` E2E replay 테스트를 W3 게이트에 포함할 것.
 
@@ -241,7 +241,7 @@ sys.modules[__name__] = _smtw
 Windows Git Bash 기준 권고:
 
 ```bash
-cd /c/Users/example/fable-lite-dev
+cd <작업폴더>/fable-lite-dev
 git status --short
 git mv -- fable_lite smtw
 git status --short
