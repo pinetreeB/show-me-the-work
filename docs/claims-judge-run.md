@@ -6,7 +6,7 @@
 ```powershell
 python -X utf8 scripts/claims_eval.py generate --cases-root C:\Users\example\tmp\smtw-rework-20261018\cases --out C:\Users\example\tmp\smtw-rework-20261018\eval\phase2\l4-left
 python -X utf8 scripts/claims_eval.py summary --packets C:\Users\example\tmp\smtw-rework-20261018\eval\phase2\l4-left\packets
-python -X utf8 scripts/claims_judge.py --packets C:\Users\example\tmp\smtw-rework-20261018\eval\phase2\l4-left\packets --max-calls 4
+python -X utf8 scripts/claims_judge.py --packets C:\Users\example\tmp\smtw-rework-20261018\eval\phase2\l4-left\packets --max-calls 5
 ```
 
 두 번째 표의 출처와 가림 수를 직접 확인한 후에만 세 번째 줄을 실행합니다.
@@ -29,8 +29,11 @@ judge-runs/<회차>/에 따로 저장합니다. 판정 결과는 “LLM 참고 �
 원래 대조기의 status·요약·종료 코드는 변경하지 않습니다. 잘못된 인용은 표시하지 않습니다.
 호출 실패·원출력 형식 오류는 중단하며 자동 재시도하지 않습니다.
 
-L4는 고정 출처 목록(SMTW·agent-gate)에서 실제 match한 문자 인용만 사용합니다. 원본 100개와
-변조 100개를 만들며, 현재 허용 원문은 고유 7개라 재표집합니다. 100개 독립 사례가 아닙니다.
+L4는 SMTW 95d18194와 agent-gate 3a589085의 저장소 파일 줄을 git show로 읽어
+경로:줄 번호와 정확한 인용을 포함한 합성 문장을 만듭니다. 코드·문서 줄을 섞으며,
+20자 미만 원문·민감 경로·비밀 패턴이 있는 줄과 발췌는 제외합니다.
+원본 100개와 변조 100개를 만들고, 원문 문자열이 같은 줄은 중복으로 셉니다.
+서로 다른 원문이 60개 미만이면 생성을 거부합니다. 가능한 한 원문 재사용 없이 선택합니다.
 정답과 변조 종류·고유 원문 수는 packets의 형제 폴더 truth에만 저장합니다.
 원본·변조 모두 동일한 필드와 불투명 id를 쓰며 패킷에는 정답이나 변조 이름을 넣지 않습니다.
 숫자·식별자·인용 토큰·줄 이동·부정 반전을 각각 20개씩 사용합니다.

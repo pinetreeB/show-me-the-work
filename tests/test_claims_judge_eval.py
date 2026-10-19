@@ -17,10 +17,16 @@ def no_real_launcher(monkeypatch):
 
 
 def pool():
-    return [{"case":"P-pilot-agy-research","path":"~/show-me-the-work/sample.py",
-             "line":1,"quote":"MAX_LIMIT = 7","window":{1:"MAX_LIMIT = 7",2:"MIN_LIMIT = 1"},
-             "text":"1: MAX_LIMIT = 7\n2: MIN_LIMIT = 1","redactions":{},
-             "report_line":10,"observation":"synthetic"}]
+    rows = []
+    for index in range(100):
+        quote = f"MAX_LIMIT = 7; fixture_index = {index}"
+        category = "code" if index % 2 else "document"
+        rows.append({"case":"P-pilot-agy-research","path":"~/show-me-the-work/sample.py",
+                     "line":1,"quote":quote,"window":{1:quote,2:"MIN_LIMIT = 1"},
+                     "text":"1: " + quote + "\n2: MIN_LIMIT = 1","redactions":{},
+                     "report_line":1,"observation":"synthetic", "category":category,
+                     "source":"git_show", "revision":"a" * 40})
+    return rows
 
 
 def make_run(path,sent,truth,*,wrong=False,bad_quote=False):
@@ -38,12 +44,16 @@ def make_run(path,sent,truth,*,wrong=False,bad_quote=False):
 
 def test_200_paired_items_truth_separation_and_no_answer_hints(tmp_path):
     result=generate(pool(),tmp_path/"eval")
-    assert result["items"]==200 and result["unique_originals"]==1 and result["model_calls"]==0
+    assert result["items"]==200 and result["unique_originals"]>=60 and result["model_calls"]==0
     folder=tmp_path/"eval/packets";sent=load_sent_items(folder)
     truth=json.loads((tmp_path/"eval/truth/answers.json").read_text(encoding="utf-8"))
     assert sum(v["verdict"]=="supported" for v in truth["items"].values())==100
     assert sum(v["verdict"]=="contradicted" for v in truth["items"].values())==100
     assert set(truth["items"])==set(sent)
+    assert truth["unique_used_quotes"] >= 60
+    assert set(truth["originals_by_category"]) == {"code", "document"}
+    assert all(item["excerpts"][0]["source"] == "git_show" for item in sent.values())
+    assert all(item["excerpts"][0]["revision"] == "a" * 40 for item in sent.values())
     forbidden={"truth","expected","verdict","mutation","is_original","answers","sampling"}
     def walk(value):
         if isinstance(value,dict):
@@ -100,3 +110,43 @@ def test_all_wrapper_calls_in_pipeline_use_injected_fake(tmp_path):
         parent_env={},usage_reader=lambda:{"known":True,"five_hour":0,"weekly":0},
         executable="claude-p",output_root=tmp_path/"calls")
     assert len(calls)==result["calls"] and result["execution"]=="injected"
+
+
+def test_repeated_text_cannot_inflate_original_diversity(tmp_path):
+    with pytest.raises(ValueError, match="distinct original"):
+        generate([pool()[0]] * 100, tmp_path / "repeated")
+    assert not (tmp_path / "repeated/packets").exists()
+
+
+def test_fixed_repo_pool_filters_paths_before_read_and_lines_after_read(tmp_path, monkeypatch):
+    from smtw.claims import judge_eval as evaluation
+    calls = []
+    class FixedRepository:
+        def __init__(self, roots, commits, aliases, budget):
+            self.commits = commits
+        def files(self, root, revision):
+            assert self.commits[str(root)] == revision
+            return [".codex/config.toml", "docs/credentials.txt", "eval/pilot/hidden.md",
+                    "docs/guide.md", "smtw/module.py"]
+        def git(self, root, operation, object_id):
+            revision, name = object_id.split(":", 1)
+            assert operation == "show" and self.commits[str(root)] == revision
+            assert name in {"docs/guide.md", "smtw/module.py"}
+            calls.append((str(root), object_id))
+            prefix = "doc" if name.endswith(".md") else "code"
+            rows = ["short", "password=synthetic_example_4821",
+                     "the source at ~/.codex/config.toml must never enter the corpus",
+                     "padding statement for synthetic corpus safety",
+                     "padding statement for synthetic corpus safety"]
+            rows += [f"{prefix} {root.name} original source line number {n}" for n in range(80)]
+            return SimpleNamespace(returncode=0, stdout="\n".join(rows).encode("utf-8"))
+    monkeypatch.setattr(evaluation, "Repositories", FixedRepository)
+    rows, receipts = evaluation.collect_pool(tmp_path)
+    assert len({r["quote"] for r in rows}) >= 60
+    assert {r["category"] for r in rows} == {"code", "document"}
+    assert {r["case"] for r in rows} == set(evaluation.CASES)
+    assert len(calls) == 4
+    assert {r["revision"] for r in rows} == {v["revision"] for v in receipts.values()}
+    assert all(len(r["quote"]) >= 20 and not r["redactions"] for r in rows)
+    assert all("synthetic_example" not in r["text"] and ".codex" not in r["text"] for r in rows)
+    assert len({r["quote"] for r in rows}) == len(rows)

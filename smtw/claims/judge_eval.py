@@ -10,13 +10,12 @@ import random
 import re
 
 from .advisory import load_sent_items, read_json, validate_judgments, verify_judgments
-from .check import run
 from .judge import validate_scope
 from .judge_contract import validate_contract
 from .model import Budget
 from .packets import (display_path, encoded, redact, sensitive_path,
-                      transcript_sources, write_packets)
-from .paths import matches_path
+                      sensitive_reference, write_packets)
+from .sources import Repositories
 
 HERE = Path(__file__).resolve().parent
 CASES = ("N-research-codex-today", "P-pilot-agy-research")
@@ -30,57 +29,91 @@ def allowed_source(case, path):
             and any(visible.startswith(p.casefold()) for p in scope[case]))
 
 
+# The same public-case repository snapshots used by the deterministic evaluation.
+FIXED_SOURCES = (
+    ("N-research-codex-today", "show-me-the-work", "95d18194dee601151b4181ae328b58d876f5f493"),
+    ("P-pilot-agy-research", ".claude/harness/agent-gate", "3a58908572afe8dd1575e31ff5be4f22cea3ac0b"),
+)
+CODE_SUFFIXES = {".py", ".mjs", ".js", ".ts"}
+DOCUMENT_SUFFIXES = {".md", ".rst", ".txt"}
+
+
+def corpus_file(name: str) -> bool:
+    """Filter metadata before any blob read; never inspect settings or eval trees."""
+    path = Path(name)
+    return (bool(name) and not sensitive_path(name)
+            and not any(part.startswith(".") or part in {"tests", "eval", "research", "reviews", "pilot"}
+                        for part in path.parts)
+            and (len(path.parts) == 1 or path.parts[0] in {"smtw", "core", "adapters", "docs"})
+            and path.suffix.lower() in CODE_SUFFIXES | DOCUMENT_SUFFIXES)
+
+
 def collect_pool(cases_root: Path):
-    """Use literal match quotes from the fixed public cases and their captured reads."""
-    pool, receipts = {}, {}
-    for case in CASES:
-        directory = cases_root / "regression" / case
-        if case == "P-pilot-agy-research":
-            directory = cases_root / "pilot-agy-research-20261018"
-            report, transcript, kind = directory/"research-agy.md", directory/"transcript_full.jsonl", "agy"
-        else:
-            report, transcript, kind = directory/"report.md", directory/"rollout.jsonl", "codex"
-        text = report.read_text(encoding="utf-8")
-        checked = run(report, **{kind:transcript if kind == "codex" else str(transcript)}, time_limit=120)
-        sources = transcript_sources(transcript, kind, report, text, {}, Budget(120))
-        receipts[case] = {"report_sha256":hashlib.sha256(report.read_bytes()).hexdigest(),
-                          "transcript_sha256":hashlib.sha256(transcript.read_bytes()).hexdigest(),
-                          "checker_status":checked["status"]}
-        for claim in checked["claims"]:
-            if claim["check_type"] not in {"K1","K5"} or claim["verdict"] != "match":
+    """Build synthetic citations from safe file lines at the pinned public revisions.
+
+    cases_root remains accepted for CLI compatibility; reports/transcripts and the
+    working tree are not corpus inputs.
+    """
+    pool, receipts, seen = [], {}, set()
+    for case, relative_root, revision in FIXED_SOURCES:
+        root = Path.home() / relative_root
+        repo = Repositories([str(root)], {str(root): revision}, {}, Budget(120))
+        names = repo.files(root, revision)
+        if names is None:
+            raise ValueError("fixed evaluation repository unavailable")
+        receipt = {"revision": revision, "source": "git_show", "files": {}}
+        counts = Counter()
+        for name in sorted(names):
+            if not corpus_file(name):
                 continue
-            matrix = claim["source"].get("quote_check",{}).get("matrix",[])
-            for row in matrix:
-                if row["verdict"] != "match" or not allowed_source(case,row["path"]):
+            category = "code" if Path(name).suffix.lower() in CODE_SUFFIXES else "document"
+            if counts[category] >= 200:
+                continue
+            path = "~/" + relative_root + "/" + name
+            if not allowed_source(case, path):
+                continue
+            result = repo.git(root, "show", revision + ":" + name)
+            if result.returncode:
+                raise ValueError("fixed evaluation file unavailable")
+            try:
+                text = result.stdout.decode("utf-8", errors="strict")
+            except UnicodeDecodeError:
+                continue
+            if "\x00" in text:
+                continue
+            lines = dict(enumerate(text.splitlines(), 1))
+            taken = 0
+            for number, content in lines.items():
+                quote = content.strip()
+                if (not 20 <= len(quote) <= 180 or quote in seen
+                        or sensitive_reference(quote) or redact(quote)[0] != quote):
                     continue
-                quote = re.sub(r"(?m)^\s*(?:line\s+)?\d+: ?", "", row["quote"]).strip()
-                if not 8 <= len(quote) <= 180 or "\n" in quote or redact(quote)[0] != quote:
+                window = {n: lines[n] for n in range(max(1, number-1), number+2) if n in lines}
+                excerpt = "\n".join(f"{n}: {v}" for n, v in window.items())
+                if any(sensitive_reference(v) for v in window.values()):
                     continue
-                for source in sources:
-                    if not matches_path(row["path"],source.path) or not allowed_source(case,source.path):
-                        continue
-                    # Keep only this successful observation, not an unrelated version.
-                    location = row.get("observation",{}).get("location","")
-                    if location and source.observation != hashlib.sha256(location.encode()).hexdigest()[:16]:
-                        continue
-                    for number, content in source.lines.items():
-                        if quote not in content:
-                            continue
-                        window = {n:source.lines[n] for n in range(max(1,number-1),number+2)
-                                  if n in source.lines}
-                        excerpt = "\n".join(f"{n}: {v}" for n,v in window.items())
-                        safe, counts = redact(excerpt,preserve_source_lines=True)
-                        if len(safe)>1500 or quote not in safe:
-                            continue
-                        key=(display_path(source.path),number,quote,safe)
-                        pool[key]={"case":case,"path":display_path(source.path),"line":number,
-                                   "quote":quote,"window":window,"text":safe,"redactions":counts,
-                                   "report_line":claim["report_line"],"observation":source.observation}
-    return list(pool.values()), receipts
+                safe, redactions = redact(excerpt, preserve_source_lines=True)
+                if redactions or safe != excerpt or len(safe) > 1500:
+                    continue
+                row = {"case": case, "path": path, "line": number, "quote": quote,
+                       "window": window, "text": safe, "redactions": {}, "report_line": 1,
+                       "citation_path": name,
+                       "source": "git_show", "revision": revision, "category": category,
+                       "observation": hashlib.sha256((revision + ":" + name).encode()).hexdigest()[:16]}
+                if len(statement(row)) > 300 or redact(statement(row))[0] != statement(row):
+                    continue
+                pool.append(row); seen.add(quote); counts[category] += 1; taken += 1
+                if taken >= 30 or counts[category] >= 200:
+                    break
+            if taken:
+                receipt["files"][name] = hashlib.sha256(result.stdout).hexdigest()
+        receipt["pool_by_category"] = dict(counts)
+        receipts[relative_root] = receipt
+    return pool, receipts
 
 
 def statement(row, quote=None, number=None, negated=False):
-    return (f'At line {row["line"] if number is None else number}, the source '
+    return (f'{row.get("citation_path", row["path"].rsplit("/", 1)[-1])}:{row["line"] if number is None else number} '
             + ("does not contain" if negated else "contains") + " the quotation "
             + json.dumps(row["quote"] if quote is None else quote, ensure_ascii=False) + ".")
 
@@ -116,13 +149,25 @@ def generate(pool: list[dict], output: Path, *, seed: int = 2, per_kind: int = 2
         raise ValueError("corpus source outside the fixed allowlist")
     rng=random.Random(seed)
     items, truth, item_cases, used = [], {}, {}, set()
+    categories = Counter()
     for kind in KINDS:
-        eligible=[row for row in pool if mutate(row,kind,random.Random(seed)) is not None]
+        eligible = []
+        for row in pool:
+            altered = mutate(row, kind, rng)
+            if (altered and len(altered) <= 300 and len(statement(row)) <= 300
+                    and redact(altered)[0] == altered
+                    and redact(statement(row))[0] == statement(row)):
+                eligible.append((row, altered))
         if not eligible:raise ValueError("no valid paired mutation for "+kind)
         for _ in range(per_kind):
-            row=rng.choice(eligible)
-            altered=mutate(row,kind,rng)
-            used.add((row["path"],row["line"],row["quote"]))
+            available = [pair for pair in eligible if pair[0]["quote"] not in used] or eligible
+            # Mix code/document and both approved roots without answer-dependent fields.
+            groups = sorted({(r["case"], r.get("category", "code")) for r, _altered in available})
+            group = groups[_ % len(groups)]
+            row, altered = rng.choice([pair for pair in available
+                                       if (pair[0]["case"], pair[0].get("category", "code")) == group])
+            used.add(row["quote"])
+            categories[row.get("category", "code")] += 1
             for claim, verdict in [(statement(row),"supported"),(altered,"contradicted")]:
                 key="q-"+f"{rng.getrandbits(64):016x}"
                 if key in truth:raise ValueError("duplicate generated id")
@@ -130,11 +175,13 @@ def generate(pool: list[dict], output: Path, *, seed: int = 2, per_kind: int = 2
                     raise ValueError("mutation is not safe after redaction")
                 item={"id":key,"branch":"evidence_review","report_line":row["report_line"],
                       "claim":claim,"before":"","after":"","redactions":row["redactions"],
-                      "excerpts":[{"path":row["path"],"source":"transcript_read","revision":"",
+                      "excerpts":[{"path":row["path"],"source":row.get("source", "git_show"),"revision":row.get("revision", ""),
                                    "ref":1,"version":"A","observation":row["observation"],
                                    "text":row["text"],"redactions":row["redactions"]}]}
                 items.append(item);item_cases[key]=row["case"]
                 truth[key]={"verdict":verdict,"mutation":kind if verdict=="contradicted" else None}
+    if len(used) < min(60, per_kind * len(KINDS)):
+        raise ValueError("L4 requires at least 60 distinct original quotations (or all small-sample pairs)")
     rng.shuffle(items)
     packets=[]
     for item in items:
@@ -145,8 +192,9 @@ def generate(pool: list[dict], output: Path, *, seed: int = 2, per_kind: int = 2
         "selected_count":len(items),"sent_count":len(items),"deferred_count":0})
     truth_dir=output/"truth";truth_dir.mkdir(parents=True)
     answers={"version":1,"seed":seed,"items":truth,"source_receipts":receipts or {},
-             "unique_pool_quotes":len({(r["path"],r["line"],r["quote"]) for r in pool}),
-             "unique_used_quotes":len(used),"sampling":"with_replacement",
+             "unique_pool_quotes":len({r["quote"] for r in pool}),
+             "unique_used_quotes":len(used),"sampling":"prefer_distinct_quote_text",
+              "originals_by_category":dict(categories),
              "original_count":len(items)//2,"mutation_count":len(items)//2}
     (truth_dir/"answers.json").write_text(json.dumps(answers,ensure_ascii=False,indent=2),encoding="utf-8")
     validate_scope(manifest,load_sent_items(output/"packets"))
