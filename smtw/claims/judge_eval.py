@@ -11,6 +11,7 @@ import re
 
 from .advisory import load_sent_items, read_json, validate_judgments, verify_judgments
 from .judge import validate_scope
+from .judge_scope import JudgeScope, load_scope
 from .judge_contract import validate_contract
 from .model import Budget
 from .packets import (display_path, encoded, redact, sensitive_path,
@@ -18,22 +19,15 @@ from .packets import (display_path, encoded, redact, sensitive_path,
 from .sources import Repositories
 
 HERE = Path(__file__).resolve().parent
-CASES = ("N-research-codex-today", "P-pilot-agy-research")
 KINDS = ("quote_token", "line_move", "identifier", "number", "negation")
 
 
-def allowed_source(case, path):
-    scope = read_json(HERE / "judge-scope.json")["cases"]
-    visible = display_path(path).replace("\\", "/").casefold()
-    return (case in scope and not sensitive_path(visible) and ".." not in visible.split("/")
-            and any(visible.startswith(p.casefold()) for p in scope[case]))
+def allowed_source(case, path, scope: JudgeScope):
+    visible = display_path(path).replace(chr(92), "/").casefold()
+    return (case in scope.cases and not sensitive_path(visible) and ".." not in visible.split("/")
+            and any(visible.startswith(p.casefold()) for p in scope.cases[case]))
 
 
-# The same public-case repository snapshots used by the deterministic evaluation.
-FIXED_SOURCES = (
-    ("N-research-codex-today", "show-me-the-work", "95d18194dee601151b4181ae328b58d876f5f493"),
-    ("P-pilot-agy-research", ".claude/harness/agent-gate", "3a58908572afe8dd1575e31ff5be4f22cea3ac0b"),
-)
 CODE_SUFFIXES = {".py", ".mjs", ".js", ".ts"}
 DOCUMENT_SUFFIXES = {".md", ".rst", ".txt"}
 
@@ -48,15 +42,23 @@ def corpus_file(name: str) -> bool:
             and path.suffix.lower() in CODE_SUFFIXES | DOCUMENT_SUFFIXES)
 
 
-def collect_pool(cases_root: Path):
-    """Build synthetic citations from safe file lines at the pinned public revisions.
-
-    cases_root remains accepted for CLI compatibility; reports/transcripts and the
-    working tree are not corpus inputs.
-    """
+def collect_pool(scope_file: Path):
+    """Build safe file-line citations only from explicitly scoped fixed revisions."""
+    scope = load_scope(scope_file)
+    if not scope.repositories:
+        raise ValueError("scope needs fixed evaluation repositories")
+    for source in scope.repositories:
+        if (not isinstance(source, dict)
+                or not isinstance(source.get("root"), str) or not source["root"]
+                or not isinstance(source.get("revision"), str)
+                or not re.fullmatch(r"[0-9a-fA-F]{40}", source["revision"])
+                or not isinstance(source.get("prefix"), str)
+                or source["prefix"] not in scope.cases.get(source.get("case"), [])):
+            raise ValueError("invalid fixed evaluation repository scope")
     pool, receipts, seen = [], {}, set()
-    for case, relative_root, revision in FIXED_SOURCES:
-        root = Path.home() / relative_root
+    for source in scope.repositories:
+        case, revision, prefix = source["case"], source["revision"], source["prefix"]
+        root = Path(source["root"]).expanduser().resolve()
         repo = Repositories([str(root)], {str(root): revision}, {}, Budget(120))
         names = repo.files(root, revision)
         if names is None:
@@ -69,8 +71,8 @@ def collect_pool(cases_root: Path):
             category = "code" if Path(name).suffix.lower() in CODE_SUFFIXES else "document"
             if counts[category] >= 200:
                 continue
-            path = "~/" + relative_root + "/" + name
-            if not allowed_source(case, path):
+            path = prefix + name
+            if not allowed_source(case, path, scope):
                 continue
             result = repo.git(root, "show", revision + ":" + name)
             if result.returncode:
@@ -108,7 +110,7 @@ def collect_pool(cases_root: Path):
             if taken:
                 receipt["files"][name] = hashlib.sha256(result.stdout).hexdigest()
         receipt["pool_by_category"] = dict(counts)
-        receipts[relative_root] = receipt
+        receipts[prefix] = receipt
     return pool, receipts
 
 
@@ -139,13 +141,14 @@ def mutate(row, kind, rng):
     return statement(row,quote=quote[:match.start()]+changed+quote[match.end():])
 
 
-def generate(pool: list[dict], output: Path, *, seed: int = 2, per_kind: int = 20, receipts=None):
+def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2, per_kind: int = 20, receipts=None):
     if not pool or type(per_kind) is not int or per_kind < 1:
         raise ValueError("no usable matched quotes or invalid sample count")
     if output.exists() and any(output.iterdir()):
         raise ValueError("evaluation output must be empty")
     # Validate before creating any packet, including caller-provided pool fixtures.
-    if any(not allowed_source(row["case"],row["path"]) for row in pool):
+    scope = load_scope(scope_file)
+    if any(not allowed_source(row["case"],row["path"],scope) for row in pool):
         raise ValueError("corpus source outside the fixed allowlist")
     rng=random.Random(seed)
     items, truth, item_cases, used = [], {}, {}, set()
@@ -188,7 +191,7 @@ def generate(pool: list[dict], output: Path, *, seed: int = 2, per_kind: int = 2
         if not packets or len(encoded({**packets[-1],"data_block":[*packets[-1]["data_block"],item]}))>30000:
             packets.append({"version":1,"instructions":"Evidence review data.","data_block":[]})
         packets[-1]["data_block"].append(item)
-    manifest=write_packets(output/"packets",packets,{"item_cases":item_cases,
+    manifest=write_packets(output/"packets",packets,{"item_cases":item_cases,"scope_sha256":scope.sha256,
         "selected_count":len(items),"sent_count":len(items),"deferred_count":0})
     truth_dir=output/"truth";truth_dir.mkdir(parents=True)
     answers={"version":1,"seed":seed,"items":truth,"source_receipts":receipts or {},
@@ -197,14 +200,14 @@ def generate(pool: list[dict], output: Path, *, seed: int = 2, per_kind: int = 2
               "originals_by_category":dict(categories),
              "original_count":len(items)//2,"mutation_count":len(items)//2}
     (truth_dir/"answers.json").write_text(json.dumps(answers,ensure_ascii=False,indent=2),encoding="utf-8")
-    validate_scope(manifest,load_sent_items(output/"packets"))
+    validate_scope(manifest,load_sent_items(output/"packets"),scope)
     return {"items":len(items),"packets":len(packets),"unique_originals":len(used),
             "model_calls":0,"answers":str(truth_dir/"answers.json")}
 
 
-def summarize(folder: Path) -> str:
+def summarize(folder: Path, *, scope_file: Path) -> str:
     sent=load_sent_items(folder);manifest=read_json(folder/"manifest.json")
-    validate_contract(manifest);validate_scope(manifest,sent)
+    validate_contract(manifest);validate_scope(manifest,sent,load_scope(scope_file))
     lines=["| Packet | Items | Excerpt source paths | Redactions |",
            "|---|---:|---|---:|"]
     for entry in manifest["packets"]:
@@ -233,7 +236,8 @@ def read_run(folder: Path, sent: dict):
     return rows,displayed,not_in
 
 
-def score(folder: Path, truth_file: Path, runs: list[Path]):
+def score(folder: Path, truth_file: Path, runs: list[Path], *, scope_file: Path):
+    summarize(folder, scope_file=scope_file)
     if len(runs) not in {1,3}:raise ValueError("supply one run or exactly three reproducibility runs")
     sent=load_sent_items(folder);truth=read_json(truth_file)["items"]
     if set(truth)!=set(sent):raise ValueError("truth ids differ from sent ids")
@@ -280,16 +284,25 @@ def score_table(result):
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest="action",required=True)
-    g=sub.add_parser("generate");g.add_argument("--cases-root",type=Path,required=True);g.add_argument("--out",type=Path,required=True)
+    g=sub.add_parser("generate")
+    g.add_argument("--out-root",type=Path,required=True)
     h=sub.add_parser("summary");h.add_argument("--packets",type=Path,required=True)
-    s=sub.add_parser("score");s.add_argument("--packets",type=Path,required=True);s.add_argument("--truth",type=Path,required=True);s.add_argument("--runs",type=Path,nargs="+",required=True);s.add_argument("--out",type=Path,required=True)
+    s=sub.add_parser("score")
+    s.add_argument("--packets",type=Path,required=True)
+    s.add_argument("--truth",type=Path,required=True)
+    s.add_argument("--runs",type=Path,nargs="+",required=True)
+    s.add_argument("--out-root",type=Path,required=True)
+    for command in (g,h,s):
+        command.add_argument("--scope-file",type=Path,required=True)
     args=parser.parse_args(argv)
     if args.action=="generate":
-        pool,receipts=collect_pool(args.cases_root)
-        print(json.dumps(generate(pool,args.out,receipts=receipts),ensure_ascii=False,indent=2))
-    elif args.action=="summary":print(summarize(args.packets))
+        pool,receipts=collect_pool(args.scope_file)
+        print(json.dumps(generate(pool,args.out_root,scope_file=args.scope_file,receipts=receipts),ensure_ascii=False,indent=2))
+    elif args.action=="summary":
+        print(summarize(args.packets,scope_file=args.scope_file))
     else:
-        result=score(args.packets,args.truth,args.runs)
-        args.out.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
+        result=score(args.packets,args.truth,args.runs,scope_file=args.scope_file)
+        args.out_root.mkdir(parents=True,exist_ok=True)
+        (args.out_root/"score.json").write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
         print(score_table(result))
     return 0

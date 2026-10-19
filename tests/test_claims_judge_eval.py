@@ -7,6 +7,12 @@ import pytest
 from smtw.claims.advisory import load_sent_items,verify_judgments
 from smtw.claims.judge_eval import generate,score,score_table,summarize
 from smtw.claims import judge
+from tests.claims_judge_support import make_scope
+
+
+@pytest.fixture
+def scope_file(tmp_path):
+    return make_scope(tmp_path)
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +27,7 @@ def pool():
     for index in range(100):
         quote = f"MAX_LIMIT = 7; fixture_index = {index}"
         category = "code" if index % 2 else "document"
-        rows.append({"case":"P-pilot-agy-research","path":"~/show-me-the-work/sample.py",
+        rows.append({"case":"example-case","path":"~/example-repo/sample.py",
                      "line":1,"quote":quote,"window":{1:quote,2:"MIN_LIMIT = 1"},
                      "text":"1: " + quote + "\n2: MIN_LIMIT = 1","redactions":{},
                      "report_line":1,"observation":"synthetic", "category":category,
@@ -42,8 +48,8 @@ def make_run(path,sent,truth,*,wrong=False,bad_quote=False):
     return path
 
 
-def test_200_paired_items_truth_separation_and_no_answer_hints(tmp_path):
-    result=generate(pool(),tmp_path/"eval")
+def test_200_paired_items_truth_separation_and_no_answer_hints(tmp_path, scope_file):
+    result=generate(pool(),tmp_path/"eval",scope_file=scope_file)
     assert result["items"]==200 and result["unique_originals"]>=60 and result["model_calls"]==0
     folder=tmp_path/"eval/packets";sent=load_sent_items(folder)
     truth=json.loads((tmp_path/"eval/truth/answers.json").read_text(encoding="utf-8"))
@@ -63,21 +69,21 @@ def test_200_paired_items_truth_separation_and_no_answer_hints(tmp_path):
             for child in value:walk(child)
     for file in folder.glob("*.json"):walk(json.loads(file.read_text(encoding="utf-8")))
     assert {p.name for p in folder.iterdir()}=={"manifest.json",*[p.name for p in folder.glob("packet-*.json")]}
-    assert "| Packet | Items |" in summarize(folder)
+    assert "| Packet | Items |" in summarize(folder,scope_file=scope_file)
 
 
-def test_outside_case_and_source_rejected(tmp_path):
-    for field,value in [("case","P-yj-1015-gap"),("path","~/scoopridersapp/task.py")]:
+def test_outside_case_and_source_rejected(tmp_path, scope_file):
+    for field,value in [("case","unapproved-case"),("path","~/unapproved-repo/task.py")]:
         rows=pool();rows[0][field]=value
-        with pytest.raises(ValueError):generate(rows,tmp_path/field)
+        with pytest.raises(ValueError):generate(rows,tmp_path/field,scope_file=scope_file)
 
 
-def test_scores_and_three_run_agreement_are_from_verified_outputs(tmp_path):
-    generate(pool(),tmp_path/"eval",per_kind=1)
+def test_scores_and_three_run_agreement_are_from_verified_outputs(tmp_path, scope_file):
+    generate(pool(),tmp_path/"eval",scope_file=scope_file,per_kind=1)
     folder=tmp_path/"eval/packets";sent=load_sent_items(folder)
     truth_file=tmp_path/"eval/truth/answers.json";truth=json.loads(truth_file.read_text(encoding="utf-8"))["items"]
     runs=[make_run(tmp_path/f"r{i}",sent,truth,wrong=i==2) for i in range(3)]
-    result=score(folder,truth_file,runs)
+    result=score(folder,truth_file,runs,scope_file=scope_file)
     assert result["runs"][0]["recall"]==1 and result["runs"][0]["precision"]==1
     assert result["runs"][2]["false_positive"]==1
     assert result["runs"][2]["false_display_rate"]==0.2
@@ -86,19 +92,19 @@ def test_scores_and_three_run_agreement_are_from_verified_outputs(tmp_path):
     assert score_table(result).splitlines()[0]=="| Run | Recall | Precision | False display | Quote not in excerpt | Unjudged |"
 
 
-def test_bad_quote_not_displayed_and_forged_verifier_rejected(tmp_path):
-    generate(pool(),tmp_path/"eval",per_kind=1)
+def test_bad_quote_not_displayed_and_forged_verifier_rejected(tmp_path, scope_file):
+    generate(pool(),tmp_path/"eval",scope_file=scope_file,per_kind=1)
     folder=tmp_path/"eval/packets";sent=load_sent_items(folder)
     truth_file=tmp_path/"eval/truth/answers.json";truth=json.loads(truth_file.read_text(encoding="utf-8"))["items"]
     run=make_run(tmp_path/"run",sent,truth,bad_quote=True)
-    assert score(folder,truth_file,[run])["runs"][0]["quote_not_in_excerpt_rate"]==0.1
+    assert score(folder,truth_file,[run],scope_file=scope_file)["runs"][0]["quote_not_in_excerpt_rate"]==0.1
     path=run/"verified-001.json";value=json.loads(path.read_text(encoding="utf-8"));value["counts"]["quote_verified"]+=1
     path.write_text(json.dumps(value))
-    with pytest.raises(ValueError):score(folder,truth_file,[run])
+    with pytest.raises(ValueError):score(folder,truth_file,[run],scope_file=scope_file)
 
 
-def test_all_wrapper_calls_in_pipeline_use_injected_fake(tmp_path):
-    generate(pool(),tmp_path/"eval",per_kind=1)
+def test_all_wrapper_calls_in_pipeline_use_injected_fake(tmp_path, scope_file):
+    generate(pool(),tmp_path/"eval",scope_file=scope_file,per_kind=1)
     calls=[]
     def fake(argv,prompt,env):
         calls.append(argv)
@@ -108,17 +114,17 @@ def test_all_wrapper_calls_in_pipeline_use_injected_fake(tmp_path):
         return SimpleNamespace(returncode=0,stdout=json.dumps({"structured_output":rows}))
     result=judge.judge(tmp_path/"eval/packets",executor=fake,tty=lambda:True,
         parent_env={},usage_reader=lambda:{"known":True,"five_hour":0,"weekly":0},
-        executable="claude-p",output_root=tmp_path/"calls")
+        executable="claude-p",output_root=tmp_path/"calls",scope_file=scope_file)
     assert len(calls)==result["calls"] and result["execution"]=="injected"
 
 
-def test_repeated_text_cannot_inflate_original_diversity(tmp_path):
+def test_repeated_text_cannot_inflate_original_diversity(tmp_path, scope_file):
     with pytest.raises(ValueError, match="distinct original"):
-        generate([pool()[0]] * 100, tmp_path / "repeated")
+        generate([pool()[0]] * 100, tmp_path / "repeated", scope_file=scope_file)
     assert not (tmp_path / "repeated/packets").exists()
 
 
-def test_fixed_repo_pool_filters_paths_before_read_and_lines_after_read(tmp_path, monkeypatch):
+def test_fixed_repo_pool_filters_paths_before_read_and_lines_after_read(tmp_path, scope_file, monkeypatch):
     from smtw.claims import judge_eval as evaluation
     calls = []
     class FixedRepository:
@@ -141,10 +147,10 @@ def test_fixed_repo_pool_filters_paths_before_read_and_lines_after_read(tmp_path
             rows += [f"{prefix} {root.name} original source line number {n}" for n in range(80)]
             return SimpleNamespace(returncode=0, stdout="\n".join(rows).encode("utf-8"))
     monkeypatch.setattr(evaluation, "Repositories", FixedRepository)
-    rows, receipts = evaluation.collect_pool(tmp_path)
+    rows, receipts = evaluation.collect_pool(scope_file)
     assert len({r["quote"] for r in rows}) >= 60
     assert {r["category"] for r in rows} == {"code", "document"}
-    assert {r["case"] for r in rows} == set(evaluation.CASES)
+    assert {r["case"] for r in rows} == {"example-case", "other-case"}
     assert len(calls) == 4
     assert {r["revision"] for r in rows} == {v["revision"] for v in receipts.values()}
     assert all(len(r["quote"]) >= 20 and not r["redactions"] for r in rows)

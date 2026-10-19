@@ -7,6 +7,7 @@ import pytest
 
 from smtw.claims import judge as runner
 from smtw.claims.packets import write_packets
+from tests.claims_judge_support import make_scope
 
 
 @pytest.fixture(autouse=True)
@@ -20,12 +21,12 @@ def never_launch_model(monkeypatch):
 def packet_folder(tmp_path):
     item = {"id":"q-001","claim":"The limit is 7.","before":"","after":"",
             "branch":"unverifiable","report_line":1,"redactions":{},
-            "excerpts":[{"path":"~/show-me-the-work/smtw/example.py","ref":1,
+            "excerpts":[{"path":"~/example-repo/src/example.py","ref":1,
                          "text":"1: MAX_LIMIT = 7","source":"transcript_read",
                          "revision":"","redactions":{}}]}
     folder = tmp_path / "packets"
     write_packets(folder,[{"version":1,"instructions":"data","data_block":[item]}],
-                  {"case_id":"N-research-codex-today"})
+                  {"case_id":"example-case"})
     return folder
 
 
@@ -39,7 +40,7 @@ def fake_judge(argv, prompt, env):
 def invoke(folder,tmp_path,**kw):
     options={"executor":fake_judge,"tty":lambda:True,
              "usage_reader":lambda:{"known":True,"five_hour":1,"weekly":2},
-             "parent_env":{},"executable":"claude-p","output_root":tmp_path/"out"}
+             "parent_env":{},"executable":"claude-p","output_root":tmp_path/"out","scope_file":make_scope(tmp_path)}
     options.update(kw)
     return runner.judge(folder,**options)
 
@@ -51,6 +52,7 @@ def test_fake_judge_verified_and_append_only_logs(tmp_path):
     assert a["calls"]==b["calls"]==1
     logs=[json.loads(s) for s in (tmp_path/"out/calls.jsonl").read_text(encoding="utf-8").splitlines()]
     assert len(logs)==2 and all(x["execution"]=="injected" for x in logs)
+    assert all(x["scope_sha256"]==runner.sha(make_scope(tmp_path).read_bytes()) for x in logs)
     result=json.loads((Path(a["run"])/"verified-001.json").read_text(encoding="utf-8"))
     assert result["counts"]["supported"]==1
 
@@ -213,3 +215,34 @@ def test_usage_widget_milliseconds_seconds_and_invalid_clocks(tmp_path,monkeypat
     result=runner.read_usage(cache)
     assert result["known"] is known
     if known:assert result=={"known":True,"five_hour":59,"weekly":69}
+
+
+@pytest.mark.parametrize("missing", ["scope_file", "output_root"])
+def test_judge_api_requires_explicit_scope_and_output(tmp_path, missing):
+    options = {"scope_file": make_scope(tmp_path), "output_root": tmp_path / "out"}
+    del options[missing]
+    with pytest.raises(TypeError):
+        runner.judge(packet_folder(tmp_path), **options)
+
+
+@pytest.mark.parametrize("argv", [
+    ["--packets", "synthetic-packets"],
+    ["--packets", "synthetic-packets", "--out-root", "synthetic-output"],
+    ["--packets", "synthetic-packets", "--scope-file", "synthetic-scope.json"],
+])
+def test_cli_requires_scope_and_output_before_any_execution(argv):
+    with pytest.raises(SystemExit) as error:
+        runner.main(argv)
+    assert error.value.code == 2
+
+
+def test_scope_hash_mismatch_refuses_before_fake(tmp_path):
+    folder = packet_folder(tmp_path)
+    path = folder / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["scope_sha256"] = "0" * 64
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    def fail(*args):
+        pytest.fail("changed scope executed")
+    with pytest.raises(ValueError, match="scope changed"):
+        invoke(folder, tmp_path, executor=fail)

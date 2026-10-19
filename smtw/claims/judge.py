@@ -15,12 +15,12 @@ import time
 import uuid
 
 from .judge_contract import PROMPT, SCHEMA, validate_contract
+from .judge_scope import JudgeScope, load_scope
 from .advisory import load_sent_items, read_json, verify_judgments
 from .packets import display_path, sensitive_path, redact
 
 MODEL = "claude-sonnet-5-5"
 HERE = Path(__file__).resolve().parent
-EVAL = Path(r"C:\Users\example\tmp\smtw-rework-20261018\eval\phase2")
 CACHE = Path.home() / ".ai-limits-widget" / "limits-cache.json"
 
 
@@ -79,14 +79,16 @@ def usage_gate(usage: dict, allow_unknown: bool):
         raise ValueError("personal subscription usage threshold reached")
 
 
-def validate_scope(manifest: dict, sent: dict):
-    scope = read_json(HERE / "judge-scope.json")["cases"]
+def validate_scope(manifest: dict, sent: dict, scope: JudgeScope):
+    if manifest.get("scope_sha256", scope.sha256) != scope.sha256:
+        raise ValueError("scope changed since packet generation")
+    cases = scope.cases
     item_cases = manifest.get("item_cases", {})
     if not isinstance(item_cases, dict):
         raise ValueError("invalid case mapping")
     for key, item in sent.items():
         case = item_cases.get(key, manifest.get("case_id"))
-        if case not in scope:
+        if case not in cases:
             raise ValueError("case outside the fixed Phase 2 allowlist")
         for field in ("claim", "before", "after"):
             value = item.get(field, "")
@@ -98,7 +100,7 @@ def validate_scope(manifest: dict, sent: dict):
             path = display_path(excerpt["path"]).replace("\\", "/").casefold()
             parts = path.split("/")
             if (".." in parts or sensitive_path(path)
-                    or not any(path.startswith(prefix.casefold()) for prefix in scope[case])):
+                    or not any(path.startswith(prefix.casefold()) for prefix in cases[case])):
                 raise ValueError("excerpt outside approved source roots")
 
 
@@ -153,9 +155,9 @@ def _judgments(raw: str):
     return value
 
 
-def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False,
+def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int = 4, allow_unknown_usage: bool = False,
           executor=None, tty=None, usage_reader=None, parent_env=None,
-          executable=None, output_root: Path = EVAL) -> dict:
+          executable=None) -> dict:
     if type(max_calls) is not int or not 1 <= max_calls <= 10:
         raise ValueError("max-calls must be between 1 and 10")
     if not (tty or (lambda: sys.stdin.isatty() and sys.stdout.isatty()))():
@@ -163,7 +165,8 @@ def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False
     env = child_environment(os.environ if parent_env is None else parent_env)
     sent = load_sent_items(folder)  # Validate every hash and file before any call.
     manifest = read_json(folder / "manifest.json")
-    validate_scope(manifest, sent)
+    scope = load_scope(scope_file)
+    validate_scope(manifest, sent, scope)
     validate_contract(manifest)
     if not sent or not 1 <= len(manifest["packets"]) <= max_calls:
         raise ValueError("empty packet folder or max-calls exceeded")
@@ -188,6 +191,8 @@ def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False
         if sha(data) != entry["sha256"] or len(data.decode("utf-8")) > 30000:
             raise ValueError("packet changed after preflight")
         validate_contract(manifest)
+        if load_scope(scope_file).sha256 != scope.sha256:
+            raise ValueError("scope changed after preflight")
         prompt = instructions + data.decode("utf-8")
         started = time.monotonic()
         raw, exit_code, error = "", None, None
@@ -204,6 +209,7 @@ def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "packet_sha256": entry["sha256"], "item_ids": entry["item_ids"],
             "model": MODEL, "argv": argv, **manifest["judge_contract"], "exit_code": exit_code,
+            "scope_sha256": scope.sha256,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "output_sha256": sha(raw.encode("utf-8")), "usage_before": before,
             "usage_after": after, "error": error, "run_id": run_id,
@@ -230,11 +236,14 @@ def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packets", type=Path, required=True)
+    parser.add_argument("--scope-file", type=Path, required=True)
+    parser.add_argument("--out-root", type=Path, required=True)
     parser.add_argument("--max-calls", type=int, default=4)
     parser.add_argument("--allow-unknown-usage", action="store_true")
     args = parser.parse_args(argv)
     try:
-        result = judge(args.packets, max_calls=args.max_calls,
+        result = judge(args.packets, scope_file=args.scope_file, output_root=args.out_root,
+                       max_calls=args.max_calls,
                        allow_unknown_usage=args.allow_unknown_usage)
     except (OSError, ValueError, KeyError, TypeError):
         print("Judge refused or failed; check packet/usage/TTY and receipts.", file=sys.stderr)

@@ -3,10 +3,15 @@
 좌상만 보이는 터미널에서 아래 세 줄을 실행합니다. Codex 구현·시험은 실제 모델을 호출하지 않습니다.
 작업 디렉터리는 show-me-the-work 저장소입니다. 출력 폴더는 매 회차 새 이름으로 정합니다.
 
+먼저 docs/examples/judge-scope.example.json을 <WORK>/judge-scope.json으로 복사하고
+합성 id·출처 접두·<CASES> 아래 저장소 경로·고정 커밋 SHA를 실제 승인 범위로 채웁니다.
+예시의 0 SHA는 자리 표시입니다. 이 작업용 파일과 패킷은 공개 저장소에 커밋하지 않습니다.
+출력 루트와 범위 파일은 필수 인자이며 개인 경로 기본값은 없습니다.
+
 ```powershell
-python -X utf8 scripts/claims_eval.py generate --cases-root C:\Users\example\tmp\smtw-rework-20261018\cases --out C:\Users\example\tmp\smtw-rework-20261018\eval\phase2\l4-left
-python -X utf8 scripts/claims_eval.py summary --packets C:\Users\example\tmp\smtw-rework-20261018\eval\phase2\l4-left\packets
-python -X utf8 scripts/claims_judge.py --packets C:\Users\example\tmp\smtw-rework-20261018\eval\phase2\l4-left\packets --max-calls 5
+python -X utf8 scripts/claims_eval.py generate --scope-file "<WORK>/judge-scope.json" --out-root "<WORK>/l4-run"
+python -X utf8 scripts/claims_eval.py summary --scope-file "<WORK>/judge-scope.json" --packets "<WORK>/l4-run/packets"
+python -X utf8 scripts/claims_judge.py --scope-file "<WORK>/judge-scope.json" --packets "<WORK>/l4-run/packets" --out-root "<WORK>" --max-calls 5
 ```
 
 두 번째 표의 출처와 가림 수를 직접 확인한 후에만 세 번째 줄을 실행합니다.
@@ -24,12 +29,12 @@ claude-p와 동일하게 CLAUDE_CONFIG_DIR=~/.claude-personal 및 CLAUDE_CODE_PL
 부모 ANTHROPIC_API_KEY 이름이 있으면 값 조회 없이 거부하며, 자식의 *_API_KEY·*_TOKEN은 제거합니다.
 실제 자격증명 파일이나 값을 읽어 확인하지 않습니다.
 
-calls.jsonl은 eval/phase2 아래에 추가 기록만 합니다. 원출력, 스키마 통과 JSON, 인용 재검증 결과는
+calls.jsonl은 지정한 --out-root 아래에 추가 기록만 하며 범위 파일 SHA256을 기록합니다. 원출력, 스키마 통과 JSON, 인용 재검증 결과는
 judge-runs/<회차>/에 따로 저장합니다. 판정 결과는 “LLM 참고 표시 — 판정 아님” 구역에만 사용하며,
 원래 대조기의 status·요약·종료 코드는 변경하지 않습니다. 잘못된 인용은 표시하지 않습니다.
 호출 실패·원출력 형식 오류는 중단하며 자동 재시도하지 않습니다.
 
-L4는 SMTW 95d18194와 agent-gate 3a589085의 저장소 파일 줄을 git show로 읽어
+L4는 범위 파일에 명시한 저장소와 고정 커밋의 파일 줄을 git show로 읽어
 경로:줄 번호와 정확한 인용을 포함한 합성 문장을 만듭니다. 코드·문서 줄을 섞으며,
 20자 미만 원문·민감 경로·비밀 패턴이 있는 줄과 발췌는 제외합니다.
 원본 100개와 변조 100개를 만들고, 원문 문자열이 같은 줄은 중복으로 셉니다.
@@ -38,7 +43,7 @@ L4는 SMTW 95d18194와 agent-gate 3a589085의 저장소 파일 줄을 git show�
 원본·변조 모두 동일한 필드와 불투명 id를 쓰며 패킷에는 정답이나 변조 이름을 넣지 않습니다.
 숫자·식별자·인용 토큰·줄 이동·부정 반전을 각각 20개씩 사용합니다.
 
-채점은 claims_eval.py의 score 하위 명령에 --packets, --truth, --runs, --out을 지정합니다.
+채점은 claims_eval.py의 score 하위 명령에 --packets, --truth, --runs, --scope-file, --out-root를 지정합니다. 결과는 지정 출력 루트의 score.json에 씁니다.
 --runs에는 판정 회차 폴더 하나 또는 같은 패킷을 판정한 세 회차를 줍니다.
 채점기는 재검증 결과를 다시 계산해 일치 여부를 확인하고 재현율·정밀도·오표시율·
 quote_not_in_excerpt 비율·3회 판정 일치율·검증 인용 일치율을 고정 표로 출력합니다.

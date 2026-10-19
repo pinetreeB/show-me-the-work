@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "cases": {
+    "example-case": [
+      "~/example-repo/"
+    ]
+  },
+  "repositories": [
+    {
+      "case": "example-case",
+      "root": "<CASES>/example-repo",
+      "prefix": "~/example-repo/",
+      "revision": "0000000000000000000000000000000000000000"
+    }
+  ]
+}
