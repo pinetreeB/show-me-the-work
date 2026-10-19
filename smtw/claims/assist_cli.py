@@ -62,7 +62,13 @@ def run_assist(args) -> int:
             elif args.codex:
                 sources = transcript_sources(args.codex, "codex", args.report, text, aliases, budget)
             sources += fixed_sources(result["items"], mapping(args.commit), aliases, args.report, budget)
+            case_id = getattr(args, "case_id", None)
+            if case_id:
+                from .judge_eval import allowed_source
+                sources = [source for source in sources if allowed_source(case_id, source.path)]
             packets, summary = build_packets(result, sources, report=args.report, aliases=aliases)
+            if case_id:
+                summary["case_id"] = case_id
             manifest = write_packets(args.out, packets, summary)
             print(json.dumps(manifest, ensure_ascii=False, indent=2))
             return 0
