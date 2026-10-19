@@ -77,7 +77,11 @@ def test_sensitive_environment_values_never_looked_up():
                 pytest.fail("sensitive value read")
             return super().__getitem__(key)
     env=NamesOnly(OPENAI_API_KEY="synthetic",OTHER_TOKEN="synthetic",PATH="allowed")
-    assert runner.child_environment(env)=={"PATH":"allowed"}
+    clean=runner.child_environment(env)
+    assert clean["PATH"]=="allowed"
+    assert set(clean)=={"PATH","CLAUDE_CONFIG_DIR","CLAUDE_CODE_PLUGIN_CACHE_DIR"}
+    assert clean["CLAUDE_CONFIG_DIR"]==str(Path.home()/".claude-personal")
+    assert clean["CLAUDE_CODE_PLUGIN_CACHE_DIR"]==str(Path.home()/".claude"/"plugins")
     env["ANTHROPIC_API_KEY"]="synthetic"
     with pytest.raises(ValueError):runner.child_environment(env)
 
@@ -175,3 +179,20 @@ def test_prompt_treats_injection_as_data_and_schema_is_bounded(tmp_path):
     schema=json.loads(runner.SCHEMA.read_text())
     assert schema["items"]["properties"]["evidence_quote"]["maxLength"]==200
     assert schema["items"]["properties"]["rationale"]["maxLength"]==120
+
+
+def test_compact_schema_retains_original_object_and_empty_tools():
+    original=runner.SCHEMA.read_text()
+    argv=runner.command(original,"claude-p.cmd")
+    assert "\n" not in argv[-1] and "\r" not in argv[-1]
+    assert json.loads(argv[-1])==json.loads(original)
+    assert argv[argv.index("--tools")+1]==""
+    assert argv[argv.index("--model")+1]==runner.MODEL
+
+
+def test_native_executable_discovery_uses_files_only(tmp_path,monkeypatch):
+    binary=tmp_path/"node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+    binary.parent.mkdir(parents=True);binary.write_bytes(b"fake only")
+    monkeypatch.setattr(runner.os,"name","nt")
+    monkeypatch.setattr(runner.shutil,"which",lambda name:str(tmp_path/"claude.cmd") if name=="claude" else None)
+    assert runner.resolve_executable()==str(binary.resolve())

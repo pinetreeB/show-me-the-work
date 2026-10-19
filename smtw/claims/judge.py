@@ -31,10 +31,15 @@ def sha(data: bytes) -> str:
 def child_environment(parent):
     # Iterate names and filter BEFORE looking up any value.
     names = list(parent)
-    if "ANTHROPIC_API_KEY" in names:
+    if any(key.upper() == "ANTHROPIC_API_KEY" for key in names):
         raise ValueError("ANTHROPIC_API_KEY is present; subscription execution refused")
-    return {key: parent[key] for key in names
-            if not key.upper().endswith(("_API_KEY", "_TOKEN"))}
+    env = {key: parent[key] for key in names
+           if not key.upper().endswith(("_API_KEY", "_TOKEN"))
+           and key.upper() not in {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PLUGIN_CACHE_DIR"}}
+    # Match claude-p without reading either configuration directory.
+    env["CLAUDE_CONFIG_DIR"] = str(Path.home() / ".claude-personal")
+    env["CLAUDE_CODE_PLUGIN_CACHE_DIR"] = str(Path.home() / ".claude" / "plugins")
+    return env
 
 
 def read_usage(path: Path = CACHE) -> dict:
@@ -90,12 +95,38 @@ def validate_scope(manifest: dict, sent: dict):
                 raise ValueError("excerpt outside approved source roots")
 
 
+def resolve_executable() -> str:
+    """Find native Windows Claude by metadata only; never run help/version."""
+    if os.name == "nt":
+        candidates = []
+        native = shutil.which("claude.exe")
+        if native:
+            candidates.append(Path(native))
+        # npm's Windows shim installs this native binary beside its wrapper.
+        shim = shutil.which("claude")
+        if shim:
+            candidates.append(Path(shim).parent / "node_modules" / "@anthropic-ai"
+                              / "claude-code" / "bin" / "claude.exe")
+        for path in candidates:
+            if path.is_absolute() and path.is_file() and path.name.casefold() == "claude.exe":
+                return str(path.resolve())
+    launcher = shutil.which("claude-p")
+    if not launcher:
+        raise ValueError("personal subscription executable is unavailable")
+    return launcher
+
+
 def command(schema: str, executable: str) -> list[str]:
-    if Path(executable).name.casefold() not in {"claude-p", "claude-p.cmd", "claude-p.exe"}:
-        raise ValueError("only the personal claude-p launcher is allowed")
-    # The CLI accepts JSON text: read it from the frozen schema file.
+    name = Path(executable).name.casefold()
+    if name not in {"claude-p", "claude-p.cmd", "claude-p.exe", "claude.exe"}:
+        raise ValueError("only the personal launcher or native claude.exe is allowed")
+    if name == "claude.exe" and not Path(executable).is_absolute():
+        raise ValueError("native executable requires a resolved absolute path")
+    # Batch CALL splits literal newlines. Compact JSON also preserves empty args
+    # and schema quotes through the legacy two-shim Windows chain.
+    compact = json.dumps(json.loads(schema), ensure_ascii=True, separators=(",", ":"))
     return [executable, "--model", MODEL, "-p", "--tools", "",
-            "--no-session-persistence", "--output-format", "json", "--json-schema", schema]
+            "--no-session-persistence", "--output-format", "json", "--json-schema", compact]
 
 
 def _launch(argv: list[str], prompt: str, env: dict) -> subprocess.CompletedProcess:
@@ -131,9 +162,7 @@ def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False
         raise ValueError("empty packet folder or max-calls exceeded")
     schema = SCHEMA.read_text(encoding="utf-8")
     instructions = PROMPT.read_text(encoding="utf-8")
-    executable = executable or shutil.which("claude-p")
-    if not executable:
-        raise ValueError("personal claude-p launcher is unavailable")
+    executable = executable or resolve_executable()
     argv = command(schema, executable)
     usage_reader = usage_reader or read_usage
     before = usage_reader()

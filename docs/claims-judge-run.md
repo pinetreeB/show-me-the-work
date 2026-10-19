@@ -10,13 +10,15 @@ python -X utf8 scripts/claims_judge.py --packets C:\Users\example\tmp\smtw-rewor
 ```
 
 두 번째 표의 출처와 가림 수를 직접 확인한 후에만 세 번째 줄을 실행합니다.
-개인 구독 claude-p와 claude-sonnet-5-5만 허용합니다. 도구는 비활성화되고 세션은 저장하지 않습니다.
+개인 구독 설정과 claude-sonnet-5-5만 허용합니다. Windows에서는 설치된 native claude.exe를 우선 사용하며,
+claude-p와 동일하게 CLAUDE_CONFIG_DIR=~/.claude-personal 및 CLAUDE_CODE_PLUGIN_CACHE_DIR=~/.claude/plugins를 지정합니다. 도구는 비활성화되고 세션은 저장하지 않습니다.
 사용량 5시간 60% 이상 또는 주간 70% 이상이면 거부합니다. 사용량 자료가 없거나 오래됐으면
 기본 거부이며, 좌상이 사용량을 확인하고 명시적으로 --allow-unknown-usage를 줄 때만 허용됩니다.
 회차 상한은 기본 4, 최대 10입니다. 패킷 수가 상한을 넘으면 호출 전에 모두 거부합니다.
 백그라운드·예약·훅 실행은 금지입니다. stdin과 stdout 모두 TTY여야 합니다.
 
-판정자 --json-schema 인자는 저장소의 Phase 1 schema 파일에서 읽은 JSON 내용으로 고정됩니다.
+판정자 --json-schema 인자는 저장소의 Phase 1 schema 파일에서 읽어 compact 한 줄로 직렬화한 JSON 내용으로 고정됩니다.
+여러 줄 JSON을 .cmd 인자로 보내지 않습니다. native 경로를 찾지 못한 경우에만 claude-p를 사용합니다.
 기존 패킷을 수정하거나 프롬프트·스키마가 바뀌면 새로 생성해야 합니다.
 패킷 SHA·출처 목록·가림 패턴·30,000자 한도를 실행 직전에 다시 확인합니다.
 부모 ANTHROPIC_API_KEY 이름이 있으면 값 조회 없이 거부하며, 자식의 *_API_KEY·*_TOKEN은 제거합니다.
