@@ -43,7 +43,7 @@
 - 현재 ledger는 7,967,923 bytes, `event_seq=18996`, active turn 39, invocation 587, explicit open 0, status-less 209다. 최상위 크기는 `manifest_event_journal=3,355,490 bytes`, `active_turns=3,162,236 bytes`다.
 - read-only backfill 분류는 changed 209, unsafe 209, 결과 open 209 / closed 378이다. 현 `migrate_v2_invocation_statuses`는 unsafe가 있으면 저장 전에 거부한다.
 - identity는 exact 37, synthetic 2다. 환경 힌트가 없으면 `ambiguous_identity`, 존재하지 않는 명시 identity는 `wrong_identity`다(`goals/goals.py:96-113,188-239`).
-- private-repo legacy ledger는 50,466 bytes이며 `schema_version`과 `active_turns`가 없다. 2026-07-22~24 로그의 `turn_bootstrap_pending` 1004건 모두 baseline missing/turn_not_started지만 mutation-capable은 876건뿐이다.
+- synthetic-co-a-os-v2 legacy ledger는 50,466 bytes이며 `schema_version`과 `active_turns`가 없다. 2026-07-22~24 로그의 `turn_bootstrap_pending` 1004건 모두 baseline missing/turn_not_started지만 mutation-capable은 876건뿐이다.
 - private-repo quarantine 13,163/13,214/13,348 byte 3건은 각각 `WriteAllText`, `Path.write_text`, `open(...,'w')`/ `Path.write_text` mutation이다. 46 byte `cmd.exe /c "echo test > ..."`만 신규 파일 false positive다.
 - Codex hook timeout은 10초(`adapters/codex_cli/hooks.json`), 일반 예외는 fail-open(`adapters/codex_cli/pre_tool_use.py:8-12,112-117`)이다. 한 hook에서 R2→identity resolve→contract→begin invocation이 직렬 실행된다.
 - 관련 회귀 기준 6개 파일을 새로 실행해 `64 passed in 8.37s`를 확인했다.
@@ -308,5 +308,5 @@ W3 -> W2 ---/
 ## 7. 남은 불확실성
 
 - F8 5~10초 중 parse, 반복 load, process start, lock wait 비중은 아직 미측정이다. W4 benchmark RED가 구현 선택보다 먼저다.
-- private-repo 1004건은 과거 누적 로그다. 현재 버전에서 같은 빈도로 재발하는지는 live 재현 없이는 단정하지 않는다.
+- synthetic-co-a-os-v2 1004건은 과거 누적 로그다. 현재 버전에서 같은 빈도로 재발하는지는 live 재현 없이는 단정하지 않는다.
 - 209개 unsafe invocation을 자동 closed로 만들 증거는 현재 ledger에 없다. 즉시 F7을 해소하려면 maintenance plan에서 exact stale identity를 명시 선택해야 하며 코드 merge와 별도 운영 작업이다.

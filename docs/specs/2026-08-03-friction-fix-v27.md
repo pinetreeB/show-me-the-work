@@ -43,4 +43,4 @@
 - 버전: v2.7.0 minor(신규 CLI·진단 JSON·정책 확장). SemVer 실사 재확인 후 태깅.
 
 ## 실측 근거 (P1)
-private-repo gates.jsonl 5차단 13분 / quarantine 오차단 1건·실적발 3건(here-string 1·Python writer 2) / ledger 7.97MB=journal 3.36MB+active_turns 3.16MB / status-less invocation 209(unsafe) / stale exact identity 37 → goals ambiguous / private-repo turn_bootstrap_pending 1004(mutation-capable 876) / codex 훅 5-10s 타임아웃(인과 미확정, 8MB 로드는 ~0.2s)
+private-repo gates.jsonl 5차단 13분 / quarantine 오차단 1건·실적발 3건(here-string 1·Python writer 2) / ledger 7.97MB=journal 3.36MB+active_turns 3.16MB / status-less invocation 209(unsafe) / stale exact identity 37 → goals ambiguous / synthetic-co-a-os-v2 turn_bootstrap_pending 1004(mutation-capable 876) / codex 훅 5-10s 타임아웃(인과 미확정, 8MB 로드는 ~0.2s)

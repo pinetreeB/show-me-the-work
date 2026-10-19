@@ -1,7 +1,7 @@
 # 사건 기록: codex TUI 행 — 작업 완료 후 "Waiting for agents" 미귀환 (2026-07-13)
 
 > 기록 목적: fable-lite가 다루는 codex 런타임 안전장치(리퍼 훅 등)의 **커버리지 갭** 실측 사례.
-> 발생 세션: 합성명칭 라이더스 wmux 4-pane, 좌상 Claude(Fable 5) 오케스트레이션 중 우상 codex pane.
+> 발생 세션: 합성회사B 라이더스 wmux 4-pane, 좌상 Claude(Fable 5) 오케스트레이션 중 우상 codex pane.
 
 ## 환경
 
@@ -47,4 +47,4 @@
 2. `Get-Process codex | Select Id,StartTime,CPU` 로 **해당 pane의 PID만** 식별(StartTime=기동 시각 대조. 무차별 kill 금지 — 타 워크스페이스 codex 보존).
 3. `Stop-Process -Id <pid> -Force` → pane이 PS 프롬프트로 복귀 → 동일 인자로 재기동 → 다음 카드부터 정상.
 
-— 기록: 좌상 Claude (Fable 5), 합성명칭 prelaunch 세션 중.
+— 기록: 좌상 Claude (Fable 5), 합성회사B prelaunch 세션 중.

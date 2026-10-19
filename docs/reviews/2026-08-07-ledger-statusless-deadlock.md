@@ -146,8 +146,8 @@ live가 아니라 fixture에서 터진 덕에 실데이터 오염이 없었다.
 | 상태 | 프로젝트 |
 |---|---|
 | 같은 고착 → 수리 완료 | `.claude`(4건/1턴), `private-repo`(16건/2턴) |
-| 정상·미이사 | ai-env-clone, private-repo, SYNTHETIC-synthetic_name, private-repo, private-repo-preview |
-| 활성 턴 보유(정상, 미개입) | agy-model-bench, synthetic_name(8), private-repo-audit |
+| 정상·미이사 | ai-env-clone, synthetic-co-a-os-v2, synthetic-co-b-synthetic-product, synthetic-co-b-web, private-repo-preview |
+| 활성 턴 보유(정상, 미개입) | agy-model-bench, synthetic-biz(8), synthetic-co-a-os-v2-audit |
 
 ## 8. 남은 것
 
