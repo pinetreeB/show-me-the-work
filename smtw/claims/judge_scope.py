@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from urllib.parse import unquote
-from .paths import normalize_path
+from .paths import normalize_path, resolved_path
 from pathlib import Path
 
 
@@ -66,19 +66,25 @@ def directly_referenced(report: str, path: str) -> bool:
     # Require a complete filename/path token, not a substring of another name.
     name = canonical(path).rsplit("/", 1)[-1]
     text = unquote(report).replace("\\", "/").casefold()
-    return bool(name and re.search(r"(?<![\w./-])" + re.escape(name) + r"(?![\w.-])", text)
-                or re.search(r"(?<![\w./-])" + re.escape(canonical(path)) + r"(?![\w./-])", text))
+    ending = (r"(?=$|[^\w./-]|\.(?=$|[\s,;:!?()\[\]{}])|"
+              r"(?:에서|으로|에는|은|는|이|가|을|를|와|과|의|도|만|에|로)(?=$|[^\w.-]))")
+    return bool(name and re.search(r"(?<![\w./-])" + re.escape(name) + ending, text)
+                or re.search(r"(?<![\w./-])" + re.escape(canonical(path)) + ending, text))
 
 
 def work_source_basis(case, path, scope, *, report=None, visible=False):
     # Display paths are accepted only for already-built packet validation.
     from .packets import display_path
-    convert = (lambda p: canonical(display_path(p))) if visible else canonical
+    def convert(value):
+        actual = resolved_path(value)
+        return canonical(display_path(actual) if visible else actual) if actual else ""
     target = convert(path)
+    if not target:
+        return ""
     checkpoint = scope.checkpoints.get(case)
     if checkpoint and target == convert(checkpoint):
         return "checkpoint"
-    if any(target.startswith(convert(root).rstrip("/") + "/")
+    if any(convert(root) and target.startswith(convert(root).rstrip("/") + "/")
            for root in scope.work_roots.get(case, [])):
         if report is None or directly_referenced(report, path):
             return "report_reference"

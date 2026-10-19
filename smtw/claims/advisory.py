@@ -118,11 +118,16 @@ def verify_judgments(judgments, sent: dict[str, dict]) -> dict:
         # Normalize a literal substring only when its containing line is unique.
         # Keep the judge's raw quote for independent reproducibility reporting.
         matches = list(dict.fromkeys(line for line in content.splitlines() if quote in line))
-        if len(matches) > 1:
+        exact = quote in content.splitlines()
+        if len(matches) > 1 and not exact:
             counts["quote_not_in_excerpt"] += 1
             counts["not_enough_evidence"] += 1
             continue
-        normalized_quote = matches[0] if matches else quote
+        normalized_quote = quote if exact else matches[0] if matches else quote
+        if len(normalized_quote) > 200 or "[REDACTED:" in normalized_quote.upper():
+            counts["quote_not_in_excerpt"] += 1
+            counts["not_enough_evidence"] += 1
+            continue
         counts["quote_verified"] += 1
         counts[verdict] += 1
         displayed.append({**row, "evidence_quote": normalized_quote, "raw_evidence_quote": quote,

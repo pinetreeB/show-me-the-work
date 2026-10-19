@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import posixpath
+import os
+from pathlib import Path
 import re
 from functools import lru_cache
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -62,3 +64,19 @@ def mapping(values: list[str], *, basename_default: bool = False) -> dict[str, s
             raise ValueError(f"비어 있거나 중복된 대응: {key}")
         result[key] = actual
     return result
+
+
+def resolved_path(value: str) -> str:
+    """Resolve filesystem aliases by metadata only; never open file contents."""
+    value = unquote(value).replace("\\", "/")
+    if value.casefold().startswith("file://"):
+        value = re.sub(r"^/+(?=[A-Za-z]:/)", "", value[7:])
+    # Never contact network shares or device namespaces during source screening.
+    if value.startswith("//"):
+        return ""
+    if os.name != "nt" and re.match(r"^[A-Za-z]:/", value):
+        return value
+    try:
+        return str(Path(value).expanduser().resolve(strict=False))
+    except (OSError, ValueError, RuntimeError):
+        return ""

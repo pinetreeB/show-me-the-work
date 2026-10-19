@@ -94,6 +94,8 @@ SENSITIVE_PART = re.compile(
     r"(?i)^(?:\.env.*|.*\.env(?:\..*)?|env(?:[._-].*)?|dotenv|\.ssh|\.aws|\.gnupg|"
     r"\.git-credentials|\.netrc|\.npmrc|\.pgpass|keys?|secrets?(?:[._-].*)?|"
     r"credentials?(?:[._-].*)?|(?:api[_-]?)keys?(?:[._-].*)?|wallet\.dat|"
+    r"tokens?(?:[._-].*)?|passwords?(?:[._-].*)?|pw(?:[._-].*)?|"
+    r"private(?:[._-].*)?|accounting(?:[._-].*)?|invoices?(?:[._-].*)?|nda(?:[._-].*)?|cust-data(?:[._-].*)?|"
     r"id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|authorized_keys|ssh_.*_key|"
     r"service-account.*\.json|token.*\.json|.*_key\..*|.*\.tfvars|kubeconfig.*|\.claude\.json|\.pypirc|\.htpasswd|application_default_credentials\.json|access_token.*\.json|firebase-adminsdk-.*\.json|"
     r"customers?.*|clients?(?:[ ._-].*)?|contracts?.*|tax(?:es)?(?:[._-].*)?|legal(?:[._-].*)?|"
@@ -122,11 +124,36 @@ def sensitive_path(path: str) -> bool:
 
 def hard_excluded(path: str) -> bool:
     from urllib.parse import unquote
-    normalized = normalize_path(unquote(path))
-    return (sensitive_path(normalized) or any(part in normalized for part in (
-        "_customer-data-do-not-read", "customer-data", ".secrets", ".env",
-        "tax", "세무", "legal", "법무", "contract", "계약",
-        "memory/core/user_personal_sensitive.md")))
+    import unicodedata
+    from .paths import resolved_path
+
+    def excluded(value):
+        normalized = normalize_path(unicodedata.normalize("NFKC", unquote(value)))
+        parts = [part.rstrip(" .") for part in normalized.split("/")]
+        if sensitive_path(normalized):
+            return True
+        if "/".join(parts).endswith("memory/core/user_personal_sensitive.md"):
+            return True
+        for index, part in enumerate(parts):
+            if any(marker in part for marker in (
+                    "_customer-data-do-not-read", "customer-data", ".secrets", ".env",
+                    "세무", "법무", "계약")):
+                return True
+            # Directory category tokens are bounded within one component.
+            # Ordinary filenames such as judge_contract.py and syntax.md survive.
+            if (index < len(parts) - 1 or "." not in part) and re.search(
+                    r"(?:^|[ ._-])(?:tax|legal|contracts?)(?:$|[ ._-])", part):
+                return True
+        return False
+
+    if excluded(path):
+        return True
+    actual = resolved_path(path)
+    if not actual or excluded(actual):
+        return True
+    # A short-name alias that could not be expanded cannot establish safe origin.
+    return any(re.search(r"~\d+(?:\.|$)", part) for part in normalize_path(actual).split("/"))
+
 
 
 def sent_sources(items: dict) -> dict:
