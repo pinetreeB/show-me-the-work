@@ -37,8 +37,8 @@ def add_claims_parser(subparsers):
     assist.add_argument('--packets', type=Path)
     assist.add_argument('--out', type=Path)
     assist.add_argument('--limit', type=int, default=20)
-    assist.add_argument('--case-id', choices=('N-research-codex-today', 'P-pilot-agy-research'),
-                        help='Phase 2 고정 출처 목록으로 패킷을 제한')
+    assist.add_argument('--case-id', help='--scope-file의 cases 키 (dry-run 필수)')
+    assist.add_argument('--scope-file', type=Path, help='승인된 case·출처 범위 파일 (dry-run 필수)')
     assist.add_argument('--aggregate', action='store_true', help='갈래별 건수만 출력')
     assist.set_defaults(func=run_assist)
 

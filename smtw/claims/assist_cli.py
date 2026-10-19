@@ -8,6 +8,7 @@ from .assist import select_candidates
 from .check import run
 from .paths import mapping
 from .model import Budget
+from .judge_scope import load_scope
 from .packets import build_packets, fixed_sources, transcript_sources, write_packets
 from .transcripts import discover_agy, resolve_agy
 
@@ -24,11 +25,30 @@ def check_inputs(args):
 
 def run_assist(args) -> int:
     try:
+        case_id = getattr(args, "case_id", None)
+        scope_file = getattr(args, "scope_file", None)
+        scope = None
+        if args.dry_run or case_id is not None or scope_file is not None:
+            if not case_id or scope_file is None:
+                raise ValueError("--dry-run 또는 범위 지정에는 --case-id와 --scope-file이 함께 필요합니다.")
+            scope = load_scope(scope_file)
+            if case_id not in scope.cases:
+                raise ValueError("--case-id는 --scope-file의 cases에 등록된 키여야 합니다.")
         if args.verify:
             from .advisory import render_advisory, render_with_advisory, verify_files
             if args.packets is None:
                 raise ValueError("--verify에는 --packets가 필요합니다.")
-            advisory = verify_files(args.verify, args.packets)
+            if scope is not None:
+                from .advisory import load_sent_items, read_json, verify_judgments
+                from .judge import validate_scope
+                manifest = read_json(args.packets / "manifest.json")
+                if manifest.get("case_id") != case_id:
+                    raise ValueError("패킷 manifest의 case_id가 --case-id와 다릅니다.")
+                sent = load_sent_items(args.packets)
+                validate_scope(manifest, sent, scope)
+                advisory = verify_judgments(read_json(args.verify), sent)
+            else:
+                advisory = verify_files(args.verify, args.packets)
             if args.report is not None:
                 checked = check_inputs(args)
                 output = (json.dumps({"checker": checked, "assist": advisory}, ensure_ascii=False, indent=2)
@@ -62,13 +82,11 @@ def run_assist(args) -> int:
             elif args.codex:
                 sources = transcript_sources(args.codex, "codex", args.report, text, aliases, budget)
             sources += fixed_sources(result["items"], mapping(args.commit), aliases, args.report, budget)
-            case_id = getattr(args, "case_id", None)
-            if case_id:
-                from .judge_eval import allowed_source
-                sources = [source for source in sources if allowed_source(case_id, source.path)]
-            packets, summary = build_packets(result, sources, report=args.report, aliases=aliases)
-            if case_id:
-                summary["case_id"] = case_id
+            from .judge_eval import allowed_source
+            scoped_sources = [source for source in sources if allowed_source(case_id, source.path, scope)]
+            packets, summary = build_packets(result, scoped_sources, report=args.report, aliases=aliases)
+            summary.update(case_id=case_id, scope_sha256=scope.sha256,
+                           skipped_out_of_scope=len(sources) - len(scoped_sources))
             manifest = write_packets(args.out, packets, summary)
             print(json.dumps(manifest, ensure_ascii=False, indent=2))
             return 0

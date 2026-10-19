@@ -167,13 +167,16 @@ def test_transcript_receipt_and_self_report_excluded(tmp_path):
 
 
 def test_cli_dry_run_never_uses_source_file_as_excerpt(tmp_path):
+    from tests.claims_judge_support import make_scope
+    scope_file = make_scope(tmp_path)
     report = tmp_path / "report.md"
     report.write_text("alpha.py:1\n", encoding="utf-8")
     local = tmp_path / "alpha.py"
     local.write_text("VALUE = 7\n", encoding="utf-8")
     result = subprocess.run([sys.executable, "-B", "-m", "smtw", "claims", "assist",
                              "--report", str(report), "--source-file", str(local),
-                             "--dry-run", "--out", str(tmp_path / "packets"), "--format", "json"],
+                             "--dry-run", "--case-id", "example-case", "--scope-file", str(scope_file),
+                             "--out", str(tmp_path / "packets"), "--format", "json"],
                             capture_output=True, text=True, encoding="utf-8")
     assert result.returncode == 0, result.stdout + result.stderr
     manifest = json.loads(result.stdout)

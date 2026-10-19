@@ -177,6 +177,8 @@ def test_supported_advisory_cannot_promote_checker_fail_or_change_pass(tmp_path,
 def test_claims_cli_utf8_without_environment_overrides(tmp_path):
     """Piped cp949 streams must work even without UTF-8/legacy-console settings."""
     import os
+    from tests.claims_judge_support import make_scope
+    scope_file = make_scope(tmp_path)
     folder = sent_packets(tmp_path)
     report = tmp_path / "report.md"
     report.write_text("alpha.py:1\n", encoding="utf-8")
@@ -198,7 +200,8 @@ def test_claims_cli_utf8_without_environment_overrides(tmp_path):
             (["assist", "--verify", str(FIXTURE), "--packets", str(folder), "--format", "json"], 0),
             (["check", "--report", str(report), "--format", "text"], 3),
             (["assist", "--report", str(report), "--select-only", "--format", "json"], 0),
-            (["assist", "--report", str(report), "--dry-run", "--out",
+            (["assist", "--report", str(report), "--dry-run", "--case-id", "example-case",
+              "--scope-file", str(scope_file), "--out",
               str(tmp_path / ("dry-" + str(legacy))), "--format", "json"], 0),
         ]
         for args, code in cases:

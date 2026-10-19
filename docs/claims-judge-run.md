@@ -93,8 +93,23 @@ score의 `--packets`와 `--truth` 역시 같은 배치 번호로 지정합니다
 quote_not_in_excerpt 비율·3회 판정 일치율·검증 인용 일치율을 고정 표로 출력합니다.
 합성 가짜 판정자 결과는 처리 흐름 시험일 뿐 실제 모델 품질 증거가 아닙니다.
 
-L2 공개 사례 패킷은 기존 claims assist --dry-run에서 --case-id를 함께 지정합니다.
-목록 밖 사례는 실행 래퍼에서 거부합니다. 허용 사례라도 출처가 다른 저장소인 발췌는 제외합니다.
+L2 패킷의 assist --dry-run에는 --case-id와 --scope-file을 함께 지정해야 합니다.
+case id는 범위 파일의 cases 키에서 선택하며 코드에 고정된 선택지는 없습니다.
+select-only·verify에서도 둘 중 하나를 지정하면 두 인자가 모두 필요하고 같은 cases 검사를 적용합니다.
+범위 인자를 쓰지 않는 select-only·verify는 기존 오프라인 동작을 유지합니다.
+
+```powershell
+python -X utf8 -m smtw claims assist --report "<WORK>/report.md" --agy "<WORK>/transcript.jsonl" --repo "<REPO>" --commit "<REPO>=<COMMIT_SHA>" --case-id "<CASE_ID>" --scope-file "<WORK>/judge-scope.json" --dry-run --out "<WORK>/l2-packets" --format json
+python -X utf8 scripts/claims_judge.py --packets "<WORK>/l2-packets" --scope-file "<WORK>/judge-scope.json" --out-root "<WORK>" --max-calls 4
+```
+
+Codex 전사는 첫 명령의 --agy 대신 --codex를 사용합니다. 두 번째 명령은 좌상이 패킷을 확인한 뒤 실행합니다.
+manifest에는 case_id와 원본 범위 파일 바이트의 scope_sha256을 기록하며,
+judge와 범위를 지정한 assist --verify는 다른 범위 파일 내용이면 거부합니다.
+verify에 지정한 case id도 manifest와 일치해야 합니다.
+허용 접두 밖 출처 조각은 패킷 생성 전에 제외하고 manifest의 skipped_out_of_scope에 개수를 기록합니다.
+이 값은 중복 제거 전 출처 조각 수이며, 기존 skipped_counts의 항목별 제외 사유와는 단위가 다릅니다.
+기존 비밀 가림·민감 경로 제외 규칙은 그대로 적용합니다.
 보고서당 오표시가 3건을 초과하는 결과가 2회 연속이면 실제 호출을 중단하고 좌상 검토로 돌아갑니다.
 
 (보류: 안전장치) 실제 값 대조 생략
