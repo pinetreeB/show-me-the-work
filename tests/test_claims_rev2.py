@@ -280,7 +280,7 @@ def test_p2_entity_value_must_be_unique(tmp_path, source, verdict):
 def test_p3_conditional_marker_is_control_not_content(tmp_path, suffix):
     rows = [agy_call('run_command', CommandLine='cat C:/sample/widget.py'+suffix), generic('realToken\nDONE\n')]
     r, t = make_case(tmp_path, '`widget.py` 변수 `realToken`, `DONE`', rows)
-    assert [c['verdict'] for c in atoms(run(r, agy=str(t)), 'K4')] == ['match', 'absent']
+    assert [c['verdict'] for c in atoms(run(r, agy=str(t)), 'K4')] == ['unverifiable', 'unverifiable']
 
 
 @pytest.mark.parametrize('command', ['echo realToken', 'cat C:/sample/widget.py; echo realToken',

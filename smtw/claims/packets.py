@@ -429,6 +429,8 @@ def transcript_sources(path: Path, kind: str, report: Path, report_text: str,
     result = []
     for e in transcript.evidence:
         budget.check()
+        if e.command and e.control_only and stats is not None:
+            stats['skipped_ambiguous_command'] = stats.get('skipped_ambiguous_command', 0) + 1
         if e.path and (hard_excluded(e.path) or hard_excluded(normalize_path(e.path, aliases))):
             if stats is not None:
                 stats['skipped_hard_exclude'] = stats.get('skipped_hard_exclude', 0) + 1
@@ -437,6 +439,8 @@ def transcript_sources(path: Path, kind: str, report: Path, report_text: str,
                 or e.exit_code not in (None, 0) or sensitive_path(e.path)
                 or sensitive_path(normalize_path(e.path, aliases))
                 or matches_path(e.path, str(report.resolve()), aliases)):
+            continue
+        if e.command and re.match(r"(?i)^\s*(?:@?\(|wc\b|stat\b)", e.command):
             continue
         load_view_pointer(e, budget)
         if e.problem and e.problem_code != "partial_range":

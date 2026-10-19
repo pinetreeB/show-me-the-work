@@ -284,6 +284,7 @@ def test_required_06_07_aux_pointer_lazy_and_task_completion(tmp_path):
     assert time.monotonic() - start < 10
     transcript = read_transcript(t, 'agy', r, r.read_text(), {}, Budget(10))
     assert transcript.evidence[1].complete
+    assert transcript.evidence[1].control_only and not transcript.evidence[1].text
     assert transcript.evidence[0].url_content_path.endswith('content.md')
     assert not transcript.evidence[0].complete
     assert transcript.evidence[0].aux_path == ''
@@ -370,12 +371,12 @@ def test_last_report_write_window_current_only(tmp_path):
     assert [e.after_report for e in result.evidence] == [False, True]
 
 
-def test_optional_command_line_number_partial(tmp_path):
+def test_pipeline_line_number_is_not_file_evidence(tmp_path):
     r, t = make_case(tmp_path, '`engine.py:20` “return valid_value”\n`engine.py` 함수 `missing_name`', [
         agy_call('run_command', CommandLine='Get-Content C:/sample/engine.py | Select-Object -Skip 19 -First 1'),
         generic('line 20: return valid_value')])
     result = run(r, agy=str(t))
-    assert only(result, 'K1')[0]['verdict'] == 'match'
+    assert only(result, 'K1')[0]['verdict'] == 'unverifiable'
     assert only(result, 'K4')[0]['verdict'] == 'unverifiable'
 
 
