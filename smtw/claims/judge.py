@@ -18,7 +18,8 @@ import uuid
 from .judge_contract import PROMPT, SCHEMA, cli_schema, validate_contract
 from .judge_scope import JudgeScope, load_scope
 from .advisory import load_sent_items, read_json, verify_judgments
-from .packets import display_path, sensitive_path, redact
+from .packets import display_path, sensitive_path, hard_excluded, sent_sources, redact
+from .judge_scope import work_source_basis
 
 MODEL = "claude-sonnet-5-5"
 HERE = Path(__file__).resolve().parent
@@ -83,6 +84,8 @@ def usage_gate(usage: dict, allow_unknown: bool):
 def validate_scope(manifest: dict, sent: dict, scope: JudgeScope):
     if manifest.get("scope_sha256", scope.sha256) != scope.sha256:
         raise ValueError("scope changed since packet generation")
+    if "sent_sources" in manifest and manifest["sent_sources"] != sent_sources(sent):
+        raise ValueError("sent_sources differs from packet excerpts")
     cases = scope.cases
     item_cases = manifest.get("item_cases", {})
     if not isinstance(item_cases, dict):
@@ -100,8 +103,11 @@ def validate_scope(manifest: dict, sent: dict, scope: JudgeScope):
                 raise ValueError("unredacted pattern in excerpt input")
             path = display_path(excerpt["path"]).replace("\\", "/").casefold()
             parts = path.split("/")
-            if (".." in parts or sensitive_path(path)
-                    or not any(path.startswith(prefix.casefold()) for prefix in cases[case])):
+            basis = work_source_basis(case, excerpt["path"], scope, visible=True)
+            approved = (excerpt.get("source") == "transcript_read"
+                        and excerpt.get("scope_basis") == basis) if basis else any(
+                            path.startswith(prefix.casefold()) for prefix in cases[case])
+            if (".." in parts or hard_excluded(path) or not approved):
                 raise ValueError("excerpt outside approved source roots")
 
 
@@ -242,6 +248,8 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
         validate_contract(manifest)
         if load_scope(scope_file).sha256 != scope.sha256:
             raise ValueError("scope changed after preflight")
+        subset = {key: sent[key] for key in entry["item_ids"]}
+        validate_scope(manifest, sent, scope)  # Scan again immediately before every send.
         prompt = instructions + data.decode("utf-8")
         started = time.monotonic()
         raw, exit_code, error = "", None, None
@@ -269,6 +277,7 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "packet_sha256": entry["sha256"], "item_ids": entry["item_ids"],
+            "sent_sources": sent_sources(subset),
             "model": MODEL, "argv": argv, **manifest["judge_contract"], "exit_code": exit_code,
             "scope_sha256": scope.sha256, "lean_context": lean_context,
             "usage": _token_usage(raw),

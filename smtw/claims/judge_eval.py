@@ -14,7 +14,7 @@ from .judge import validate_scope
 from .judge_scope import JudgeScope, load_scope
 from .judge_contract import validate_contract
 from .model import Budget
-from .packets import (display_path, encoded, redact, sensitive_path,
+from .packets import (display_path, encoded, redact, sensitive_path, hard_excluded,
                       sensitive_reference, write_packets)
 from .sources import Repositories
 
@@ -74,7 +74,7 @@ def token_style(word):
 
 def allowed_source(case, path, scope: JudgeScope):
     visible = display_path(path).replace(chr(92), "/").casefold()
-    return (case in scope.cases and not sensitive_path(visible) and ".." not in visible.split("/")
+    return (case in scope.cases and not hard_excluded(visible) and ".." not in visible.split("/")
             and any(visible.startswith(p.casefold()) for p in scope.cases[case]))
 
 

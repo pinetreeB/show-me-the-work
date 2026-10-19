@@ -120,6 +120,28 @@ def sensitive_path(path: str) -> bool:
     return False
 
 
+def hard_excluded(path: str) -> bool:
+    from urllib.parse import unquote
+    normalized = normalize_path(unquote(path))
+    return (sensitive_path(normalized) or any(part in normalized for part in (
+        "_customer-data-do-not-read", "customer-data", ".secrets", ".env",
+        "tax", "세무", "legal", "법무", "contract", "계약",
+        "memory/core/user_personal_sensitive.md")))
+
+
+def sent_sources(items: dict) -> dict:
+    """Per-item display paths and actual transmitted source line ranges."""
+    result = {}
+    for key, item in items.items():
+        result[key] = []
+        for excerpt in item["excerpts"]:
+            numbers = [int(n) for n in re.findall(r"(?m)^(\d+):", excerpt["text"])]
+            if not numbers:
+                raise ValueError("source excerpt needs line numbers")
+            result[key].append({"path": excerpt["path"], "start": min(numbers), "end": max(numbers)})
+    return result
+
+
 def sensitive_reference(text: str) -> bool:
     # Also recognize sensitive names outside the checker's source suffix list.
     return any(sensitive_path(re.sub(r":L?\d+(?:[-–]\d+)?$", "", token.strip("`\"'()[]{};:").rstrip(".,") ))
@@ -396,16 +418,21 @@ class PacketSource:
     kind: str
     revision: str = ""
     observation: str = ""
+    scope_basis: str = ""
 
 
 def transcript_sources(path: Path, kind: str, report: Path, report_text: str,
-                       aliases: dict[str, str], budget: Budget) -> list[PacketSource]:
+                       aliases: dict[str, str], budget: Budget, stats: dict | None = None) -> list[PacketSource]:
     transcript = read_transcript(path, kind, report, report_text, aliases, budget)
     if not transcript.valid:
         return []
     result = []
     for e in transcript.evidence:
         budget.check()
+        if e.path and (hard_excluded(e.path) or hard_excluded(normalize_path(e.path, aliases))):
+            if stats is not None:
+                stats['skipped_hard_exclude'] = stats.get('skipped_hard_exclude', 0) + 1
+            continue
         if (not e.path or e.url or e.after_report or e.control_only or e.unsupported
                 or e.exit_code not in (None, 0) or sensitive_path(e.path)
                 or sensitive_path(normalize_path(e.path, aliases))
@@ -435,7 +462,7 @@ def _mapped(path: str, aliases: dict[str, str]) -> str:
 
 
 def fixed_sources(items: list[dict], commits: dict[str, str], aliases: dict[str, str],
-                  report: Path, budget: Budget) -> list[PacketSource]:
+                  report: Path, budget: Budget, stats: dict | None = None) -> list[PacketSource]:
     result = []
     paths = list(dict.fromkeys(p for item in items for p in item["paths"]))
     for root, revision in commits.items():
@@ -458,6 +485,10 @@ def fixed_sources(items: list[dict], commits: dict[str, str], aliases: dict[str,
             else:
                 relative = mapped
             actual = base + "/" + relative
+            if hard_excluded(requested) or hard_excluded(actual):
+                if stats is not None:
+                    stats["skipped_hard_exclude"] = stats.get("skipped_hard_exclude", 0) + 1
+                continue
             if (relative.startswith("../") or relative in {"..", "."}
                     or sensitive_path(requested) or sensitive_path(actual)
                     or matches_path(actual, str(report.resolve()), aliases)):
@@ -471,7 +502,7 @@ def fixed_sources(items: list[dict], commits: dict[str, str], aliases: dict[str,
 
 
 def _excerpt(item: dict, source: PacketSource, aliases: dict[str, str], cache: dict) -> tuple[str, dict] | None:
-    if item["paths"]:
+    if item["paths"] and source.scope_basis != "checkpoint":
         if not any(matches_path(path, source.path, aliases) for path in item["paths"]):
             return None
         ranges = [r for r in item["ranges"] if matches_path(r["path"], source.path, aliases)]
@@ -483,7 +514,7 @@ def _excerpt(item: dict, source: PacketSource, aliases: dict[str, str], cache: d
     hits = [n for n, text in source.lines.items() if any(
         re.search(r"(?<![\w$])" + re.escape(name) + r"(?![\w$])", text)
         for name in item["identifiers"])]
-    if not item["paths"] and not hits:
+    if (not item["paths"] or source.scope_basis == "checkpoint") and not hits:
         return None
     anchor = min(overlap or hits or source.lines)
     identity = id(source)
@@ -525,12 +556,15 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
                 or any(sensitive_reference(selected[k]) for k in ("claim", "before", "after"))):
             skip("skipped_sensitive")
             continue
+        if any(hard_excluded(p) or hard_excluded(normalize_path(p, aliases)) for p in selected["paths"]):
+            skip("skipped_hard_exclude")
+            continue
         excerpts, identities = [], set()
         too_sensitive = False
         for source in sources:
             if (source.kind not in {"transcript_read", "fixed_commit"} or not source.lines
                     or source.kind == "fixed_commit" and not re.fullmatch(r"[0-9a-f]{40}", source.revision)
-                    or sensitive_path(source.path) or sensitive_path(normalize_path(source.path, aliases))
+                    or hard_excluded(source.path) or hard_excluded(normalize_path(source.path, aliases))
                     or matches_path(source.path, str(report.resolve()), aliases)):
                 continue
             found = _excerpt(selected, source, aliases, redacted_sources)
@@ -547,7 +581,7 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
             identities.add(identity)
             excerpts.append({"path": display_path(safe_path), "source": source.kind, "revision": source.revision,
                              "_path_sha256": hashlib.sha256(source.path.encode("utf-8")).hexdigest(),
-                             "observation": source.observation, "text": text,
+                             "observation": source.observation, "scope_basis": source.scope_basis, "text": text,
                              "redactions": dict(Counter(counts) + Counter(path_counts))})
         if too_sensitive:
             skip("redaction_limit")
@@ -597,7 +631,8 @@ def write_packets(folder: Path, packets: list[dict], summary: dict) -> dict:
     if folder.exists() and any(folder.iterdir()):
         raise ValueError("패킷 출력 폴더는 비어 있어야 합니다.")
     folder.mkdir(parents=True, exist_ok=True)
-    manifest = {"version": 1, "model_calls": 0, **summary, "judge_contract": contract(), "packets": []}
+    manifest = {"version": 1, "model_calls": 0, **summary, "judge_contract": contract(), "packets": [],
+                "sent_sources": sent_sources({i["id"]: i for p in packets for i in p["data_block"]})}
     for index, packet in enumerate(packets, 1):
         text = encoded(packet)
         data = text.encode("utf-8")

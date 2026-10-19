@@ -8,7 +8,7 @@ from .assist import select_candidates
 from .check import run
 from .paths import mapping
 from .model import Budget
-from .judge_scope import load_scope
+from .judge_scope import load_scope, work_source_basis
 from .packets import build_packets, fixed_sources, transcript_sources, write_packets
 from .transcripts import discover_agy, resolve_agy
 
@@ -76,17 +76,28 @@ def run_assist(args) -> int:
                     raise ValueError("자동 연결 전사를 하나로 확정하지 못했습니다.")
                 agy = str(found[0])
             sources = []
+            source_stats = {'skipped_hard_exclude': 0}
             if agy:
                 sources = transcript_sources(resolve_agy(agy, args.agy_brain_root), "agy",
-                                             args.report, text, aliases, budget)
+                                             args.report, text, aliases, budget, source_stats)
             elif args.codex:
-                sources = transcript_sources(args.codex, "codex", args.report, text, aliases, budget)
-            sources += fixed_sources(result["items"], mapping(args.commit), aliases, args.report, budget)
+                sources = transcript_sources(args.codex, "codex", args.report, text, aliases, budget, source_stats)
+            sources += fixed_sources(result["items"], mapping(args.commit), aliases, args.report, budget, source_stats)
             from .judge_eval import allowed_source
-            scoped_sources = [source for source in sources if allowed_source(case_id, source.path, scope)]
+            scoped_sources = []
+            for source in sources:
+                basis = work_source_basis(case_id, source.path, scope, report=text)
+                # Work documents must come from a captured read, never git/worktree.
+                external = work_source_basis(case_id, source.path, scope)
+                if external:
+                    if basis and source.kind == "transcript_read":
+                        source.scope_basis = basis
+                        scoped_sources.append(source)
+                elif allowed_source(case_id, source.path, scope):
+                    scoped_sources.append(source)
             packets, summary = build_packets(result, scoped_sources, report=args.report, aliases=aliases)
             summary.update(case_id=case_id, scope_sha256=scope.sha256,
-                           skipped_out_of_scope=len(sources) - len(scoped_sources))
+                           skipped_out_of_scope=len(sources) - len(scoped_sources), **source_stats)
             manifest = write_packets(args.out, packets, summary)
             print(json.dumps(manifest, ensure_ascii=False, indent=2))
             return 0

@@ -220,4 +220,6 @@ def test_only_packet_display_path_is_shortened_and_original_hash_is_manifested(t
     manifest = write_packets(tmp_path / "packets", packets, summary)
     assert manifest["source_path_hashes"] == [
         {"item_id": item["id"], "ref": 1, "sha256": hashlib.sha256(path.encode("utf-8")).hexdigest()}]
-    assert path not in encoded(manifest)
+    assert manifest["sent_sources"][item["id"]] == [{"path": display, "start": 1, "end": 1}]
+    if path != display:
+        assert path not in encoded(manifest)
