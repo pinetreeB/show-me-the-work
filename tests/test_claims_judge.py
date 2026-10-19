@@ -141,3 +141,37 @@ def test_nonzero_and_malformed_output_are_logged_without_stderr(tmp_path):
     with pytest.raises(ValueError):invoke(folder,tmp_path,executor=fake)
     log=(tmp_path/"out/calls.jsonl").read_text()
     assert "synthetic-private-note" not in log and '"exit_code": 7' in log
+
+
+def test_prompt_schema_hashes_frozen_in_manifest_and_call(tmp_path):
+    from smtw.claims.judge_contract import contract
+    folder=packet_folder(tmp_path)
+    manifest=json.loads((folder/"manifest.json").read_text())
+    assert manifest["judge_contract"]==contract()
+    invoke(folder,tmp_path)
+    row=json.loads((tmp_path/"out/calls.jsonl").read_text().splitlines()[0])
+    assert row["prompt_sha256"]==contract()["prompt_sha256"]
+    assert row["schema_sha256"]==contract()["schema_sha256"]
+    assert runner.SCHEMA.name=="judge-output.schema.json"
+
+
+@pytest.mark.parametrize("field",["prompt_sha256","schema_sha256","version"])
+def test_changed_contract_refuses_before_executor(tmp_path,field):
+    folder=packet_folder(tmp_path)
+    path=folder/"manifest.json";manifest=json.loads(path.read_text())
+    manifest["judge_contract"][field]="changed";path.write_text(json.dumps(manifest))
+    def fail(*args):pytest.fail("changed contract was executed")
+    with pytest.raises(ValueError):invoke(folder,tmp_path,executor=fail)
+
+
+def test_prompt_treats_injection_as_data_and_schema_is_bounded(tmp_path):
+    folder=packet_folder(tmp_path)
+    seen=[]
+    def fake(argv,prompt,env):
+        seen.append(prompt)
+        return fake_judge(argv,prompt,env)
+    invoke(folder,tmp_path,executor=fake)
+    assert "untrusted data" in seen[0] and "not_enough_evidence" in seen[0]
+    schema=json.loads(runner.SCHEMA.read_text())
+    assert schema["items"]["properties"]["evidence_quote"]["maxLength"]==200
+    assert schema["items"]["properties"]["rationale"]["maxLength"]==120

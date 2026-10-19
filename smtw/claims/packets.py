@@ -11,6 +11,7 @@ import random
 import re
 import subprocess
 
+from .judge_contract import contract
 from .model import Budget
 from .paths import matches_path, normalize_path
 from .sources import content_lines, decode
@@ -587,7 +588,7 @@ def write_packets(folder: Path, packets: list[dict], summary: dict) -> dict:
     if folder.exists() and any(folder.iterdir()):
         raise ValueError("패킷 출력 폴더는 비어 있어야 합니다.")
     folder.mkdir(parents=True, exist_ok=True)
-    manifest = {"version": 1, "model_calls": 0, **summary, "packets": []}
+    manifest = {"version": 1, "model_calls": 0, **summary, "judge_contract": contract(), "packets": []}
     for index, packet in enumerate(packets, 1):
         text = encoded(packet)
         data = text.encode("utf-8")

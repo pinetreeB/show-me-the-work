@@ -14,8 +14,9 @@ import sys
 import time
 import uuid
 
+from .judge_contract import PROMPT, SCHEMA, validate_contract
 from .advisory import load_sent_items, read_json, verify_judgments
-from .packets import HEADER, display_path, sensitive_path, redact
+from .packets import display_path, sensitive_path, redact
 
 MODEL = "claude-sonnet-5-5"
 HERE = Path(__file__).resolve().parent
@@ -125,9 +126,11 @@ def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False
     sent = load_sent_items(folder)  # Validate every hash and file before any call.
     manifest = read_json(folder / "manifest.json")
     validate_scope(manifest, sent)
+    validate_contract(manifest)
     if not sent or not 1 <= len(manifest["packets"]) <= max_calls:
         raise ValueError("empty packet folder or max-calls exceeded")
-    schema = (HERE / "judge-output.schema.json").read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    instructions = PROMPT.read_text(encoding="utf-8")
     executable = executable or shutil.which("claude-p")
     if not executable:
         raise ValueError("personal claude-p launcher is unavailable")
@@ -146,7 +149,8 @@ def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False
         data = (folder / entry["file"]).read_bytes()
         if sha(data) != entry["sha256"] or len(data.decode("utf-8")) > 30000:
             raise ValueError("packet changed after preflight")
-        prompt = HEADER + "\n\n" + data.decode("utf-8")
+        validate_contract(manifest)
+        prompt = instructions + data.decode("utf-8")
         started = time.monotonic()
         raw, exit_code, error = "", None, None
         try:
@@ -161,7 +165,7 @@ def judge(folder: Path, *, max_calls: int = 4, allow_unknown_usage: bool = False
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "packet_sha256": entry["sha256"], "item_ids": entry["item_ids"],
-            "model": MODEL, "argv": argv, "exit_code": exit_code,
+            "model": MODEL, "argv": argv, **manifest["judge_contract"], "exit_code": exit_code,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "output_sha256": sha(raw.encode("utf-8")), "usage_before": before,
             "usage_after": after, "error": error, "run_id": run_id,
