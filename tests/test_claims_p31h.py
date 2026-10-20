@@ -192,3 +192,20 @@ def test_duplicate_or_reordered_raw_line_numbers_are_dropped(tmp_path, numbers):
     rows = "\n".join(f"{n}: {LEAK} {i}" for i, n in enumerate(numbers))
     body = f"File Path: {CARD}\nShowing lines 1 to {max(numbers)}\n{rows}"
     assert not sources(tmp_path, [agy_call("view_file", AbsolutePath=CARD), generic(body)])
+
+
+def test_parser_restored_final_empty_line_keeps_read(tmp_path):
+    # Exporters may omit the final empty numbered line; the parser restores it
+    # from Total Lines/Total Bytes, so the raw rows are one short of the keys.
+    body = (f"File Path: {CARD}\nTotal Lines: 3\nTotal Bytes: 13\nShowing lines 1 to 3\n"
+            "1: first\n2: second")
+    found = sources(tmp_path, [agy_call("view_file", AbsolutePath=CARD, StartLine=1, EndLine=3), generic(body)])
+    assert len(found) == 1 and found[0].lines == {1: "first", 2: "second", 3: ""}
+
+
+@pytest.mark.parametrize("tail", ["1: first\n2: second\n1: " + LEAK,   # padded total but duplicate raw row
+                                  "2: second\n1: first"])              # reordered, same totals
+def test_restored_final_line_does_not_excuse_bad_raw_order(tmp_path, tail):
+    body = f"File Path: {CARD}\nTotal Lines: 3\nTotal Bytes: 13\nShowing lines 1 to 3\n{tail}"
+    found = sources(tmp_path, [agy_call("view_file", AbsolutePath=CARD, StartLine=1, EndLine=3), generic(body)])
+    assert not found and not leaked(found)

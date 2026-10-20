@@ -69,7 +69,11 @@ def self_identified_read(call: Call, body: str, e: Evidence) -> bool:
     # overwrites earlier text. Check the raw result order: every numbered row
     # must appear once, ascending by one, with no duplicates or gaps.
     raw = [int(m.group(1)) for row in rows if (m := NUMBERED.match(row))]
-    if raw != keys:
+    # The parser may restore the final empty line some exporters omit, after
+    # checking Total Lines/Total Bytes; that line is padding, not a raw row.
+    padded = (e.total_lines is not None and keys[-1] == e.total_lines
+              and e.lines[keys[-1]] == "" and raw == keys[:-1])
+    if raw != keys and not padded:
         return False
     shown = [re.match(r"Showing lines (\d+) to (\d+)\s*$", row) for row in rows[:first_numbered]]
     shown = [m for m in shown if m]
