@@ -71,7 +71,7 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     from adapters.intent_command import intent_set_command
     from core.classify import classify_prompt
     from core.contract import evaluate_pretool_contract
-    from core.destructive_guard import evaluate_r2_destructive_gate, host_shell_cwd
+    from core.destructive_guard import evaluate_r2_destructive_gate
 
     common = _common()
     tool_name, tool_input = extract_tool_info(payload)
@@ -89,7 +89,6 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
             "project_root": root,
             "tool_name": "Bash" if family == "shell" else tool_name,
             "command": cmd,
-            "shell_cwd": host_shell_cwd(payload),
             "host": invocation.host,
             "agent": invocation.agent,
             "session_id": invocation.session_id,
@@ -126,7 +125,6 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
         "tool_name": tool_name,
         "file_paths": paths,
         "command": cmd,
-        "shell_cwd": host_shell_cwd(payload),
         "prompt": json.dumps(tool_input, ensure_ascii=False),
         "intent_set_command": intent_set_command(__file__),
         "host": invocation.host,

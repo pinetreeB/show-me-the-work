@@ -286,7 +286,6 @@ BACKUP_PEER_ONLY = frozenset({"src/mine.py~", "src/mine.py.bak"})
         "ln -sS.bak other.py src/mine.py",
         "ln -s --suffix .bak other.py src/mine.py",
         "ln -sb other/mine.py src",
-        "cd src && ln -sb ../other.py mine.py",
     ],
 )
 def test_link_backup_overwrites_the_backup_name(tmp_path: Path, command: str) -> None:

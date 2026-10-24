@@ -135,7 +135,7 @@ def main() -> int:
         )
         from adapters.intent_command import intent_set_command
         from core.contract import EDIT_TOOLS, SHELL_TOOLS, evaluate_pretool_contract
-        from core.destructive_guard import evaluate_r2_destructive_gate, host_shell_cwd
+        from core.destructive_guard import evaluate_r2_destructive_gate
         from core.shell_command import ShellEffect, classify_shell_effect
 
         payload = context.payload
@@ -169,7 +169,6 @@ def main() -> int:
                 if family == "shell"
                 else str(payload.get("tool_name", "")),
                 "command": tool_command(payload),
-                "shell_cwd": host_shell_cwd(payload),
                 "host": invocation.host,
                 "agent": invocation.agent,
                 "session_id": invocation.session_id,
@@ -214,7 +213,6 @@ def main() -> int:
                 "tool_name": str(payload.get("tool_name", "")),
                 "file_paths": tool_file_paths(payload),
                 "command": tool_command(payload),
-                "shell_cwd": host_shell_cwd(payload),
                 "prompt": input_text,
                 "intent_set_command": intent_set_command(__file__),
                 "host": invocation.host,

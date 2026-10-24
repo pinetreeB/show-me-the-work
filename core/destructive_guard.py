@@ -54,14 +54,6 @@ SINK_PATHS: Final[frozenset[str]] = frozenset({"/dev/null", "nul"})
 # (`null=peer.py; echo x >$null` writes peer.py).  Only a host that reports the
 # PowerShell tool gets this exception; see parse_destructive_commands(powershell=).
 POWERSHELL_DISCARD_TARGETS: Final[frozenset[str]] = frozenset({"$null"})
-CHANGE_DIRECTORY_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
-    {"cd", "chdir", "pushd", "push-location", "set-location", "sl"}
-)
-RETURN_DIRECTORY_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
-    {"popd", "pop-location"}
-)
-# 한 명령 안의 cd 조합으로 생기는 기준 폴더 후보 상한. 넘으면 해석 불가로 본다.
-MAX_WORKING_DIRECTORY_BASES: Final[int] = 16
 SHELL_COMMAND_NAMES: Final[frozenset[str]] = frozenset(
     {
         "ash",
@@ -3291,240 +3283,6 @@ def executable_command_positions(command: str) -> tuple[tuple[str, ...], ...]:
     return tuple(positions)
 
 
-_CD_FLAG_RE: Final = re.compile(r"-[lpen@]+")
-_PUSHD_ROTATION_RE: Final = re.compile(r"[+-]\d+")
-_MSYS_DRIVE_RE: Final = re.compile(r"^/(?P<drive>[A-Za-z])(?:/(?P<rest>.*))?$")
-
-
-def _change_directory_operands(tokens: list[str]) -> list[str] | None:
-    """Operands of one ``cd``-family command (None when an option lacks its value)."""
-    positionals: list[str] = []
-    index = 1
-    while index < len(tokens):
-        raw = tokens[index]
-        token = _unquote(raw)
-        option = token.casefold()
-        if option in {"-path", "-literalpath"}:
-            if index + 1 >= len(tokens):
-                return None
-            positionals.append(tokens[index + 1])
-            index += 2
-            continue
-        if option.startswith(("-path:", "-literalpath:")):
-            positionals.append(token.split(":", 1)[1])
-            index += 1
-            continue
-        if option == "-stackname":
-            index += 2
-            continue
-        if option in {"--", "-passthru"} or _CD_FLAG_RE.fullmatch(option):
-            index += 1
-            continue
-        if option == "/d" and index + 1 < len(tokens):
-            index += 1
-            continue
-        positionals.append(raw)
-        index += 1
-    return positionals
-
-
-def _change_directory_target(tokens: list[str]) -> str | None:
-    """Static destination of one ``cd``-family command, or None if unknown."""
-    positionals = _change_directory_operands(tokens)
-    if positionals is None:
-        return None
-    if not positionals:
-        home = os.path.expanduser("~")
-        return None if home.startswith("~") else home
-    if len(positionals) != 1 or _is_powershell_dynamic_path(positionals[0]):
-        return None
-    target = _unquote(positionals[0])
-    if not target or target == "-" or _PUSHD_ROTATION_RE.fullmatch(target):
-        return None
-    if target.startswith("~"):
-        target = os.path.expanduser(target)
-        if target.startswith("~"):
-            return None
-    # `cd `pwd`/.smtw`: a backtick command substitution is as dynamic as `$(…)`.
-    if _has_glob(target) or _has_environment_reference(target) or "`" in target:
-        return None
-    return target
-
-
-def command_working_directories(command: str) -> tuple[tuple[str, ...], bool]:
-    """Return the static ``cd`` destinations inside one command, in order.
-
-    Repeats are kept: ``cd src && cd src`` stands in ``src/src``, so dropping
-    the second ``src`` would leave that directory unchecked.
-
-    The second value is True when a directory change could not be resolved
-    statically (``cd "$DIR"``, ``cd -``, ``popd`` without a matching ``pushd``).
-    Advisory and R2 consumers use this to evaluate relative paths against every
-    directory the command may be standing in, not only the project root.
-
-    The directory stack is followed entry by entry: each ``popd`` consumes one
-    entry this command pushed, so in ``pushd own; popd; popd`` the second
-    ``popd`` lands in a directory pushed before the command, which is unknown.
-    A subshell ``( … )`` works on a copy of the stack.
-    """
-    directories: list[str] = []
-    unresolvable = False
-    # Stack entries this command pushed, one counter per subshell level.
-    pushed = [0]
-    segments, _malformed = _r2_command_segments(command)
-    for segment in segments:
-        # `cd .smtw < /dev/null`: an input redirection is not a second operand.
-        argv, _redirections = _segment_argv(segment.text)
-        opens, closes = _subshell_paren_counts(argv)
-        pushed.extend([pushed[-1]] * opens)
-        tokens = _effective_command_tokens(argv)
-        if tokens:
-            unresolvable = (
-                _follow_directory_change(tokens, pushed, directories) or unresolvable
-            )
-        for _ in range(closes):
-            if len(pushed) > 1:
-                _ = pushed.pop()
-    return tuple(directories), unresolvable
-
-
-def _subshell_paren_counts(argv: list[str]) -> tuple[int, int]:
-    """How many subshells open before and close after this segment's words.
-
-    Only unbalanced parens count, so `$(pwd)` or `((i++))` opens nothing.
-    """
-    opens = 0
-    for token in argv:
-        if not token.startswith("("):
-            break
-        opens += max(_paren_balance(token), 0)
-    closes = 0
-    for token in reversed(argv):
-        if not token.endswith(")"):
-            break
-        closes += max(-_paren_balance(token), 0)
-    return opens, closes
-
-
-def _follow_directory_change(
-    tokens: list[str], pushed: list[int], directories: list[str]
-) -> bool:
-    """Apply one ``cd``/``pushd``/``popd``; True when its destination is unknown."""
-    name = _command_name(tokens[0])
-    # `-StackName s` (PowerShell accepts any prefix, `-s`, and `-StackName:s`)
-    # works on another stack than the default one counted here.
-    named_stack = any(
-        len(option) >= 2 and "-stackname".startswith(option)
-        for option in (
-            _unquote(token).casefold().split(":", 1)[0] for token in tokens[1:]
-        )
-    )
-    if name in RETURN_DIRECTORY_COMMAND_NAMES:
-        # popd returns to a known directory only by consuming an entry this
-        # command pushed; an older entry (or another named stack) is unknown.
-        if named_stack or pushed[-1] == 0:
-            return True
-        pushed[-1] -= 1
-        return False
-    if name not in CHANGE_DIRECTORY_COMMAND_NAMES:
-        return False
-    if name in {"pushd", "push-location"}:
-        operands = _change_directory_operands(tokens)
-        if not operands:
-            if name == "push-location":
-                # Push-Location without a path pushes the current location.
-                pushed[-1] += 0 if named_stack else 1
-                return operands is None
-            # A bare `pushd` swaps the top two entries: a known directory
-            # only when the second one was pushed by this command.
-            return operands is None or pushed[-1] == 0
-        pushed[-1] += 0 if named_stack else 1
-    target = _change_directory_target(tokens)
-    if target is None:
-        return True
-    directories.append(target)
-    return False
-
-
-def host_shell_cwd(payload: Mapping[str, JsonValue]) -> str:
-    """The shell working directory the host reported for this tool call.
-
-    Adapters forward it as ``shell_cwd`` (never as ``cwd``, which core modules
-    use as a project-root fallback) so relative destructive targets are also
-    checked where the shell really stands after an earlier ``cd``.
-    """
-    value = payload.get("cwd")
-    return value if isinstance(value, str) else ""
-
-
-def _msys_drive_path(path: str, windows: bool) -> str | None:
-    """Translate Git Bash ``/c/Users/...`` into ``C:/Users/...`` on Windows."""
-    if not windows:
-        return None
-    match = _MSYS_DRIVE_RE.match(path.replace("\\", "/"))
-    if match is None:
-        return None
-    return f"{match.group('drive').upper()}:/{match.group('rest') or ''}"
-
-
-def _is_rooted_path(path: str) -> bool:
-    normalized = path.replace("\\", "/")
-    return normalized.startswith("/") or Path(normalized).is_absolute()
-
-
-def working_directory_bases(
-    root: str,
-    command: str,
-    shell_cwd: str | None = None,
-    *,
-    windows: bool | None = None,
-) -> tuple[tuple[str, ...], bool]:
-    """Every directory a relative path in ``command`` may be resolved against.
-
-    The project root stays first so the historical interpretation is always
-    checked.  The host-reported shell cwd and each ``cd`` destination (applied
-    to every earlier candidate, because subshells and ``||`` make the real order
-    ambiguous) are added on top: checking more interpretations only adds
-    protection, never removes it.
-    """
-    is_windows = os.name == "nt" if windows is None else windows
-    base_root = os.path.abspath(root)
-    bases: list[str] = [base_root]
-    if shell_cwd:
-        cwd = _msys_drive_path(shell_cwd, is_windows) or shell_cwd
-        candidate = os.path.abspath(os.path.join(base_root, cwd))
-        if candidate not in bases:
-            bases.append(candidate)
-    directories, unresolvable = command_working_directories(command)
-    for directory in directories:
-        directory = _msys_drive_path(directory, is_windows) or directory
-        for base in tuple(bases):
-            candidate = os.path.abspath(os.path.join(base, directory))
-            if candidate not in bases:
-                bases.append(candidate)
-        if len(bases) > MAX_WORKING_DIRECTORY_BASES:
-            return tuple(bases[:MAX_WORKING_DIRECTORY_BASES]), True
-    return tuple(bases), unresolvable
-
-
-def path_interpretations(
-    raw_path: str,
-    bases: tuple[str, ...],
-    *,
-    windows: bool | None = None,
-) -> tuple[str, ...]:
-    """The raw path plus its reading under every non-root working directory."""
-    is_windows = os.name == "nt" if windows is None else windows
-    interpretations = [raw_path]
-    normalized = raw_path.strip().strip("'\"")
-    msys = _msys_drive_path(normalized, is_windows)
-    if msys is not None:
-        interpretations.append(msys)
-    elif normalized and not _is_rooted_path(normalized):
-        interpretations.extend(os.path.join(base, normalized) for base in bases[1:])
-    return tuple(dict.fromkeys(interpretations))
-
-
 def _static_pipeline_literal(segment: _CommandSegment) -> str | None:
     text = segment.text.strip()
     if len(text) < 2 or text[0] != text[-1] or text[0] not in "'\"":
@@ -3961,35 +3719,13 @@ def _decide_r2(
     root = payload.get("project_root")
     root = root if isinstance(root, str) and root else "."
 
-    # `cd src && rm peer.py` deletes src/peer.py, not <root>/peer.py.  Every
-    # relative target is checked under the root *and* each directory the shell
-    # may be standing in (host cwd, in-command cd).  An unknown cd destination
-    # makes relative targets unresolvable, which fails closed like any other
-    # unparseable target.
-    try:
-        shell_cwd = payload.get("shell_cwd")
-        bases, working_directory_unknown = working_directory_bases(
-            root,
-            command,
-            shell_cwd if isinstance(shell_cwd, str) else None,
-        )
-    except Exception:  # noqa: BLE001 - must not fall through to a fail-open path.
-        return _block("parse_unable_target")
-    if working_directory_unknown and any(
-        _is_relative_target(raw_target)
-        for parsed in parsed_commands
-        for raw_target in (*parsed.targets, *parsed.container_targets)
-    ):
-        return _block("parse_unable_target")
-
     # Lexical state-dir protection must run before ledger I/O and physical resolve:
     # `.fable-lite` may itself be a symlink that resolves outside the project.
     for parsed in parsed_commands:
         for raw_target in (*parsed.targets, *parsed.container_targets):
-            for candidate in path_interpretations(raw_target, bases):
-                lexical = _canonicalize_lexical_target(root, candidate)
-                if lexical is not None and _is_state_dir_key(lexical):
-                    return _block("state_dir_protected")
+            lexical = _canonicalize_lexical_target(root, raw_target)
+            if lexical is not None and _is_state_dir_key(lexical):
+                return _block("state_dir_protected")
 
     # R2-first: 이 load가 어댑터 전체에서 최초의 상태 접근이다(§6-3).
     ledger, degraded = _load_ledger_for_r2(root)
@@ -4006,11 +3742,7 @@ def _decide_r2(
     caller_agent_key = _identity_agent_key(payload)
     peer_candidates = _peer_open_invocation_candidates(ledger, caller_agent_key, root)
     for parsed in parsed_commands:
-        for raw_target in (
-            candidate
-            for target in parsed.targets
-            for candidate in path_interpretations(target, bases)
-        ):
+        for raw_target in parsed.targets:
             disposition, canonical = _canonicalize_target(root, raw_target)
             if disposition == _CANON_UNRESOLVABLE:
                 # resolve 자체가 실패한 경로(순환 심볼릭·초장경로 등): 고의 예외 유발로 루트 안
@@ -4031,11 +3763,7 @@ def _decide_r2(
                 return _block("peer_unsettled_revision")
             if canonical in peer_candidates:
                 return _block("peer_open_invocation_candidate")
-        for raw_container in (
-            candidate
-            for target in parsed.container_targets
-            for candidate in path_interpretations(target, bases)
-        ):
+        for raw_container in parsed.container_targets:
             disposition, container = _canonicalize_target(root, raw_container)
             if disposition == _CANON_UNRESOLVABLE:
                 return _block("canonicalization_unavailable")
@@ -4059,13 +3787,6 @@ def _decide_r2(
                 if _owned_by_unsettled_peer(record, caller_agent_key):
                     return _block("peer_unsettled_revision")
     return _allow("r2 pass")
-
-
-def _is_relative_target(raw_target: str) -> bool:
-    normalized = raw_target.strip().strip("'\"")
-    if normalized.replace("\\", "/").casefold() in SINK_PATHS:
-        return False
-    return bool(normalized) and not _is_rooted_path(normalized)
 
 
 def _is_path_within_container(candidate: str, container: str) -> bool:
