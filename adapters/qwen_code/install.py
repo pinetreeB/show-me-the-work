@@ -45,15 +45,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Atomically replace only smtw-owned hook entries in existing settings",
     )
-    _ = parser.add_argument(
-        "--trust",
-        action="store_true",
-        help=(
-            "Register the target as TRUST_FOLDER even when its existing "
-            "<target>/.qwen/settings.json defines hooks, MCP servers or tool "
-            "commands that show-me-the-work did not install (review them first)."
-        ),
-    )
     return parser
 
 
@@ -237,57 +228,6 @@ def _linked_config_problem(target_root: Path, config_dir: Path, settings: Path) 
     return None
 
 
-def _foreign_executable_settings(settings: dict[str, object]) -> list[str]:
-    """Settings that would start running once the folder is trusted.
-
-    Only the hook entries this install really replaces are exempt: those that
-    merge_owned_hooks() removes, i.e. smtw-looking entries under the events it
-    rewrites.  Anyone can copy the smtw path into a hook's command or env, so
-    under any other event (`Notification`, …) such an entry survives the merge
-    and would run with the folder's trust; it needs an explicit --trust.
-    """
-    found: list[str] = []
-    hooks = settings.get("hooks")
-    if isinstance(hooks, dict):
-        for event, matchers in cast(dict[str, object], hooks).items():
-            if not isinstance(matchers, list):
-                continue
-            replaced = event in EVENT_NAMES
-            for raw_matcher in matchers:
-                entries = (
-                    cast(dict[str, object], raw_matcher).get("hooks")
-                    if isinstance(raw_matcher, dict)
-                    else None
-                )
-                if isinstance(entries, list) and any(
-                    not (replaced and _is_owned_hook(entry)) for entry in entries
-                ):
-                    found.append(f"hooks.{event}")
-                    break
-    if settings.get("mcpServers"):
-        found.append("mcpServers")
-    # Flat keys are the pre-v2 spellings Qwen still migrates on load.
-    for key in ("toolDiscoveryCommand", "toolCallCommand", "mcpServerCommand"):
-        if settings.get(key):
-            found.append(key)
-    for section, keys in _NESTED_COMMAND_KEYS:
-        nested = settings.get(section)
-        if isinstance(nested, dict):
-            for key in keys:
-                if cast(dict[str, object], nested).get(key):
-                    found.append(f"{section}.{key}")
-    return found
-
-
-# Nested settings whose value Qwen runs as a command (`ui.statusLine` with
-# `"type": "command"` runs its `command` on every status refresh).
-_NESTED_COMMAND_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("tools", ("discoveryCommand", "callCommand")),
-    ("mcp", ("serverCommand",)),
-    ("ui", ("statusLine",)),
-)
-
-
 def _trusted_folders_path() -> Path:
     override = os.environ.get(TRUSTED_FOLDERS_ENV)
     if override:
@@ -334,7 +274,6 @@ def main() -> int:
         return 2
 
     upgrade = getattr(args, "upgrade", False) is True
-    explicit_trust = getattr(args, "trust", False) is True
     if isinstance(target_value, Path):
         target_root = target_value.resolve()
         destination = target_root / ".qwen" / "settings.json"
@@ -343,22 +282,6 @@ def main() -> int:
         if problem is not None:
             print(problem, file=sys.stderr)
             return 1
-        if destination.is_file() and not explicit_trust:
-            try:
-                current = _parsed_object(destination.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError):
-                current = None
-            foreign = _foreign_executable_settings(current) if current is not None else []
-            if foreign:
-                print(
-                    "Refusing to auto-register trust: the existing workspace qwen "
-                    f"settings ({destination}) already define {', '.join(foreign)} "
-                    "that show-me-the-work did not install. Trusting the folder "
-                    "would let Qwen run them. Review the file, then re-run with "
-                    "--trust to register trust anyway.",
-                    file=sys.stderr,
-                )
-                return 1
     else:
         destination = Path.home() / ".qwen" / "settings.json"
         scope_label = "user"
