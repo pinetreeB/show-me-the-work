@@ -2222,28 +2222,6 @@ def _truncating_redirect_result(
     return ParsedDestructiveCommand(CATEGORY_TRUNCATE, True, tuple(targets), "")
 
 
-def output_redirection_targets(command: str) -> tuple[str, ...]:
-    """Expose every static output-redirection target, appends included.
-
-    Advisory consumers (state-file friction) reuse R2's quote-aware redirect
-    parser so ``x>>.smtw/ledger.json`` is seen even without surrounding spaces.
-    """
-    targets: list[str] = []
-    segments, _malformed = _r2_command_segments(command)
-    for segment in segments:
-        _argv, redirections = _split_redirections(_tokenize(segment.text))
-        for redirection in redirections:
-            if (
-                not redirection.output
-                or _is_descriptor_duplication(redirection)
-                or not redirection.target
-            ):
-                continue
-            if redirection.target not in targets:
-                targets.append(redirection.target)
-    return tuple(targets)
-
-
 def _detect_tee(tokens: list[str]) -> ParsedDestructiveCommand | None:
     command = _command_name(tokens[0])
     if command == "tee-object":
@@ -3293,27 +3271,6 @@ def _r2_command_segments(command: str) -> tuple[list[_CommandSegment], bool]:
     """Return the executable segments consumed by the R2 parser."""
     segments, body_segments, malformed = _r2_command_segment_groups(command)
     return [*segments, *body_segments], malformed
-
-
-def command_segment_texts(command: str) -> tuple[str, ...]:
-    """Expose R2's command boundaries for advisory consumers.
-
-    Unquoted newlines, ``&``, ``;``, ``|``, ``&&``/``||``, command
-    substitutions and re-parsed bodies each start a separate command, exactly
-    where R2 splits them.  This is parser reuse only, not an authorization.
-    """
-    segments, _malformed = _r2_command_segments(command)
-    return tuple(segment.text for segment in segments)
-
-
-def effective_command_words(words: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    """R2's command-position normalization for an argv split by another lexer.
-
-    Strips subshell/group parens (``(install …)``), control words, leading
-    assignments and the transparent wrappers R2 already understands
-    (``sudo``, ``env``, ``nice`` …), so the real command name comes first.
-    """
-    return tuple(_effective_command_tokens(_split_glued_subshell_parens(list(words))))
 
 
 def executable_command_positions(command: str) -> tuple[tuple[str, ...], ...]:
