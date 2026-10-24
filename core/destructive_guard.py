@@ -1580,8 +1580,11 @@ _LN_LONG_OPTIONS: Final[dict[str, str]] = {
 }
 _LN_VALUE_LETTERS: Final[frozenset[str]] = frozenset("St")
 # `-f` removes the file at the link name; `-b` renames it to a backup and `-i`
-# removes it once the prompt (read from stdin) is answered yes.
-_LN_REPLACING_LETTERS: Final[frozenset[str]] = frozenset("bfi")
+# removes it once the prompt (read from stdin) is answered yes.  `-S SUFFIX`
+# implies `-b` in GNU ln (`ln -sS.bak a peer.py` moves peer.py aside).
+_LN_REPLACING_LETTERS: Final[frozenset[str]] = frozenset("bfiS")
+_LN_BACKUP_LETTERS: Final[frozenset[str]] = frozenset("bS")
+_LN_DEFAULT_BACKUP_SUFFIX: Final[str] = "~"
 
 
 def _ln_long_option(word: str) -> str:
@@ -1607,17 +1610,20 @@ def _ln_option_value(
 
 
 def _detect_forced_link(tokens: list[str]) -> ParsedDestructiveCommand | None:
-    """``ln -f``/``-sf`` (also ``-b``, ``-i``) replaces the file at the link name.
+    """``ln -f``/``-sf`` (also ``-b``, ``-S``, ``-i``) replaces the link name.
 
     Options are decoded the way getopt_long does: a bundle stops at a value
     letter (``-S SUFFIX``, ``-t DIR``), long options may be abbreviated
     (``--for``) and may follow the operands.  A source whose name is unknown
     (``other/*``, ``$DIR``) may replace any file directly inside the link
-    directory, so that directory is checked as a whole.
+    directory, so that directory is checked as a whole.  A backup (``-b``,
+    ``--backup``, ``-S``) also overwrites ``<link name><suffix>``.
     """
     if _command_name(tokens[0]) != "ln":
         return None
     replaces = False
+    makes_backup = False
+    backup_suffix = _LN_DEFAULT_BACKUP_SUFFIX
     no_target_directory = False
     target_directory: str | None = None
     positionals: list[str] = []
@@ -1657,24 +1663,39 @@ def _detect_forced_link(tokens: list[str]) -> ParsedDestructiveCommand | None:
                         return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
                     break
         replaces = replaces or any(letter in _LN_REPLACING_LETTERS for letter in letters)
+        makes_backup = makes_backup or any(letter in _LN_BACKUP_LETTERS for letter in letters)
         no_target_directory = no_target_directory or "T" in letters
         if letters.endswith("t"):
             target_directory = value
+        if letters.endswith("S") and value is not None:
+            backup_suffix = _unquote(value)
     if not replaces:
         return None
+
+    def with_backups(names: list[str]) -> list[str]:
+        """Add the backup file each replaced link name is renamed onto."""
+        if not makes_backup:
+            return names
+        backups = [
+            f"{_unquote(name)}{backup_suffix}"
+            for name in names
+            if not _unquote(name).endswith(("/", "\\"))
+        ]
+        return [*names, *backups]
+
     if target_directory is not None:
         sources, destination = positionals, target_directory
     elif no_target_directory:
         # `-T`: the last operand is the link name itself, never a directory.
         if len(positionals) != 2:
             return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_target")
-        return _resolved_static_targets(CATEGORY_TRUNCATE, [positionals[1]])
+        return _resolved_static_targets(CATEGORY_TRUNCATE, with_backups([positionals[1]]))
     elif len(positionals) == 1:
         # `ln -sf ../x` creates ./x in the working directory.
         link_name = (
             _unquote(positionals[0]).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
         )
-        return _resolved_static_targets(CATEGORY_TRUNCATE, [link_name])
+        return _resolved_static_targets(CATEGORY_TRUNCATE, with_backups([link_name]))
     elif positionals:
         sources, destination = positionals[:-1], positionals[-1]
     else:
@@ -1688,7 +1709,9 @@ def _detect_forced_link(tokens: list[str]) -> ParsedDestructiveCommand | None:
     )
     return _resolved_static_targets(
         CATEGORY_TRUNCATE,
-        _transfer_destination_candidates(sources, destination, preserve_parents=False),
+        with_backups(
+            _transfer_destination_candidates(sources, destination, preserve_parents=False)
+        ),
         container_targets=[destination] if unknown_source else (),
     )
 
@@ -3316,8 +3339,8 @@ _PUSHD_ROTATION_RE: Final = re.compile(r"[+-]\d+")
 _MSYS_DRIVE_RE: Final = re.compile(r"^/(?P<drive>[A-Za-z])(?:/(?P<rest>.*))?$")
 
 
-def _change_directory_target(tokens: list[str]) -> str | None:
-    """Static destination of one ``cd``-family command, or None if unknown."""
+def _change_directory_operands(tokens: list[str]) -> list[str] | None:
+    """Operands of one ``cd``-family command (None when an option lacks its value)."""
     positionals: list[str] = []
     index = 1
     while index < len(tokens):
@@ -3345,6 +3368,14 @@ def _change_directory_target(tokens: list[str]) -> str | None:
             continue
         positionals.append(raw)
         index += 1
+    return positionals
+
+
+def _change_directory_target(tokens: list[str]) -> str | None:
+    """Static destination of one ``cd``-family command, or None if unknown."""
+    positionals = _change_directory_operands(tokens)
+    if positionals is None:
+        return None
     if not positionals:
         home = os.path.expanduser("~")
         return None if home.startswith("~") else home
@@ -3373,32 +3404,89 @@ def command_working_directories(command: str) -> tuple[tuple[str, ...], bool]:
     statically (``cd "$DIR"``, ``cd -``, ``popd`` without a matching ``pushd``).
     Advisory and R2 consumers use this to evaluate relative paths against every
     directory the command may be standing in, not only the project root.
+
+    The directory stack is followed entry by entry: each ``popd`` consumes one
+    entry this command pushed, so in ``pushd own; popd; popd`` the second
+    ``popd`` lands in a directory pushed before the command, which is unknown.
+    A subshell ``( … )`` works on a copy of the stack.
     """
     directories: list[str] = []
     unresolvable = False
-    pushed = False
+    # Stack entries this command pushed, one counter per subshell level.
+    pushed = [0]
     segments, _malformed = _r2_command_segments(command)
     for segment in segments:
         # `cd .smtw < /dev/null`: an input redirection is not a second operand.
         argv, _redirections = _segment_argv(segment.text)
+        opens, closes = _subshell_paren_counts(argv)
+        pushed.extend([pushed[-1]] * opens)
         tokens = _effective_command_tokens(argv)
-        if not tokens:
-            continue
-        name = _command_name(tokens[0])
-        if name in RETURN_DIRECTORY_COMMAND_NAMES:
-            # popd returns to a directory already in the candidate set only when
-            # this command pushed it; otherwise the destination is unknown.
-            unresolvable = unresolvable or not pushed
-            continue
-        if name not in CHANGE_DIRECTORY_COMMAND_NAMES:
-            continue
-        pushed = pushed or name in {"pushd", "push-location"}
-        target = _change_directory_target(tokens)
-        if target is None:
-            unresolvable = True
-        else:
-            directories.append(target)
+        if tokens:
+            unresolvable = (
+                _follow_directory_change(tokens, pushed, directories) or unresolvable
+            )
+        for _ in range(closes):
+            if len(pushed) > 1:
+                _ = pushed.pop()
     return tuple(directories), unresolvable
+
+
+def _subshell_paren_counts(argv: list[str]) -> tuple[int, int]:
+    """How many subshells open before and close after this segment's words.
+
+    Only unbalanced parens count, so `$(pwd)` or `((i++))` opens nothing.
+    """
+    opens = 0
+    for token in argv:
+        if not token.startswith("("):
+            break
+        opens += max(_paren_balance(token), 0)
+    closes = 0
+    for token in reversed(argv):
+        if not token.endswith(")"):
+            break
+        closes += max(-_paren_balance(token), 0)
+    return opens, closes
+
+
+def _follow_directory_change(
+    tokens: list[str], pushed: list[int], directories: list[str]
+) -> bool:
+    """Apply one ``cd``/``pushd``/``popd``; True when its destination is unknown."""
+    name = _command_name(tokens[0])
+    # `-StackName s` (PowerShell accepts any prefix, `-s`, and `-StackName:s`)
+    # works on another stack than the default one counted here.
+    named_stack = any(
+        len(option) >= 2 and "-stackname".startswith(option)
+        for option in (
+            _unquote(token).casefold().split(":", 1)[0] for token in tokens[1:]
+        )
+    )
+    if name in RETURN_DIRECTORY_COMMAND_NAMES:
+        # popd returns to a known directory only by consuming an entry this
+        # command pushed; an older entry (or another named stack) is unknown.
+        if named_stack or pushed[-1] == 0:
+            return True
+        pushed[-1] -= 1
+        return False
+    if name not in CHANGE_DIRECTORY_COMMAND_NAMES:
+        return False
+    if name in {"pushd", "push-location"}:
+        operands = _change_directory_operands(tokens)
+        if not operands:
+            if name == "push-location":
+                # Push-Location without a path pushes the current location.
+                pushed[-1] += 0 if named_stack else 1
+                return operands is None
+            # A bare `pushd` swaps the top two entries: a known directory
+            # only when the second one was pushed by this command.
+            return operands is None or pushed[-1] == 0
+        pushed[-1] += 0 if named_stack else 1
+    target = _change_directory_target(tokens)
+    if target is None:
+        return True
+    directories.append(target)
+    return False
 
 
 def host_shell_cwd(payload: Mapping[str, JsonValue]) -> str:

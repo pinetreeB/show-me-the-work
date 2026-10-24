@@ -266,15 +266,26 @@ def _foreign_executable_settings(settings: dict[str, object]) -> list[str]:
                     break
     if settings.get("mcpServers"):
         found.append("mcpServers")
-    for key in ("toolDiscoveryCommand", "toolCallCommand"):
+    # Flat keys are the pre-v2 spellings Qwen still migrates on load.
+    for key in ("toolDiscoveryCommand", "toolCallCommand", "mcpServerCommand"):
         if settings.get(key):
             found.append(key)
-    tools = settings.get("tools")
-    if isinstance(tools, dict):
-        for key in ("discoveryCommand", "callCommand"):
-            if cast(dict[str, object], tools).get(key):
-                found.append(f"tools.{key}")
+    for section, keys in _NESTED_COMMAND_KEYS:
+        nested = settings.get(section)
+        if isinstance(nested, dict):
+            for key in keys:
+                if cast(dict[str, object], nested).get(key):
+                    found.append(f"{section}.{key}")
     return found
+
+
+# Nested settings whose value Qwen runs as a command (`ui.statusLine` with
+# `"type": "command"` runs its `command` on every status refresh).
+_NESTED_COMMAND_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("tools", ("discoveryCommand", "callCommand")),
+    ("mcp", ("serverCommand",)),
+    ("ui", ("statusLine",)),
+)
 
 
 def _trusted_folders_path() -> Path:

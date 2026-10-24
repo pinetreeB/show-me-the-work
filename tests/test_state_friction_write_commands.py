@@ -437,3 +437,53 @@ def test_redirect_after_a_quoted_target_into_state_is_blocked(tmp_path: Path) ->
 
     assert ".smtw/ledger.json" in shell_candidate_paths(command)
     assert _friction(tmp_path, command)["decision"] == "block"
+
+
+# --- Codex review r5 follow-up ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl --data '>' --output .smtw/ledger.json file:///tmp/x",
+        'curl --data ">" --output .smtw/ledger.json file:///tmp/x',
+        "curl --data \\> --output .smtw/ledger.json file:///tmp/x",
+        "curl -H '>>' -o .smtw/ledger.json https://example.invalid/x",
+        "curl --data ';' --output .smtw/ledger.json https://example.invalid/x",
+        "curl --data '|' -o .smtw/ledger.json https://example.invalid/x",
+        "curl --data '&&' -o .smtw/ledger.json https://example.invalid/x",
+        "install '<' src .smtw/ledger.json",
+    ],
+)
+def test_quoted_operator_characters_are_arguments_not_redirections(
+    tmp_path: Path, command: str
+) -> None:
+    # A quoted `>` (or `;`, `|`) is data for curl, so `--output` still writes.
+    assert ".smtw/ledger.json" in shell_candidate_paths(command), command
+    assert _friction(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cp .smtw/ledger.json 2026 >copy.log",
+        "cp .smtw/ledger.json 2026 > copy.log",
+        "cp .smtw/ledger.json 2 2>err.log",
+        "cp .smtw/ledger.json '2'>copy.log",
+        "mv .smtw/ledger.json 7 >>move.log",
+    ],
+)
+def test_number_spaced_off_a_redirection_stays_an_argument(
+    tmp_path: Path, command: str
+) -> None:
+    # `2026 >log`: only a number glued to `>` is a file descriptor, so `2026`
+    # is the copy destination and the state file is only read.
+    assert ".smtw/ledger.json" not in shell_candidate_paths(command), command
+    assert _friction(tmp_path, command)["decision"] == "allow", command
+
+
+def test_number_glued_to_a_redirection_is_a_descriptor() -> None:
+    assert shell_candidate_paths("install a .smtw/ledger.json 2>err.log") == (
+        "err.log",
+        ".smtw/ledger.json",
+    )

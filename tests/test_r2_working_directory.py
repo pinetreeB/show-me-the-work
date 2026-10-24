@@ -7,8 +7,11 @@ Relative targets used to be resolved only against the project root, so
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -276,3 +279,123 @@ def test_backtick_cd_target_is_unresolvable(tmp_path: Path, command: str) -> Non
 
     assert result["decision"] == "block", command
     assert result["coordination_reason_code"] == "command_parse_unavailable"
+
+
+# --- Codex review r5 follow-up: Codex / Qwen root when the cwd is nested -----
+
+ADAPTER_ROOT = Path(__file__).resolve().parents[1] / "adapters"
+
+
+def _run_adapter(script: Path, args: list[str], payload: dict[str, object]) -> str:
+    process = subprocess.run(
+        [sys.executable, str(script), *args],
+        input=json.dumps(payload, ensure_ascii=False),
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return process.stdout + process.stderr
+
+
+@pytest.mark.parametrize(
+    ("script", "args", "tool_name"),
+    [
+        (ADAPTER_ROOT / "codex_cli" / "pre_tool_use.py", [], "Bash"),
+        (ADAPTER_ROOT / "qwen_code" / "qwen_hook.py", ["PreToolUse"], "run_shell_command"),
+    ],
+)
+def test_codex_and_qwen_keep_the_ancestor_root_when_the_cwd_is_the_state_dir(
+    tmp_path: Path, script: Path, args: list[str], tool_name: str
+) -> None:
+    # Given: the host reports the project root and a shell cwd inside `.smtw`.
+    root = tmp_path / "project"
+    state = root / ".smtw"
+    state.mkdir(parents=True)
+    config = state / "config.json"
+    config.write_text(json.dumps({"schema_version": 1, "supervision": True}), encoding="utf-8")
+    payload: dict[str, object] = {
+        "cwd": str(state),
+        "project_root": str(root),
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool_name,
+        "tool_input": {"command": "rm config.json"},
+        "tool_use_id": "call_rm",
+        "session_id": "nested-cwd-session",
+    }
+
+    # When: the real PreTool adapter evaluates a bare relative delete.
+    output = _run_adapter(script, args, payload)
+
+    # Then: the root stays the project, so `config.json` is the state file.
+    assert "state_dir_protected" in output, output
+    assert config.exists()
+
+
+@pytest.mark.parametrize("module", ["adapters.codex_cli.common", "adapters.qwen_code.common"])
+def test_codex_and_qwen_project_root_accepts_an_ancestor_only_when_related(
+    tmp_path: Path, module: str
+) -> None:
+    import importlib
+
+    project_root = importlib.import_module(module).project_root
+    root = tmp_path / "project"
+    nested = root / ".smtw"
+    nested.mkdir(parents=True)
+    unrelated = tmp_path / "elsewhere"
+    unrelated.mkdir()
+
+    assert Path(project_root({"cwd": str(nested), "project_root": str(root)})) == root.resolve()
+    assert Path(project_root({"cwd": str(root), "project_root": str(nested)})) == nested.resolve()
+    assert Path(project_root({"cwd": str(root), "project_root": str(unrelated)})) == root.resolve()
+
+
+# --- Codex review r5 follow-up: the directory stack is consumed by popd -----
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pushd own; popd; popd; rm peer.py",
+        "pushd own && popd && popd && rm peer.py",
+        "(pushd own); popd; rm peer.py",
+        "(cd $(pwd); pushd own); popd; rm peer.py",
+        "pushd; rm peer.py",
+        "Push-Location own; Pop-Location; Pop-Location; Remove-Item peer.py",
+        "Push-Location own -StackName s; Pop-Location; Remove-Item peer.py",
+        "Push-Location own; Pop-Location -Stack s; Remove-Item peer.py",
+        "Push-Location own; Pop-Location -StackName:s; Remove-Item peer.py",
+    ],
+)
+def test_popd_past_the_entries_this_command_pushed_fails_closed(
+    tmp_path: Path, command: str
+) -> None:
+    # The second popd leaves for a directory pushed before this command.
+    result = r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "command_parse_unavailable", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pushd own; popd; rm own.py",
+        "pushd src && rm own.py && popd",
+        "pushd a; pushd b; popd; popd; rm own.py",
+        "pushd a; (popd; rm own.py)",
+        "pushd a; pushd; rm own.py",
+        "pushd -n own; popd; rm own.py",
+        "Push-Location own; Pop-Location; Remove-Item own.py",
+    ],
+)
+def test_popd_back_through_own_pushes_stays_allowed(tmp_path: Path, command: str) -> None:
+    assert r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)["decision"] == "allow", command
+
+
+def test_command_working_directories_count_the_directory_stack() -> None:
+    assert command_working_directories("pushd own; popd") == (("own",), False)
+    assert command_working_directories("pushd own; popd; popd") == (("own",), True)
+    assert command_working_directories("(pushd own); popd") == (("own",), True)
+    assert command_working_directories("pushd a; ((i++)); popd") == (("a",), False)

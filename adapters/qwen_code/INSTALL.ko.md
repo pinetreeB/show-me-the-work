@@ -12,7 +12,8 @@ python adapters/qwen_code/install.py
 # 프로젝트(workspace) 설치: <target>/.qwen/settings.json + trustedFolders.json TRUST_FOLDER 자동 등록
 python adapters/qwen_code/install.py --target /path/to/project
 
-# 대상의 기존 settings.json에 smtw가 넣지 않은 훅·MCP 서버·도구 명령이 있으면
+# 대상의 기존 settings.json에 smtw가 넣지 않은 훅·MCP 서버(mcpServers, mcp.serverCommand)·
+# 도구 명령(tools.discoveryCommand/callCommand)·상태줄 명령(ui.statusLine)이 있으면
 # 자동 trust 등록을 거부합니다. 내용을 검토한 뒤에만 --trust로 명시 등록하세요.
 python adapters/qwen_code/install.py --target /path/to/project --trust
 

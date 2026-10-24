@@ -105,6 +105,9 @@ def test_qwen_installer_refuses_settings_resolving_outside_target(tmp_path: Path
         {"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "python x.py"}]}]}},
         {"mcpServers": {"tool": {"command": "node", "args": ["server.js"]}}},
         {"tools": {"discoveryCommand": "./discover.sh"}},
+        {"mcp": {"serverCommand": "node server.js"}},
+        {"mcpServerCommand": "node server.js"},
+        {"ui": {"statusLine": {"type": "command", "command": "bash status.sh"}}},
     ],
 )
 def test_qwen_installer_requires_explicit_trust_for_foreign_executables(

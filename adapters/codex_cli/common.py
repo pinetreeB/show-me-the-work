@@ -50,7 +50,10 @@ def project_root(payload: Mapping[str, JsonValue]) -> str:
     if not candidate.is_absolute():
         candidate = base / candidate
     resolved = candidate.resolve()
-    if not _is_relative_to(resolved, base):
+    # The host's project root may contain the cwd (the shell stands in a
+    # subdirectory such as `.smtw`, as the Claude adapter already accepts) or
+    # sit inside it.  An unrelated root is ignored.
+    if not (_is_relative_to(resolved, base) or _is_relative_to(base, resolved)):
         return str(base)
     return str(resolved)
 

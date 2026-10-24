@@ -47,7 +47,7 @@ def shell_candidate_paths(command: str) -> tuple[str, ...]:
     # starts a new command (`install a .smtw/x` + newline + `echo done` must
     # not make `done` the install destination).
     for segment in command_segment_texts(command):
-        paths.extend(_token_paths(_tokens(segment)))
+        paths.extend(_token_paths(_words(segment)))
     return tuple(dict.fromkeys(path for path in paths if _path(path)))
 
 
@@ -304,7 +304,96 @@ def _tokens(command: str) -> tuple[str, ...]:
         return ()
 
 
-def _token_paths(tokens: tuple[str, ...]) -> Iterable[str]:
+@dataclass(frozen=True)
+class _Word:
+    """One shell word, keeping what quote removal would otherwise lose.
+
+    `curl --data '>' --output F` passes a literal ``>`` to curl: only an
+    unquoted ``>`` is a redirection.  `cp a 2026 >log` copies to ``2026``:
+    a number is a file descriptor only when the operator follows it directly.
+    """
+
+    text: str  # the word after quote removal
+    raw: str  # the word as spelled in the command
+    operator: bool  # an unquoted run of `;`, `|`, `&`, `>`
+    glued: bool  # no whitespace separates it from the previous word
+
+
+_OPERATOR_CHARACTERS = frozenset(";|&>")
+
+
+def _words(command: str) -> tuple[_Word, ...]:
+    """POSIX-shell words of one command segment: quotes, backslashes, comments.
+
+    An unterminated quote yields no words, like the shlex tokenizer it
+    replaces.  `<` stays part of a word; `_without_redirections` reads it.
+    """
+    words: list[_Word] = []
+    index = 0
+    length = len(command)
+    glued = False
+    while index < length:
+        character = command[index]
+        if character.isspace():
+            glued = False
+            index += 1
+            continue
+        start = index
+        if character in _OPERATOR_CHARACTERS:
+            while index < length and command[index] in _OPERATOR_CHARACTERS:
+                index += 1
+            run = command[start:index]
+            words.append(_Word(run, run, True, glued))
+            glued = True
+            continue
+        if character == "#" and (not glued or words[-1].operator):
+            # A comment starts a word and runs to the end of the line.
+            newline = command.find("\n", index)
+            index = length if newline < 0 else newline
+            continue
+        text: list[str] = []
+        while index < length:
+            character = command[index]
+            if character.isspace() or character in _OPERATOR_CHARACTERS:
+                break
+            if character == "\\":
+                if index + 1 < length and command[index + 1] != "\n":
+                    text.append(command[index + 1])
+                index += 2
+                continue
+            if character == "'":
+                end = command.find("'", index + 1)
+                if end < 0:
+                    return ()
+                text.append(command[index + 1 : end])
+                index = end + 1
+                continue
+            if character == '"':
+                index += 1
+                while True:
+                    if index >= length:
+                        return ()
+                    character = command[index]
+                    if character == '"':
+                        index += 1
+                        break
+                    escaped = command[index + 1] if index + 1 < length else ""
+                    if character == "\\" and escaped and escaped in '"\\$`\n':
+                        if escaped != "\n":
+                            text.append(escaped)
+                        index += 2
+                        continue
+                    text.append(character)
+                    index += 1
+                continue
+            text.append(character)
+            index += 1
+        words.append(_Word("".join(text), command[start:index], False, glued))
+        glued = True
+    return tuple(words)
+
+
+def _token_paths(tokens: tuple[_Word, ...]) -> Iterable[str]:
     index = 0
     while index < len(tokens):
         end = _command_end(tokens, index)
@@ -340,7 +429,7 @@ def _token_paths(tokens: tuple[str, ...]) -> Iterable[str]:
 _ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
-def _command_words(segment: tuple[str, ...]) -> tuple[str, ...]:
+def _command_words(segment: tuple[_Word, ...]) -> tuple[str, ...]:
     """The command name and its arguments, without redirections or assignments.
 
     Redirections are not arguments (`install a .smtw/x > own.log` installs to
@@ -499,41 +588,52 @@ _WGET_OPTIONS = _DownloadOptions(
 )
 
 
-def _is_output_redirect_operator(token: str) -> bool:
-    # `_tokens` emits `>`, `>>`, `>|`, `>&`, `&>` as punctuation tokens.
-    return ">" in token and not token.strip(">&|")
+def _is_output_redirect_operator(word: _Word) -> bool:
+    # `_words` emits `>`, `>>`, `>|`, `>&`, `&>` as operator words.
+    return word.operator and ">" in word.text and not word.text.strip(">&|")
 
 
-# `<`, `0<`, `<<`, `<<-`, `<<<` (`_tokens` does not split on `<`, so the
+# `<`, `0<`, `<<`, `<<-`, `<<<` (`_words` does not split on `<`, so the
 # operator may also carry its target: `</dev/null`, `0<in.txt`, `<<EOF`).
 _INPUT_REDIRECT = re.compile(r"\d*(?:<<<|<<-?|<)")
 
 
-def _without_redirections(args: tuple[str, ...]) -> tuple[str, ...]:
+def _without_redirections(args: tuple[_Word, ...]) -> tuple[str, ...]:
     """Drop input/output redirections (operator and target) from an argv."""
-    kept: list[str] = []
+    kept: list[_Word] = []
     index = 0
     while index < len(args):
         arg = args[index]
         if _is_output_redirect_operator(arg):
-            if kept and (kept[-1].isdigit() or kept[-1] == "*"):
-                # `2>err`/`*>log` lex as `2` `>` `err`: the fd is not an argument.
+            previous = kept[-1] if kept else None
+            if (
+                arg.glued
+                and previous is args[index - 1]
+                and (previous.raw.isdigit() or previous.raw == "*")
+            ):
+                # `2>err`/`*>log` lex as `2` `>` `err`: the fd is not an
+                # argument.  `cp a 2026 >log` keeps `2026`: it is spaced off.
                 kept.pop()
             index += 2
             continue
-        operator = _INPUT_REDIRECT.match(arg)
+        # Only an unquoted `<` redirects; `'<x'` is a literal argument.
+        operator = None if arg.operator else _INPUT_REDIRECT.match(arg.raw)
         if operator is not None:
             index += 1
-            if operator.end() == len(arg):
+            if operator.end() == len(arg.raw):
                 # `<>f` and `<&0` lex as `<` `>` `f` and `<` `&` `0`: the
                 # punctuation is part of the operator, the next word its target.
-                if index < len(args) and args[index] in {">", "&"}:
+                if (
+                    index < len(args)
+                    and args[index].operator
+                    and args[index].text in {">", "&"}
+                ):
                     index += 1
                 index += 1
             continue
         kept.append(arg)
         index += 1
-    return tuple(kept)
+    return tuple(word.text for word in kept)
 
 
 @dataclass(frozen=True)
@@ -693,9 +793,9 @@ def _option_value_paths(
                 break
 
 
-def _command_end(tokens: tuple[str, ...], index: int) -> int:
+def _command_end(tokens: tuple[_Word, ...], index: int) -> int:
     for end in range(index, len(tokens)):
-        if tokens[end] in {";", "&&", "||", "|"}:
+        if tokens[end].operator and tokens[end].text in {";", "&&", "||", "|"}:
             return end
     return len(tokens)
 

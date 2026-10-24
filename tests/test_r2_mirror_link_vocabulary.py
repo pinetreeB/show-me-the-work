@@ -204,6 +204,10 @@ def test_input_redirection_does_not_replace_the_mirror_or_link_destination(
         "ln -si other.py src/peer.py",
         "ln -s other.py src/peer.py --force",
         "ln -sf -S --help other.py src/peer.py",
+        "ln -sS.tmp other.py src/peer.py",
+        "ln -s --suffix=.f other.py src/peer.py",
+        "ln -s --suf .f other.py src/peer.py",
+        "ln -sS .bak -t src other/peer.py",
     ],
 )
 def test_forced_link_options_and_unknown_sources_reach_peer_files(
@@ -220,8 +224,7 @@ def test_forced_link_options_and_unknown_sources_reach_peer_files(
     [
         "ln -s other/* src/",
         "ln -sf other/* mine/",
-        "ln -sS.tmp other.py src/peer.py",
-        "ln -s --suffix=.f other.py src/peer.py",
+        "ln -sS.f other.py mine.py",
         "ln -sf other/peer.py mine/",
         "ln --help -f other.py src/peer.py",
     ],
@@ -229,7 +232,8 @@ def test_forced_link_options_and_unknown_sources_reach_peer_files(
 def test_link_without_replacement_or_into_own_paths_is_allowed(
     tmp_path: Path, command: str
 ) -> None:
-    # `-S` takes the rest of the bundle as its suffix, so its `f` is no force.
+    # `-S` takes the rest of the bundle as its suffix, so its `f` is no force;
+    # it still backs up (replaces) the link name, here an own file.
     result = r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)
 
     assert result["decision"] == "allow", command
@@ -265,3 +269,55 @@ def test_rsync_file_list_from_an_own_directory_is_allowed(tmp_path: Path) -> Non
     command = "rsync --remove-source-files --files-from=list.txt mine/ other/"
 
     assert r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)["decision"] == "allow"
+
+
+# --- Codex review r5 follow-up: ln backups ----------------------------------
+
+BACKUP_PEER_ONLY = frozenset({"src/mine.py~", "src/mine.py.bak"})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ln -s --backup=simple other.py src/mine.py",
+        "ln -sb other.py src/mine.py",
+        "ln -sfb other.py src/mine.py",
+        "ln -sbT other.py src/mine.py",
+        "ln -sS.bak other.py src/mine.py",
+        "ln -s --suffix .bak other.py src/mine.py",
+        "ln -sb other/mine.py src",
+        "cd src && ln -sb ../other.py mine.py",
+    ],
+)
+def test_link_backup_overwrites_the_backup_name(tmp_path: Path, command: str) -> None:
+    # `--backup=simple` renames mine.py onto mine.py~ (or the -S suffix),
+    # overwriting whatever file already had that name.
+    result = r2_gate(tmp_path, command, peer_paths=BACKUP_PEER_ONLY)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "peer_unsettled"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ln -sf other.py src/mine.py",
+        "ln -sS.orig other.py src/mine.py",
+        "ln -sb other.py src/other.py",
+    ],
+)
+def test_link_backup_with_an_unrelated_backup_name_is_allowed(
+    tmp_path: Path, command: str
+) -> None:
+    result = r2_gate(tmp_path, command, peer_paths=BACKUP_PEER_ONLY)
+
+    assert result["decision"] == "allow", command
+
+
+def test_link_backup_targets_list_the_backup_names() -> None:
+    parsed = parse_destructive_commands("ln -sS.bak a.py dir/b.py")
+
+    # The link name may also be a directory (then the link is dir/b.py/a.py).
+    assert [item.targets for item in parsed] == [
+        ("dir/b.py", "dir/b.py/a.py", "dir/b.py.bak", "dir/b.py/a.py.bak")
+    ]
