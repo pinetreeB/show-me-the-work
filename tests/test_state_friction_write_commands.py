@@ -372,3 +372,68 @@ def test_git_bash_drive_path_into_state_stays_blocked_after_cd(tmp_path: Path) -
     result = _friction(tmp_path, f"cd src && echo x >> {target}")
 
     assert result["decision"] == "block", target
+
+
+# --- Codex review r4 re-run follow-up -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "install src .smtw/ledger.json\necho done",
+        "install src .smtw/ledger.json\r\necho done",
+        "install src .smtw/ledger.json & echo done",
+        "cp src .smtw/ledger.json\necho done",
+        "(install src .smtw/ledger.json)",
+        "{ install src .smtw/ledger.json; }",
+        "sudo install src .smtw/ledger.json",
+        "echo $(install src .smtw/ledger.json)",
+    ],
+)
+def test_write_destination_is_read_within_its_own_command(
+    tmp_path: Path, command: str
+) -> None:
+    # A newline or `&` ends the command; `done` is not the install destination.
+    assert ".smtw/ledger.json" in shell_candidate_paths(command), command
+    assert _friction(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl --data -o --output .smtw/ledger.json https://example.invalid/x",
+        "curl -d -o -o .smtw/ledger.json https://example.invalid/x",
+        "curl -H x --output .smtw/ledger.json https://example.invalid/x",
+        "wget --header -O -O .smtw/ledger.json https://example.invalid/x",
+        "wget --output-doc=.smtw/ledger.json https://example.invalid/x",
+        "wget --output-d .smtw/ledger.json https://example.invalid/x",
+        "curl --out .smtw/ledger.json https://example.invalid/x",
+    ],
+)
+def test_option_values_do_not_hide_a_later_output_option(
+    tmp_path: Path, command: str
+) -> None:
+    # `--data -o` is data "-o"; the following `--output` still writes.
+    assert ".smtw/ledger.json" in shell_candidate_paths(command), command
+    assert _friction(tmp_path, command)["decision"] == "block", command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "curl --cookie .smtw/cookies.txt https://example.invalid/x",
+        "curl -d @.smtw/ledger.json https://example.invalid/x",
+        "install src bin/tool\necho .smtw/ledger.json",
+    ],
+)
+def test_state_reads_next_to_option_scanning_stay_allowed(
+    tmp_path: Path, command: str
+) -> None:
+    assert _friction(tmp_path, command)["decision"] == "allow", command
+
+
+def test_redirect_after_a_quoted_target_into_state_is_blocked(tmp_path: Path) -> None:
+    command = 'echo x >"own file.txt">.smtw/ledger.json'
+
+    assert ".smtw/ledger.json" in shell_candidate_paths(command)
+    assert _friction(tmp_path, command)["decision"] == "block"

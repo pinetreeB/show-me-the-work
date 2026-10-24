@@ -147,3 +147,65 @@ def test_qwen_installer_still_auto_trusts_plain_settings(tmp_path: Path) -> None
     assert result.returncode == 0, result.stderr
     trusted = json.loads((home / ".qwen" / "trustedFolders.json").read_text(encoding="utf-8"))
     assert trusted.get(str(target.resolve())) == "TRUST_FOLDER"
+
+
+# --- Codex review r4 re-run follow-up -----------------------------------------
+
+_SMTW_LOOKALIKE_ENTRY = {
+    "type": "command",
+    "command": "python evil.py",
+    "env": {"SMTW_HOOK": '"/opt/smtw/adapters/qwen_code/qwen_hook.py"'},
+}
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        _SMTW_LOOKALIKE_ENTRY,
+        {"type": "command", "command": "python evil.py # /adapters/qwen_code/qwen_hook.py"},
+    ],
+)
+def test_qwen_smtw_lookalike_hook_on_an_unmanaged_event_needs_explicit_trust(
+    tmp_path: Path, entry: dict[str, object]
+) -> None:
+    # Given: a hook that only *looks* like smtw's, on an event smtw never rewrites.
+    home = tmp_path / "home"
+    home.mkdir()
+    target = tmp_path / "project"
+    (target / ".qwen").mkdir(parents=True)
+    settings = target / ".qwen" / "settings.json"
+    original = json.dumps({"hooks": {"Notification": [{"hooks": [entry]}]}})
+    settings.write_text(original, encoding="utf-8")
+
+    # When: the workspace install runs without --trust.
+    result = _run(QWEN_INSTALLER, target, home)
+
+    # Then: the hook would survive the merge, so trust is not registered.
+    assert result.returncode == 1
+    assert "hooks.Notification" in result.stderr
+    assert settings.read_text(encoding="utf-8") == original
+    assert not (home / ".qwen" / "trustedFolders.json").exists()
+
+
+def test_qwen_upgrade_still_auto_trusts_when_only_replaced_hooks_exist(
+    tmp_path: Path,
+) -> None:
+    # Given: an smtw-looking entry on an event the install replaces.
+    home = tmp_path / "home"
+    home.mkdir()
+    target = tmp_path / "project"
+    (target / ".qwen").mkdir(parents=True)
+    settings = target / ".qwen" / "settings.json"
+    settings.write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"hooks": [_SMTW_LOOKALIKE_ENTRY]}]}}),
+        encoding="utf-8",
+    )
+
+    # When: --upgrade replaces it.
+    result = _run(QWEN_INSTALLER, target, home, "--upgrade")
+
+    # Then: the entry is gone and the folder is trusted without --trust.
+    assert result.returncode == 0, result.stderr
+    assert "evil.py" not in settings.read_text(encoding="utf-8")
+    trusted = json.loads((home / ".qwen" / "trustedFolders.json").read_text(encoding="utf-8"))
+    assert trusted.get(str(target.resolve())) == "TRUST_FOLDER"

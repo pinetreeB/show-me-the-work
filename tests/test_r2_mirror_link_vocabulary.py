@@ -181,3 +181,87 @@ def test_input_redirection_does_not_replace_the_mirror_or_link_destination(
 
     assert result["decision"] == "block", command
     assert result["coordination_reason_code"] == "peer_unsettled"
+
+
+# --- Codex review r4 re-run: forced ln options and unknown sources ---------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ln -sf other/* src/",
+        "ln -sf other/*.py src",
+        "ln -sf $DIR/peer.py src/",
+        "ln -sf -t src other/*",
+        "ln --for -s other/peer.py src/peer.py",
+        "ln -s --f other/peer.py src/",
+        "ln -sf --targ=src other/peer.py",
+        "ln -sf --target-directory src other/peer.py",
+        "ln -sftsrc other/peer.py",
+        "ln -sfT other.py src/peer.py",
+        "ln -sb other.py src/peer.py",
+        "ln -s --backup other.py src/peer.py",
+        "ln -si other.py src/peer.py",
+        "ln -s other.py src/peer.py --force",
+        "ln -sf -S --help other.py src/peer.py",
+    ],
+)
+def test_forced_link_options_and_unknown_sources_reach_peer_files(
+    tmp_path: Path, command: str
+) -> None:
+    result = r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "peer_unsettled"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ln -s other/* src/",
+        "ln -sf other/* mine/",
+        "ln -sS.tmp other.py src/peer.py",
+        "ln -s --suffix=.f other.py src/peer.py",
+        "ln -sf other/peer.py mine/",
+        "ln --help -f other.py src/peer.py",
+    ],
+)
+def test_link_without_replacement_or_into_own_paths_is_allowed(
+    tmp_path: Path, command: str
+) -> None:
+    # `-S` takes the rest of the bundle as its suffix, so its `f` is no force.
+    result = r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)
+
+    assert result["decision"] == "allow", command
+
+
+def test_forced_link_with_unknown_source_checks_the_whole_directory() -> None:
+    parsed = parse_destructive_commands("ln -sf other/* src/")
+
+    assert [(item.targets, item.container_targets) for item in parsed] == [
+        (("src/",), ("src/",))
+    ]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rsync --remove-source-files --files-from=list.txt src mine/",
+        "rsync --remove-source-files --files-from list.txt src mine/",
+        "rsync --files-from=list.txt --remove-source-files src/ mine/",
+    ],
+)
+def test_rsync_file_list_removes_files_inside_the_source(
+    tmp_path: Path, command: str
+) -> None:
+    # The list names files inside `src`; they are deleted without `-r`.
+    result = r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "peer_unsettled"
+
+
+def test_rsync_file_list_from_an_own_directory_is_allowed(tmp_path: Path) -> None:
+    command = "rsync --remove-source-files --files-from=list.txt mine/ other/"
+
+    assert r2_gate(tmp_path, command, peer_paths=SRC_PEER_ONLY)["decision"] == "allow"

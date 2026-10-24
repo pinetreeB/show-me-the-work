@@ -238,13 +238,21 @@ def _linked_config_problem(target_root: Path, config_dir: Path, settings: Path) 
 
 
 def _foreign_executable_settings(settings: dict[str, object]) -> list[str]:
-    """Settings that would start running once the folder is trusted."""
+    """Settings that would start running once the folder is trusted.
+
+    Only the hook entries this install really replaces are exempt: those that
+    merge_owned_hooks() removes, i.e. smtw-looking entries under the events it
+    rewrites.  Anyone can copy the smtw path into a hook's command or env, so
+    under any other event (`Notification`, …) such an entry survives the merge
+    and would run with the folder's trust; it needs an explicit --trust.
+    """
     found: list[str] = []
     hooks = settings.get("hooks")
     if isinstance(hooks, dict):
         for event, matchers in cast(dict[str, object], hooks).items():
             if not isinstance(matchers, list):
                 continue
+            replaced = event in EVENT_NAMES
             for raw_matcher in matchers:
                 entries = (
                     cast(dict[str, object], raw_matcher).get("hooks")
@@ -252,7 +260,7 @@ def _foreign_executable_settings(settings: dict[str, object]) -> list[str]:
                     else None
                 )
                 if isinstance(entries, list) and any(
-                    not _is_owned_hook(entry) for entry in entries
+                    not (replaced and _is_owned_hook(entry)) for entry in entries
                 ):
                     found.append(f"hooks.{event}")
                     break

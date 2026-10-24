@@ -1434,6 +1434,9 @@ def _detect_rsync(tokens: list[str]) -> ParsedDestructiveCommand | None:
     # `--files-from` and `-R/--relative` decide the copied names outside the
     # source operands, so the whole destination tree may be written.
     unknown_layout = False
+    # `--files-from` names files *inside* each source directory, so
+    # `--remove-source-files` deletes there even without a recursive option.
+    files_from = False
     after_double_dash = False
     index = 1
     while index < len(tokens):
@@ -1454,6 +1457,7 @@ def _detect_rsync(tokens: list[str]) -> ParsedDestructiveCommand | None:
                 recursive = True
             elif name in {"--files-from", "--relative"}:
                 unknown_layout = True
+                files_from = files_from or name == "--files-from"
             if not separator and name in _RSYNC_LONG_VALUE_OPTIONS:
                 index += 1
             index += 1
@@ -1516,7 +1520,7 @@ def _detect_rsync(tokens: list[str]) -> ParsedDestructiveCommand | None:
             containers.extend(candidates[1:])
     if remove_sources:
         targets.extend(local_sources)
-        if recursive:
+        if recursive or files_from:
             containers.extend(local_sources)
     if not targets:
         return None
@@ -1555,42 +1559,138 @@ def _detect_robocopy(tokens: list[str]) -> ParsedDestructiveCommand | None:
     )
 
 
+# GNU ln long options mapped to their short letter.  getopt_long also accepts
+# any unambiguous prefix, so `--for` is `--force` and `--targ=DIR` is `-t DIR`.
+_LN_LONG_OPTIONS: Final[dict[str, str]] = {
+    "--backup": "b",
+    "--directory": "d",
+    "--force": "f",
+    "--help": "?",
+    "--interactive": "i",
+    "--logical": "L",
+    "--no-dereference": "n",
+    "--no-target-directory": "T",
+    "--physical": "P",
+    "--relative": "r",
+    "--suffix": "S",
+    "--symbolic": "s",
+    "--target-directory": "t",
+    "--verbose": "v",
+    "--version": "?",
+}
+_LN_VALUE_LETTERS: Final[frozenset[str]] = frozenset("St")
+# `-f` removes the file at the link name; `-b` renames it to a backup and `-i`
+# removes it once the prompt (read from stdin) is answered yes.
+_LN_REPLACING_LETTERS: Final[frozenset[str]] = frozenset("bfi")
+
+
+def _ln_long_option(word: str) -> str:
+    """Short letter of a GNU ln long option ("" when unknown or ambiguous)."""
+    name = word.partition("=")[0]
+    if name in _LN_LONG_OPTIONS:
+        return _LN_LONG_OPTIONS[name]
+    matches = {
+        letter for option, letter in _LN_LONG_OPTIONS.items() if option.startswith(name)
+    }
+    return matches.pop() if len(matches) == 1 else ""
+
+
+def _ln_option_value(
+    tokens: list[str], index: int, attached: str | None
+) -> tuple[str | None, int]:
+    """Value of a value-taking ln option: attached, else the next word."""
+    if attached is not None:
+        return attached, index
+    if index < len(tokens):
+        return tokens[index], index + 1
+    return None, index
+
+
 def _detect_forced_link(tokens: list[str]) -> ParsedDestructiveCommand | None:
-    """``ln -f``/``ln -sf`` replaces an existing file at the link name."""
+    """``ln -f``/``-sf`` (also ``-b``, ``-i``) replaces the file at the link name.
+
+    Options are decoded the way getopt_long does: a bundle stops at a value
+    letter (``-S SUFFIX``, ``-t DIR``), long options may be abbreviated
+    (``--for``) and may follow the operands.  A source whose name is unknown
+    (``other/*``, ``$DIR``) may replace any file directly inside the link
+    directory, so that directory is checked as a whole.
+    """
     if _command_name(tokens[0]) != "ln":
         return None
-    force = False
-    for raw in tokens[1:]:
+    replaces = False
+    no_target_directory = False
+    target_directory: str | None = None
+    positionals: list[str] = []
+    after_double_dash = False
+    index = 1
+    while index < len(tokens):
+        raw = tokens[index]
         token = _unquote(raw)
+        index += 1
+        if after_double_dash or not token.startswith("-") or token == "-":
+            positionals.append(raw)
+            continue
         if token == "--":
-            break
-        if token in {"--help", "--version"}:
-            return None
-        if token == "--force" or (
-            token.startswith("-") and not token.startswith("--") and "f" in token[1:]
-        ):
-            force = True
-    if not force:
+            after_double_dash = True
+            continue
+        value: str | None = None
+        if token.startswith("--"):
+            letters = _ln_long_option(token)
+            if letters == "?":
+                return None  # --help / --version
+            if letters in _LN_VALUE_LETTERS:
+                _name, separator, attached = token.partition("=")
+                value, index = _ln_option_value(
+                    tokens, index, attached if separator else None
+                )
+                if value is None:
+                    return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
+        else:
+            letters = ""
+            for position, letter in enumerate(token[1:], start=1):
+                letters += letter
+                if letter in _LN_VALUE_LETTERS:
+                    value, index = _ln_option_value(
+                        tokens, index, token[position + 1 :] or None
+                    )
+                    if value is None:
+                        return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_value")
+                    break
+        replaces = replaces or any(letter in _LN_REPLACING_LETTERS for letter in letters)
+        no_target_directory = no_target_directory or "T" in letters
+        if letters.endswith("t"):
+            target_directory = value
+    if not replaces:
         return None
-    operands = _transfer_operands(tokens)
-    if operands is not None:
-        sources, destination, _recursive, _parents = operands
-        return _resolved_static_targets(
-            CATEGORY_TRUNCATE,
-            _transfer_destination_candidates(
-                sources, destination, preserve_parents=False
-            ),
+    if target_directory is not None:
+        sources, destination = positionals, target_directory
+    elif no_target_directory:
+        # `-T`: the last operand is the link name itself, never a directory.
+        if len(positionals) != 2:
+            return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_target")
+        return _resolved_static_targets(CATEGORY_TRUNCATE, [positionals[1]])
+    elif len(positionals) == 1:
+        # `ln -sf ../x` creates ./x in the working directory.
+        link_name = (
+            _unquote(positionals[0]).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
         )
-    positionals = [
-        raw
-        for raw in tokens[1:]
-        if not _unquote(raw).startswith("-") or _unquote(raw) == "-"
-    ]
-    if len(positionals) != 1:
+        return _resolved_static_targets(CATEGORY_TRUNCATE, [link_name])
+    elif positionals:
+        sources, destination = positionals[:-1], positionals[-1]
+    else:
+        sources, destination = [], ""
+    if not sources:
         return _blocked(CATEGORY_TRUNCATE, "parse_unable_missing_target")
-    # `ln -sf ../x` creates ./x in the working directory.
-    link_name = _unquote(positionals[0]).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-    return _resolved_static_targets(CATEGORY_TRUNCATE, [link_name])
+    unknown_source = any(
+        _is_powershell_dynamic_path(source)
+        or _validate_target(_unquote(source)) != "ok"
+        for source in sources
+    )
+    return _resolved_static_targets(
+        CATEGORY_TRUNCATE,
+        _transfer_destination_candidates(sources, destination, preserve_parents=False),
+        container_targets=[destination] if unknown_source else (),
+    )
 
 
 def _detect_dotnet_file(tokens: list[str]) -> ParsedDestructiveCommand | None:
@@ -2017,14 +2117,17 @@ def _split_redirections(
             if target is None:
                 target = ""
                 if index < len(tokens):
-                    target, nested = _split_redirect_target_word(tokens[index])
+                    target = tokens[index]
                     index += 1
-                    pending[0:0] = nested
             # The whitespace tokenizer cuts a quoted target glued to its
             # operator (`<<<'echo hi'` -> `<<<'echo` `hi'`); join it back.
             while _has_open_quote(target) and index < len(tokens):
                 target = f"{target} {tokens[index]}"
                 index += 1
+            # Only then does the target end at its first unquoted operator:
+            # `>"own file.txt">peer.py` also truncates `peer.py`.
+            target, nested = _split_redirect_target_word(target)
+            pending[0:0] = nested
             redirections.append(
                 _Redirection(
                     redirection.operator,
@@ -2340,21 +2443,29 @@ def _detect_dynamic_command_head(tokens: list[str]) -> ParsedDestructiveCommand 
     return None
 
 
-def _detect_coproc(tokens: list[str]) -> ParsedDestructiveCommand | None:
+def _detect_coproc(tokens: list[str]) -> tuple[ParsedDestructiveCommand, ...]:
+    """Every destructive result of the command a ``coproc`` runs.
+
+    The coprocess keeps its own redirections, so ``coproc rm own.py >peer.py``
+    both deletes ``own.py`` and truncates ``peer.py``: all results are kept,
+    not only the first.  ``coproc NAME cmd`` is read both with and without the
+    optional name, and the results of both readings are combined.
+    """
     if not tokens or _unquote(tokens[0]).casefold() != "coproc":
-        return None
+        return ()
     candidates = [tokens[1:]]
     if len(tokens) >= 3 and _unquote(tokens[1]).isidentifier():
         candidates.append(tokens[2:])
+    results: list[ParsedDestructiveCommand] = []
     for candidate in candidates:
         if not candidate:
             continue
-        nested = parse_destructive_command(
+        for nested in parse_destructive_commands(
             " ".join(_unquote(token) for token in candidate)
-        )
-        if nested is not None:
-            return nested
-    return None
+        ):
+            if nested not in results:
+                results.append(nested)
+    return tuple(results)
 
 
 def _detect_find_exec(tokens: list[str]) -> ParsedDestructiveCommand | None:
@@ -3161,6 +3272,27 @@ def _r2_command_segments(command: str) -> tuple[list[_CommandSegment], bool]:
     return [*segments, *body_segments], malformed
 
 
+def command_segment_texts(command: str) -> tuple[str, ...]:
+    """Expose R2's command boundaries for advisory consumers.
+
+    Unquoted newlines, ``&``, ``;``, ``|``, ``&&``/``||``, command
+    substitutions and re-parsed bodies each start a separate command, exactly
+    where R2 splits them.  This is parser reuse only, not an authorization.
+    """
+    segments, _malformed = _r2_command_segments(command)
+    return tuple(segment.text for segment in segments)
+
+
+def effective_command_words(words: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """R2's command-position normalization for an argv split by another lexer.
+
+    Strips subshell/group parens (``(install …)``), control words, leading
+    assignments and the transparent wrappers R2 already understands
+    (``sudo``, ``env``, ``nice`` …), so the real command name comes first.
+    """
+    return tuple(_effective_command_tokens(_split_glued_subshell_parens(list(words))))
+
+
 def executable_command_positions(command: str) -> tuple[tuple[str, ...], ...]:
     """Expose R2's command-position normalization for advisory consumers.
 
@@ -3396,8 +3528,8 @@ def _parse_destructive_segment(
     PowerShell 도구로 실행한다고 보고한 segment에서만 `$null` 버리기를 허용한다.
     """
     coproc = _detect_coproc(_split_glued_subshell_parens(_tokenize(command)))
-    if coproc is not None:
-        return (coproc,)
+    if coproc:
+        return coproc
     argv, redirections = _segment_argv(command)
     tokens = _command_position_tokens(argv)
     redirect = _truncating_redirect_result(redirections, powershell=powershell)

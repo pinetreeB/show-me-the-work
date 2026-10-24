@@ -6,7 +6,12 @@ import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from .destructive_guard import executable_command_positions, output_redirection_targets
+from .destructive_guard import (
+    command_segment_texts,
+    effective_command_words,
+    executable_command_positions,
+    output_redirection_targets,
+)
 
 
 _REDIRECT = re.compile(r"(?:^|\s)(?:\d?>{1,2})\s*(?:'([^']+)'|\"([^\"]+)\"|([^\s;|&]+))")
@@ -38,7 +43,11 @@ def shell_candidate_paths(command: str) -> tuple[str, ...]:
     paths: list[str] = []
     paths.extend(_redirect_paths(command))
     paths.extend(_inline_paths(command))
-    paths.extend(_token_paths(_tokens(command)))
+    # R2's command boundaries: an unquoted newline, `&` or a substitution
+    # starts a new command (`install a .smtw/x` + newline + `echo done` must
+    # not make `done` the install destination).
+    for segment in command_segment_texts(command):
+        paths.extend(_token_paths(_tokens(segment)))
     return tuple(dict.fromkeys(path for path in paths if _path(path)))
 
 
@@ -343,7 +352,8 @@ def _command_words(segment: tuple[str, ...]) -> tuple[str, ...]:
     start = 0
     while start < len(words) and _ASSIGNMENT.match(words[start]):
         start += 1
-    return words[start:]
+    # `(install a .smtw/x)`, `sudo install …`: R2 finds the real command name.
+    return effective_command_words(words[start:])
 
 
 # Write destinations of commands that R2 does not model.  Friction only needs the
@@ -449,6 +459,8 @@ class _DownloadOptions:
     short_values: frozenset[str]
     short_writes: frozenset[str]
     long_writes: frozenset[str]
+    # Exact read options that are also a prefix of a write option.
+    long_exact_reads: frozenset[str] = frozenset()
 
 
 _CURL_OPTIONS = _DownloadOptions(
@@ -469,6 +481,7 @@ _CURL_OPTIONS = _DownloadOptions(
             "--trace-ascii",
         }
     ),
+    long_exact_reads=frozenset({"--cookie"}),
 )
 _WGET_OPTIONS = _DownloadOptions(
     short_values=frozenset("ABDIOPQRTUXaeilotwY"),
@@ -631,21 +644,42 @@ def _patch_paths(args: tuple[str, ...]) -> Iterable[str]:
         yield positionals[0]
 
 
+def _is_long_write_option(name: str, options: _DownloadOptions) -> bool:
+    """Whether ``--name`` is a write option or an abbreviation of one.
+
+    getopt_long (wget) accepts any unambiguous prefix (`--output-doc=F`).  A
+    prefix shared with a read option only adds a candidate, except an exact
+    read option such as curl's `--cookie` (a prefix of `--cookie-jar`).
+    """
+    if name in options.long_writes:
+        return True
+    return (
+        len(name) > 2
+        and name not in options.long_exact_reads
+        and any(option.startswith(name) for option in options.long_writes)
+    )
+
+
 def _option_value_paths(
     args: tuple[str, ...],
     options: _DownloadOptions,
 ) -> Iterable[str]:
-    index = 0
-    while index < len(args):
-        arg = args[index]
+    """Write destinations of curl/wget options.
+
+    Every word is read as a possible option, including a word another option
+    may take as its value.  Which curl/wget options take a value is not fully
+    tracked here, so letting `--data` consume the next word would hide the
+    write in `--data -o --output .smtw/x`; reading a value as an option can
+    only add candidates.
+    """
+    for index, arg in enumerate(args):
+        following = args[index + 1] if index + 1 < len(args) else ""
         if arg.startswith("--"):
             name, separator, value = arg.partition("=")
-            if separator and name in options.long_writes:
-                yield value
-            elif not separator and arg in options.long_writes and index + 1 < len(args):
-                yield args[index + 1]
-                index += 1
-            index += 1
+            if _is_long_write_option(name, options):
+                destination = value if separator else following
+                if destination:
+                    yield destination
             continue
         if arg.startswith("-") and len(arg) > 1:
             # Short option cluster (`-sSo out`, `-qO-`): the first option that
@@ -653,14 +687,10 @@ def _option_value_paths(
             for position, letter in enumerate(arg[1:], start=1):
                 if letter not in options.short_values:
                     continue
-                attached = arg[position + 1 :]
-                value = attached or (args[index + 1] if index + 1 < len(args) else "")
-                if letter in options.short_writes and value not in {"", "-"}:
-                    yield value
-                if not attached:
-                    index += 1
+                destination = arg[position + 1 :] or following
+                if letter in options.short_writes and destination not in {"", "-"}:
+                    yield destination
                 break
-        index += 1
 
 
 def _command_end(tokens: tuple[str, ...], index: int) -> int:

@@ -331,3 +331,60 @@ def test_quoted_redirect_target_cut_by_the_tokenizer_is_joined() -> None:
     parsed = parse_destructive_commands("echo x >'my file.txt'")
 
     assert [item.targets for item in parsed] == [("my file.txt",)]
+
+
+# --- Codex review r4 re-run follow-up ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "coproc rm own.py >peer.py",
+        "coproc rm own.py 2>peer.py",
+        "coproc NAME { rm own.py >peer.py; }",
+    ],
+)
+def test_coproc_keeps_every_nested_result(tmp_path: Path, command: str) -> None:
+    # A coprocess keeps its redirections; the delete must not hide them.
+    result = r2_gate(tmp_path, command)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "peer_unsettled"
+
+
+def test_coproc_reports_the_command_and_its_redirect() -> None:
+    parsed = parse_destructive_commands("coproc rm own.py >peer.py")
+
+    assert [item.targets for item in parsed] == [("own.py",), ("peer.py",)]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'echo x >"own file.txt">peer.py',
+        'echo x>"own file.txt">peer.py',
+        'echo x > "own file.txt">peer.py',
+        "echo x >'own file.txt'>peer.py",
+        'echo x >"own file.txt">"peer.py"',
+    ],
+)
+def test_redirect_after_a_quoted_target_with_spaces_is_split(
+    tmp_path: Path, command: str
+) -> None:
+    result = r2_gate(tmp_path, command)
+
+    assert result["decision"] == "block", command
+    assert result["coordination_reason_code"] == "peer_unsettled"
+
+
+def test_redirect_after_a_quoted_target_into_state_dir_is_blocked(tmp_path: Path) -> None:
+    result = r2_gate(tmp_path, 'echo x >"own file.txt">.smtw/ledger.json')
+
+    assert result["decision"] == "block"
+    assert result["coordination_reason_code"] == "state_dir_protected"
+
+
+def test_redirect_after_a_quoted_target_reports_both_targets() -> None:
+    parsed = parse_destructive_commands('echo x >"own file.txt">.smtw/ledger.json')
+
+    assert [item.targets for item in parsed] == [("own file.txt", ".smtw/ledger.json")]
