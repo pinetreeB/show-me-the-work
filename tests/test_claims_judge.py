@@ -483,9 +483,11 @@ def test_lean_cli_is_explicit_and_defaults_off(monkeypatch, lean):
         return {"execution": "injected"}
     monkeypatch.setattr(runner, "judge", injected)
     args = ["--packets", "synthetic-packets", "--scope-file", "synthetic-scope.json",
-            "--out-root", "synthetic-output"]
+            "--out-root", "synthetic-output", "--config-dir", "synthetic-config",
+            "--usage-service", "claude"]
     assert runner.main(args + (["--lean-context"] if lean else [])) == 0
     assert seen[0]["lean_context"] is lean
+    assert seen[0]["config_dir"] == "synthetic-config" and seen[0]["usage_service"] == "claude"
 
 
 @pytest.mark.parametrize("lean", [False, True])
@@ -494,7 +496,8 @@ def test_lean_cli_is_explicit_and_defaults_off(monkeypatch, lean):
                                  "--disable-slash-commands", "--strict-mcp-config", "--system-prompt-file"])
 def test_extra_cli_flags_are_not_operator_passthrough(lean, flag):
     args = ["--packets", "synthetic-packets", "--scope-file", "synthetic-scope.json",
-            "--out-root", "synthetic-output", flag]
+            "--out-root", "synthetic-output", "--config-dir", "synthetic-config",
+            "--usage-service", "claude", flag]
     with pytest.raises(SystemExit) as error:
         runner.main(args + (["--lean-context"] if lean else []))
     assert error.value.code == 2

@@ -11,14 +11,20 @@
 ```powershell
 python -X utf8 scripts/claims_eval.py generate --scope-file "<WORK>/judge-scope.json" --out-root "<WORK>/l4-run"
 python -X utf8 scripts/claims_eval.py summary --scope-file "<WORK>/judge-scope.json" --packets "<WORK>/l4-run/packets"
-python -X utf8 scripts/claims_judge.py --scope-file "<WORK>/judge-scope.json" --packets "<WORK>/l4-run/packets" --out-root "<WORK>" --max-calls 5 --blocklist-file "<WORK>/blocklist.txt"
+python -X utf8 scripts/claims_judge.py --scope-file "<WORK>/judge-scope.json" --packets "<WORK>/l4-run/packets" --out-root "<WORK>" --max-calls 5 --blocklist-file "<WORK>/blocklist.txt" --config-dir "<CONFIG>" --usage-service <SERVICE>
 ```
 
 두 번째 표의 출처와 가림 수를 직접 확인한 후에만 세 번째 줄을 실행합니다.
-개인 구독 설정과 claude-sonnet-5-5만 허용합니다. Windows에서는 설치된 native claude.exe를 우선 사용하며,
-claude-p와 동일하게 CLAUDE_CONFIG_DIR=~/.claude-personal 및 CLAUDE_CODE_PLUGIN_CACHE_DIR=~/.claude/plugins를 지정합니다. 도구는 비활성화되고 세션은 저장하지 않습니다.
+구독 로그인 설정과 claude-sonnet-5-5만 허용합니다. Windows에서는 설치된 native claude.exe를 우선 사용합니다.
+CLI는 --config-dir(필수)로 받은 폴더를 CLAUDE_CONFIG_DIR에, ~/.claude/plugins를 CLAUDE_CODE_PLUGIN_CACHE_DIR에 지정합니다.
+<CONFIG>는 실제로 로그인된 계정 설정 폴더의 절대 경로입니다. 빈 값은 로그인 없는 상태가 되므로
+빈 값·상대 경로·없는 폴더는 호출 전에 거부합니다. --config-dir을 준 실행에서는 개인 전용 claude-p 런처를 쓰지 않습니다.
+라이브러리 기본값(인자 없음)은 이전과 같은 ~/.claude-personal입니다. 도구는 비활성화되고 세션은 저장하지 않습니다.
+--usage-service(필수: claude_personal 또는 claude)는 사용량 위젯에서 같은 계정 항목을 고릅니다.
 사용량 5시간 40% 이상 또는 주간 55% 이상이면 거부합니다. 사용량 자료가 없거나 오래됐으면
 기본 거부이며, 좌상이 사용량을 확인하고 명시적으로 --allow-unknown-usage를 줄 때만 허용됩니다.
+위젯 항목에 전체 주간 줄이 없으면 주간은 미상으로 보며, 이때 --allow-unknown-usage를 줘도 확인된 5시간 문턱은 그대로 적용합니다.
+calls.jsonl에는 설정 폴더 이름(config_dir_name, 전체 경로 아님)과 usage_service를 기록합니다.
 관제탑이 승인한 문맥 축소는 Phase 2 판정 호출에만 적용하며, 좌상이 명시적으로 --lean-context를 붙일 때 켜집니다.
 lean 기본값은 꺼짐입니다. --disable-slash-commands와 --strict-mcp-config는 항상 적용합니다.
 lean을 켜면 --system-prompt-file <저장소 판정 지시문>을 추가합니다.

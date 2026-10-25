@@ -157,7 +157,8 @@ def test_empty_list_is_not_an_override(tmp_path):
 @pytest.mark.parametrize("flag", ["--ignore-blocklist", "--allow-blocklist", "--force"])
 def test_no_human_override_flags_exist(flag):
     with pytest.raises(SystemExit) as failure:
-        judge.main(["--packets", "synthetic", "--scope-file", "synthetic", "--out-root", "synthetic", flag])
+        judge.main(["--packets", "synthetic", "--scope-file", "synthetic", "--out-root", "synthetic",
+                    "--config-dir", "synthetic", "--usage-service", "claude", flag])
     assert failure.value.code == 2
 
 

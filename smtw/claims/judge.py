@@ -31,7 +31,21 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def child_environment(parent):
+def config_directory(value) -> str:
+    """Validate an operator-supplied Claude configuration directory.
+
+    An empty CLAUDE_CONFIG_DIR silently means "no login", so empty, relative
+    and missing directories are refused instead of passed through.
+    """
+    if not isinstance(value, (str, Path)) or not str(value).strip():
+        raise ValueError("config directory must be a non-empty path")
+    path = Path(value)
+    if not path.is_absolute() or not path.is_dir():
+        raise ValueError("config directory must be an existing absolute directory")
+    return str(path)
+
+
+def child_environment(parent, config_dir=None):
     # Iterate names and filter BEFORE looking up any value.
     names = list(parent)
     if any(key.upper().startswith("ANTHROPIC_")
@@ -44,15 +58,22 @@ def child_environment(parent):
                "LC_NUMERIC", "LC_TIME", "LC_MONETARY", "LC_PAPER", "LC_NAME", "LC_ADDRESS",
                "LC_TELEPHONE", "LC_MEASUREMENT", "LC_IDENTIFICATION", "TERM", "TZ"}
     env = {key: parent[key] for key in names if key.upper() in allowed}
-    # Match claude-p without reading either configuration directory.
-    env["CLAUDE_CONFIG_DIR"] = str(Path.home() / ".claude-personal")
+    # Match claude-p without reading either configuration directory. The
+    # library default stays personal; the CLI always passes an explicit one.
+    env["CLAUDE_CONFIG_DIR"] = (str(Path.home() / ".claude-personal") if config_dir is None
+                                else config_directory(config_dir))
     env["CLAUDE_CODE_PLUGIN_CACHE_DIR"] = str(Path.home() / ".claude" / "plugins")
     return env
 
 
-def read_usage(path: Path = CACHE) -> dict:
+USAGE_SERVICES = {"claude_personal", "claude"}
+
+
+def read_usage(path: Path = CACHE, service_name: str = "claude_personal") -> dict:
+    if service_name not in USAGE_SERVICES:
+        raise ValueError("unsupported usage service")
     try:
-        service = read_json(path)["services"]["claude_personal"]
+        service = read_json(path)["services"][service_name]
         stamp = service["as_of"]
         if (service.get("error") or type(stamp) not in {int, float}
                 or not 0 < stamp < 100_000_000_000_000):
@@ -69,10 +90,13 @@ def read_usage(path: Path = CACHE) -> dict:
                 values["five_hour"] = row["used"]
             elif label in {"주간 전체", "weekly", "seven_day"}:
                 values["weekly"] = row["used"]
-        if set(values) != {"five_hour", "weekly"} or any(
-                type(v) not in {int, float} or not math.isfinite(v) or not 0 <= v <= 100
-                for v in values.values()):
+        if any(type(v) not in {int, float} or not math.isfinite(v) or not 0 <= v <= 100
+               for v in values.values()):
             return {"known": False}
+        if set(values) != {"five_hour", "weekly"}:
+            # Some plans expose no all-model weekly row. Keep a valid fresh
+            # five-hour value so the gate can still enforce it.
+            return {"known": False, **values}
         return {"known": True, **values}
     except (OSError, ValueError, KeyError, TypeError):
         return {"known": False}
@@ -82,9 +106,12 @@ def usage_gate(usage: dict, allow_unknown: bool):
     if not usage.get("known"):
         if not allow_unknown:
             raise ValueError("usage unknown; --allow-unknown-usage is required")
+        # The override covers only the unknown part; a known limit still applies.
+        if usage.get("five_hour", 0) >= 40 or usage.get("weekly", 0) >= 55:
+            raise ValueError("subscription usage threshold reached")
         return
     if usage["five_hour"] >= 40 or usage["weekly"] >= 55:
-        raise ValueError("personal subscription usage threshold reached")
+        raise ValueError("subscription usage threshold reached")
 
 
 def validate_scope(manifest: dict, sent: dict, scope: JudgeScope):
@@ -217,12 +244,15 @@ def _judgments(raw: str):
 
 def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int = 4, allow_unknown_usage: bool = False,
           executor=None, tty=None, usage_reader=None, parent_env=None,
-          executable=None, lean_context: bool = False, blocklist_file: Path | None = None) -> dict:
+          executable=None, lean_context: bool = False, blocklist_file: Path | None = None,
+          config_dir=None, usage_service: str = "claude_personal") -> dict:
     if type(max_calls) is not int or not 1 <= max_calls <= 8:
         raise ValueError("max-calls must be between 1 and 8")
     if not (tty or (lambda: sys.stdin.isatty() and sys.stdout.isatty()))():
         raise ValueError("a visible terminal on stdin and stdout is required")
-    env = child_environment(os.environ if parent_env is None else parent_env)
+    env = child_environment(os.environ if parent_env is None else parent_env, config_dir)
+    if usage_service not in USAGE_SERVICES:
+        raise ValueError("unsupported usage service")
     sent = load_sent_items(folder)  # Validate every hash and file before any call.
     manifest = read_json(folder / "manifest.json")
     scope = load_scope(scope_file)
@@ -235,8 +265,11 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
     schema = SCHEMA.read_text(encoding="utf-8")
     instructions = PROMPT.read_text(encoding="utf-8")
     executable = executable or resolve_executable()
+    if config_dir is not None and Path(executable).name.casefold().startswith("claude-p"):
+        # claude-p is the personal launcher; an explicit account needs native claude.exe.
+        raise ValueError("claude-p launcher cannot run an explicit config directory")
     argv = command(schema, executable, lean_context=lean_context)
-    usage_reader = usage_reader or read_usage
+    usage_reader = usage_reader or (lambda: read_usage(CACHE, usage_service))
     before = usage_reader()
     usage_gate(before, allow_unknown_usage)
     if not before.get("known"):
@@ -296,7 +329,9 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "output_sha256": sha(raw.encode("utf-8")), "usage_before": before,
             "usage_after": after, "error": error, "run_id": run_id,
-            "execution": "injected" if executor else "personal_subscription",
+            "execution": "injected" if executor else "subscription",
+            "config_dir_name": Path(env["CLAUDE_CONFIG_DIR"]).name,
+            "usage_service": usage_service,
             **error_details,
         }
         with (output_root / "calls.jsonl").open("a", encoding="utf-8") as stream:
@@ -313,7 +348,9 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
             json.dumps(verified, ensure_ascii=False, indent=2), encoding="utf-8")
         results.append(verified)
     return {"run": str(destination), "calls": len(results),
-            "execution": "injected" if executor else "personal_subscription",
+            "execution": "injected" if executor else "subscription",
+            "config_dir_name": Path(env["CLAUDE_CONFIG_DIR"]).name,
+            "usage_service": usage_service,
             "unknown_usage_allowed": allow_unknown_usage}
 
 
@@ -325,6 +362,10 @@ def main(argv=None):
     parser.add_argument("--blocklist-file", type=Path)
     parser.add_argument("--max-calls", type=int, default=4)
     parser.add_argument("--allow-unknown-usage", action="store_true")
+    parser.add_argument("--config-dir", required=True,
+                        help="explicit Claude configuration directory (absolute, existing)")
+    parser.add_argument("--usage-service", required=True, choices=sorted(USAGE_SERVICES),
+                        help="usage widget service that matches --config-dir")
     parser.add_argument("--lean-context", action="store_true",
                         help="opt in to Phase 2 lean context with an empty temporary cwd")
     args = parser.parse_args(argv)
@@ -332,7 +373,8 @@ def main(argv=None):
         result = judge(args.packets, scope_file=args.scope_file, output_root=args.out_root,
                        max_calls=args.max_calls,
                        allow_unknown_usage=args.allow_unknown_usage,
-                       lean_context=args.lean_context, blocklist_file=args.blocklist_file)
+                       lean_context=args.lean_context, blocklist_file=args.blocklist_file,
+                       config_dir=args.config_dir, usage_service=args.usage_service)
     except (OSError, ValueError, KeyError, TypeError):
         print("Judge refused or failed; check packet/usage/TTY and receipts.", file=sys.stderr)
         return 2
