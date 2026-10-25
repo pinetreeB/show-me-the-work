@@ -83,16 +83,19 @@ def read_usage(path: Path = CACHE, service_name: str = "claude_personal") -> dic
         seconds = stamp / 1000 if stamp >= 100_000_000_000 else stamp
         if not -60 <= time.time() - seconds <= 600:
             return {"known": False}
-        values = {}
+        values, duplicate = {}, False
         for row in service["rows"]:
             label = row["label"]
-            if label in {"5시간", "5h", "five_hour"}:
-                values["five_hour"] = row["used"]
-            elif label in {"주간 전체", "weekly", "seven_day"}:
-                values["weekly"] = row["used"]
+            key = ("five_hour" if label in {"5시간", "5h", "five_hour"}
+                   else "weekly" if label in {"주간 전체", "weekly", "seven_day"} else None)
+            if key is None:
+                continue
+            # A repeated row must not overwrite an earlier over-limit or malformed value.
+            duplicate = duplicate or key in values
+            values.setdefault(key, row["used"])
         valid = {key: value for key, value in values.items()
                  if type(value) in {int, float} and math.isfinite(value) and 0 <= value <= 100}
-        if valid != values:
+        if duplicate or valid != values:
             # A malformed row must not erase a valid over-limit value, and it
             # is never something the unknown-usage override may accept.
             return {"known": False, "invalid": True, **valid}

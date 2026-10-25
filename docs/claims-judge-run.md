@@ -24,7 +24,7 @@ CLI는 --config-dir(필수)로 받은 폴더를 CLAUDE_CONFIG_DIR에, ~/.claude/
 사용량 5시간 40% 이상 또는 주간 55% 이상이면 거부합니다. 사용량 자료가 없거나 오래됐으면
 기본 거부이며, 좌상이 사용량을 확인하고 명시적으로 --allow-unknown-usage를 줄 때만 허용됩니다.
 위젯 항목에 전체 주간 줄이 없으면 주간은 미상으로 보며, 이때 --allow-unknown-usage를 줘도 확인된 5시간 문턱은 그대로 적용합니다.
-사용량 값 중 하나라도 형식이 잘못됐으면(음수·100 초과·NaN·숫자 아님) --allow-unknown-usage로도 허용하지 않습니다.
+사용량 값 중 하나라도 형식이 잘못됐거나(음수·100 초과·NaN·숫자 아님) 같은 항목 줄이 두 번 이상 나오면 --allow-unknown-usage로도 허용하지 않습니다.
 calls.jsonl에는 설정 폴더 이름(config_dir_name, 전체 경로 아님)과 usage_service를 기록합니다.
 관제탑이 승인한 문맥 축소는 Phase 2 판정 호출에만 적용하며, 좌상이 명시적으로 --lean-context를 붙일 때 켜집니다.
 lean 기본값은 꺼짐입니다. --disable-slash-commands와 --strict-mcp-config는 항상 적용합니다.

@@ -143,3 +143,20 @@ def test_mixed_valid_and_invalid_rows_refused_even_with_override(tmp_path, monke
                      executor=fail, tty=lambda: True, parent_env={}, executable=native(tmp_path),
                      config_dir=config, usage_service="claude", allow_unknown_usage=True)
     assert not (tmp_path / "out/calls.jsonl").exists()
+
+
+@pytest.mark.parametrize("rows,kept", [
+    ([{"label": "5시간", "used": 45}, {"label": "5시간", "used": 4}, {"label": "주간 전체", "used": 10}],
+     {"five_hour": 45, "weekly": 10}),
+    ([{"label": "5시간", "used": -1}, {"label": "5h", "used": 4}, {"label": "주간 전체", "used": 10}],
+     {"weekly": 10}),
+    ([{"label": "5시간", "used": 4}, {"label": "weekly", "used": 60}, {"label": "seven_day", "used": 10}],
+     {"five_hour": 4, "weekly": 60}),
+])
+def test_duplicate_usage_labels_are_malformed(tmp_path, rows, kept):
+    cache = tmp_path / "usage.json"
+    write_usage(cache, "claude", rows)
+    usage = runner.read_usage(cache, "claude")
+    assert usage == {"known": False, "invalid": True, **kept}
+    with pytest.raises(ValueError):
+        runner.usage_gate(usage, allow_unknown=True)
