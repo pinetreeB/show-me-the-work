@@ -5,6 +5,7 @@ import time
 import pytest
 
 from smtw.claims import judge as runner
+from tests.claims_judge_support import make_scope
 from tests.test_claims_judge import fake_judge, invoke, packet_folder
 
 
@@ -120,3 +121,25 @@ def test_unknown_override_still_enforces_known_limits(usage):
     runner.usage_gate({"known": False, "five_hour": 39}, allow_unknown=True)
     with pytest.raises(ValueError, match="unknown"):
         runner.usage_gate({"known": False, "five_hour": 1}, allow_unknown=False)
+
+
+@pytest.mark.parametrize("rows,kept", [
+    ([{"label": "5시간", "used": 45}, {"label": "주간 전체", "used": -1}], {"five_hour": 45}),
+    ([{"label": "5시간", "used": 45}, {"label": "주간 전체", "used": float("nan")}], {"five_hour": 45}),
+    ([{"label": "5시간", "used": -1}, {"label": "주간 전체", "used": 60}], {"weekly": 60}),
+    ([{"label": "5시간", "used": 1}, {"label": "주간 전체", "used": 101}], {"five_hour": 1}),
+])
+def test_mixed_valid_and_invalid_rows_refused_even_with_override(tmp_path, monkeypatch, rows, kept):
+    cache = tmp_path / "usage.json"
+    write_usage(cache, "claude", rows)
+    assert runner.read_usage(cache, "claude") == {"known": False, "invalid": True, **kept}
+    monkeypatch.setattr(runner, "CACHE", cache)
+    config = tmp_path / "synthetic-config"
+    config.mkdir()
+    def fail(*args, **kwargs):
+        pytest.fail("executor called with malformed usage data")
+    with pytest.raises(ValueError):
+        runner.judge(packet_folder(tmp_path), scope_file=make_scope(tmp_path), output_root=tmp_path / "out",
+                     executor=fail, tty=lambda: True, parent_env={}, executable=native(tmp_path),
+                     config_dir=config, usage_service="claude", allow_unknown_usage=True)
+    assert not (tmp_path / "out/calls.jsonl").exists()

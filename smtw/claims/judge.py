@@ -90,9 +90,12 @@ def read_usage(path: Path = CACHE, service_name: str = "claude_personal") -> dic
                 values["five_hour"] = row["used"]
             elif label in {"주간 전체", "weekly", "seven_day"}:
                 values["weekly"] = row["used"]
-        if any(type(v) not in {int, float} or not math.isfinite(v) or not 0 <= v <= 100
-               for v in values.values()):
-            return {"known": False}
+        valid = {key: value for key, value in values.items()
+                 if type(value) in {int, float} and math.isfinite(value) and 0 <= value <= 100}
+        if valid != values:
+            # A malformed row must not erase a valid over-limit value, and it
+            # is never something the unknown-usage override may accept.
+            return {"known": False, "invalid": True, **valid}
         if set(values) != {"five_hour", "weekly"}:
             # Some plans expose no all-model weekly row. Keep a valid fresh
             # five-hour value so the gate can still enforce it.
@@ -106,6 +109,8 @@ def usage_gate(usage: dict, allow_unknown: bool):
     if not usage.get("known"):
         if not allow_unknown:
             raise ValueError("usage unknown; --allow-unknown-usage is required")
+        if usage.get("invalid"):
+            raise ValueError("usage data is malformed; override refused")
         # The override covers only the unknown part; a known limit still applies.
         if usage.get("five_hour", 0) >= 40 or usage.get("weekly", 0) >= 55:
             raise ValueError("subscription usage threshold reached")
