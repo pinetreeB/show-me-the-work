@@ -326,14 +326,16 @@ def test_repository_assignment_records_definition_location(tmp_path):
     ('module.js', 'const config = {"jsKey": 2};\n', 'jsKey'),
     ('module.py', 'CONFIG = {"dictKey": 2}\n', 'dictKey'),
 ])
-def test_repository_quoted_mapping_key_cannot_rescue_another_file(tmp_path, name, content, key):
+def test_repository_quoted_mapping_key_keeps_legacy_lookup(tmp_path, name, content, key):
     repo, revision = repository(tmp_path, {name: content})
     result = inspect(tmp_path, f'`notes.md` 설정 키 `{key}: 2`가 있다.',
                      repos=[str(repo)], commits={str(repo): revision})
     claims = [c for c in result['claims'] if c['check_type'] in {'K4', 'K6'}]
     assert claims
-    assert all(c['verdict'] == 'absent' and c['reason_code'] == 'not_found' for c in claims)
-    assert all(not c['source'].get('repository_hits') for c in claims)
+    # Preserve the pre-p4-1 lookup; this label is not strict definition proof.
+    assert all(c['verdict'] == 'unverifiable' and c['reason_code'] == 'found_outside_scope' for c in claims)
+    assert all(c['source']['repository_hit_kind'] == 'definition' for c in claims)
+    assert all(c['source']['repository_hits'][0]['revision'] == revision for c in claims)
 
 
 def test_repository_docstring_mapping_key_remains_absent(tmp_path):

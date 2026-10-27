@@ -294,7 +294,7 @@ class Repositories:
 
     @staticmethod
     def _identifier_hit(path: str, line_number: int, line: str, token: str,
-                        revision: str, word: re.Pattern, definition: re.Pattern | set[int],
+                        revision: str, word: re.Pattern, definition: re.Pattern,
                         suffix: str) -> dict | None:
         if not code_path(path):
             return None
@@ -303,14 +303,13 @@ class Repositories:
             return None
         if token not in line or not word.search(line):
             return None
-        is_definition = (bool(definition.search(line)) if isinstance(definition, re.Pattern)
-                         else line_number in definition)
+        is_definition = bool(definition.search(line))
         if not is_definition and not re.search(r'[=(){}\[\];:]|\b(?:return|import|from|new|if|for|while)\b', line):
             return None
         return {'path': path, 'line': line_number, 'revision': revision,
                 'kind': 'definition' if is_definition else 'mention'}
 
-    def _mask_noncode(self, text: str, suffix: str) -> list[str]:
+    def _mask_noncode(self, text: str, suffix: str, *, legacy_keys: bool = False) -> list[str]:
         """Mask strings and comments while preserving source line positions."""
         python_like = suffix in {'.py', '.sh', '.ps1', '.yaml', '.yml', '.toml'}
         slash_comments = suffix in {'.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.java',
@@ -362,6 +361,22 @@ class Repositories:
                 result[index:index+2] = '  '
                 index += 2
                 continue
+            # Preserve the pre-p4-1 lookup's key-shaped code mentions only in
+            # its own cache. They are never evidence for the new definition path.
+            if legacy_keys and text[index] in {'\"', "'"}:
+                delimiter = text[index]
+                closing = index + 1
+                while closing < len(text):
+                    if text[closing] == '\n':
+                        closing = -1
+                        break
+                    if text[closing] == delimiter and text[closing-1] != '\\':
+                        break
+                    closing += 1
+                if closing > index and closing < len(text) and re.match(r'[ \t]*:', text[closing+1:]):
+                    result[index] = result[closing] = ' '
+                    index = closing + 1
+                    continue
             if python_like and text[index] == '#' or slash_comments and text.startswith('//', index):
                 while index < len(text) and text[index] != '\n':
                     result[index] = ' '
@@ -371,6 +386,111 @@ class Repositories:
                 quote = text[index]
                 result[index] = ' '
             index += 1
+        return ''.join(result).splitlines()
+
+    def _js_declaration_lines(self, text: str) -> list[str]:
+        """A conservative code prefix, never a guess through ambiguous JS syntax.
+
+        Only the new declaration path uses this view. JSX, template interpolation,
+        ambiguous division/regex context, and malformed literals stop the prefix.
+        The legacy repository lookup keeps its original masking and decisions.
+        """
+        result = list(text)
+        index, previous = 0, ''
+        next_budget_check = 0
+        identifier = re.compile(r'[A-Za-z_$][\w$]*')
+        regex_after = {'', '=', '(', '[', '{', ',', ':', ';', 'return', 'throw', 'case', 'yield', '=>'}
+
+        def hide(start, end):
+            for offset in range(start, end, 65536):
+                self.budget.check()
+                stop = min(end, offset + 65536)
+                result[offset:stop] = ['\n' if char == '\n' else ' ' for char in text[offset:stop]]
+
+        def stop(start):
+            hide(start, len(text))
+            return ''.join(result).splitlines()
+
+        while index < len(text):
+            if index >= next_budget_check:
+                self.budget.check()
+                next_budget_check = index + 65536
+            char = text[index]
+            if char.isspace():
+                index += 1
+                continue
+            if text.startswith('//', index):
+                end = text.find('\n', index)
+                end = len(text) if end < 0 else end
+                hide(index, end)
+                index = end
+                continue
+            if text.startswith('/*', index):
+                end = text.find('*/', index + 2)
+                if end < 0:
+                    return stop(index)
+                hide(index, end + 2)
+                index = end + 2
+                continue
+            if char in {'"', "'", '`'}:
+                end = index + 1
+                while end < len(text):
+                    if end % 65536 == 0:
+                        self.budget.check()
+                    if text[end] == '\\':
+                        end += 2
+                        continue
+                    if text[end] == char:
+                        break
+                    if char == '`' and text.startswith('${', end):
+                        return stop(index)
+                    if char != '`' and text[end] in '\r\n':
+                        return stop(index)
+                    end += 1
+                if end >= len(text):
+                    return stop(index)
+                hide(index, end + 1)
+                index, previous = end + 1, 'literal'
+                continue
+            if char == '/':
+                if previous not in regex_after:
+                    return stop(index)
+                end, in_class = index + 1, False
+                while end < len(text):
+                    if end % 65536 == 0:
+                        self.budget.check()
+                    current = text[end]
+                    if current in '\r\n':
+                        return stop(index)
+                    if current == '\\':
+                        if end + 1 == len(text) or text[end + 1] in '\r\n':
+                            return stop(index)
+                        end += 2
+                        continue
+                    if current == '[':
+                        if in_class:
+                            return stop(index)
+                        in_class = True
+                    elif current == ']':
+                        in_class = False
+                    elif current == '/' and not in_class:
+                        break
+                    end += 1
+                if end >= len(text):
+                    return stop(index)
+                hide(index, end + 1)
+                index, previous = end + 1, 'literal'
+                continue
+            if char == '<':
+                return stop(index)  # JSX/type/comparison context is not inferred.
+            word = identifier.match(text, index)
+            if word:
+                previous = word.group()
+                index += len(previous)
+            elif text.startswith('=>', index):
+                index, previous = index + 2, '=>'
+            else:
+                index, previous = index + 1, char
         return ''.join(result).splitlines()
 
     def _definition_sites(self, text: str, suffix: str, masked: list[str],
@@ -398,16 +518,20 @@ class Repositories:
                     for item in node.elts:
                         yield from targets(item)
 
-            for node in ast.walk(tree):
+            pending = [(tree, True)]
+            while pending:
+                node, module_assignment = pending.pop()
                 self.budget.check()
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     if node.name in wanted:
                         sites.add((node.name, node.lineno))
-                elif isinstance(node, ast.Assign):
+                    module_assignment = False
+                elif module_assignment and isinstance(node, ast.Assign):
                     for target in node.targets:
                         sites.update((name, line) for name, line in targets(target) if name in wanted)
-                elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                elif module_assignment and isinstance(node, ast.AnnAssign) and node.value is not None:
                     sites.update((name, line) for name, line in targets(node.target) if name in wanted)
+                pending.extend((child, module_assignment) for child in ast.iter_child_nodes(node))
             return sites
 
         # Explicit JS/TS declaration headers do not require inferred scope.
@@ -422,7 +546,7 @@ class Repositories:
             r'class\s+(?P<class>[A-Za-z_$][\w$]*)\s*(?:\{|extends\b)|'
             r'(?:const|let|var)\s+(?P<declared>[A-Za-z_$][\w$]*)'
             r'\s*(?::\s*[\w.$<>|\[\] ]+)?\s*=(?![=>]))')
-        for number, line in enumerate(masked, 1):
+        for number, line in enumerate(self._js_declaration_lines(text), 1):
             self.budget.check()
             match = pattern.match(line)
             if match:
@@ -461,6 +585,8 @@ class Repositories:
             text, suffix = decode(blob), Path(path).suffix.lower()
             masked = self._mask_noncode(text, suffix)
             self.cache[('masked_lines', str(root), revision, path)] = masked
+            self.cache[('legacy_lines', str(root), revision, path)] = self._mask_noncode(
+                text, suffix, legacy_keys=True)
             sites = self._definition_sites(text, suffix, masked, tokens)
             for token in tokens:
                 self.cache[('definition_sites', str(root), revision, path, token)] = {
@@ -492,8 +618,17 @@ class Repositories:
             results = [future.result() for future in futures]
         for (root, fixed, tokens, _), result in zip(plans, results):
             hits = {token: [] for token in tokens}
+            definition_hits = {token: [] for token in tokens}
             word_patterns = {
                 token: re.compile(r'(?<![A-Za-z0-9_$])' + re.escape(token) + r'(?![A-Za-z0-9_$])')
+                for token in tokens
+            }
+            # Exact pre-p4-1 classification for the existing not_found lookup.
+            # Its historical "definition" label is not a declaration proof.
+            definition_patterns = {
+                token: re.compile(
+                    r'\b(?:def|class|function|const|let|var)\s+' + re.escape(token) + r'\b|'
+                    + word_patterns[token].pattern + r'\s*(?::[^:=\n]+)?(?:=|:)')
                 for token in tokens
             }
             parsed_rows: list[tuple[str, int, str, str]] = []
@@ -511,24 +646,27 @@ class Repositories:
                     root, fixed, [path for path, _, _, _ in parsed_rows], tokens)
                 for path, line_number, _, suffix in parsed_rows:
                     self.budget.check()
-                    lines = self.cache.get(('masked_lines', str(root), fixed, path), [])
+                    lines = self.cache.get(('legacy_lines', str(root), fixed, path), [])
                     line = lines[line_number-1] if line_number <= len(lines) else ''
                     for token in tokens:
-                        if token not in line:
-                            continue
                         hit = self._identifier_hit(
                             path, line_number, line, token, fixed,
-                            word_patterns[token], self.cache.get(
-                                ('definition_sites', str(root), fixed, path, token), set()), suffix)
+                            word_patterns[token], definition_patterns[token], suffix)
                         if hit:
                             hits[token].append(hit)
+                        if line_number in self.cache.get(
+                                ('definition_sites', str(root), fixed, path, token), set()):
+                            definition_hits[token].append({'path': path, 'line': line_number,
+                                                          'revision': fixed, 'kind': 'definition'})
             else:
                 blobs_complete = result.returncode == 1
             complete = result.returncode in (0, 1) and blobs_complete
             for token in tokens:
                 definitions = [hit for hit in hits[token] if hit['kind'] == 'definition']
-                selected = definitions
+                selected = definitions or hits[token]
                 self.cache[('grep', str(root), fixed, token)] = (bool(selected), complete, selected)
+                declarations = definition_hits[token]
+                self.cache[('definitions', str(root), fixed, token)] = (bool(declarations), complete, declarations)
 
     def identifier(self, token: str, *, revision: str = '', when: str = '',
                    other_definition: str = '') -> tuple[bool, bool, list[str], list[dict]]:
@@ -556,7 +694,7 @@ class Repositories:
                 complete = False
                 scopes.append(f'{root}@{fixed}: 명시 revision {revision} 불일치로 건너뜀')
                 continue
-            key = ('grep', str(root), fixed, token)
+            key = ('definitions' if other_definition else 'grep', str(root), fixed, token)
             if key not in self.cache:
                 self.preload_identifiers([(token, revision, when)])
             hit, ok, hits = self.cache.get(key, (False, False, []))

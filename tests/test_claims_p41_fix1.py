@@ -76,12 +76,16 @@ NON_DEFINITIONS = [
 @pytest.mark.parametrize('other', NON_DEFINITIONS)
 @pytest.mark.parametrize('source,reason', [('moved_helper()\n','definition_missing'),
                                          ('value = 1\n','not_found')])
-def test_claims_review_non_definition_never_rescues_absence(tmp_path, other, source, reason):
+def test_claims_review_non_definition_preserves_each_lookup_route(tmp_path, other, source, reason):
     repo,revision=repository(tmp_path,{'logic.py':source,'other.py':other})
     report,_=make_case(tmp_path,'`logic.py` 함수 `moved_helper` 정의가 있다.')
     claim=atoms(run(report,repos=[str(repo)],commits={str(repo):revision}),'K4')[0]
-    assert (claim['verdict'],claim['reason_code']) == ('absent',reason)
-    assert not claim['source'].get('repository_hits')
+    # The pre-p4-1 not_found path already accepted code mentions/key shapes.
+    # Only the newly added definition_missing path requires a declaration.
+    legacy_hit = reason == 'not_found' and other not in NON_DEFINITIONS[9:11]
+    expected = ('unverifiable', 'found_outside_scope') if legacy_hit else ('absent', reason)
+    assert (claim['verdict'],claim['reason_code']) == expected
+    assert bool(claim['source'].get('repository_hits')) == legacy_hit
 
 
 @pytest.mark.parametrize('other', [

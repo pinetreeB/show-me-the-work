@@ -34,14 +34,16 @@ def test_claims_js_ts_bare_assignment_has_no_definition_proof(suffix, text):
 @pytest.mark.parametrize('source,reason', [('moved_helper()\n', 'definition_missing'),
                                          ('value = 1\n', 'not_found')])
 @pytest.mark.parametrize('other', [BARE_ASSIGNMENTS[0], BARE_ASSIGNMENTS[3], BARE_ASSIGNMENTS[-1]])
-def test_claims_grok_scope_bypass_remains_absent(tmp_path, suffix, source, reason, other):
+def test_claims_grok_scope_bypass_preserves_each_lookup_route(tmp_path, suffix, source, reason, other):
     repo, revision = repository(tmp_path, {'logic.py': source, 'other'+suffix: other})
     report, _ = make_case(tmp_path, '`logic.py` 함수 `moved_helper` 정의가 있다.')
     result = run(report, repos=[str(repo)], commits={str(repo): revision})
     claim, = atoms(result, 'K4')
-    assert (claim['verdict'], claim['reason_code']) == ('absent', reason)
-    assert not claim['source'].get('repository_hits')
-    assert result['status'] == 'FAIL'
+    legacy_hit = reason == 'not_found'
+    expected = ('unverifiable', 'found_outside_scope') if legacy_hit else ('absent', reason)
+    assert (claim['verdict'], claim['reason_code']) == expected
+    assert bool(claim['source'].get('repository_hits')) == legacy_hit
+    assert result['status'] == ('INCOMPLETE' if legacy_hit else 'FAIL')
 
 
 @pytest.mark.parametrize('declaration', [

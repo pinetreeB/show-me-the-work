@@ -219,8 +219,10 @@ lines. Backtick tokens inside that description continue through their normal K4/
 extraction paths and do not multiply K9 atoms.
 
 Before a K4/K6 missing-name verdict, fixed-string `git grep` searches the supplied
-repository scope. A proven definition lowers the verdict to unverified; it does not verify a
-definition or value. For a K4 `definition_missing` result, a definition in another
+repository scope. The pre-p4-1 `not_found` lookup retains its code mention/key
+classification and lowers a hit to unverified; it does not verify a definition or
+value. Its historical `definition` hit label is not a declaration proof. For a K4
+`definition_missing` result, a separately verified definition in another
 file of the same explicitly fixed repository tree changes the result to
 `unverifiable/found_outside_scope`. Calls, comments, strings, other repositories,
 and later working-tree definitions do not satisfy this fallback. A name absent
@@ -231,20 +233,34 @@ to be checked for absence.
 Repository searches share the checker's time budget (60 seconds by default),
 including Git process timeouts and Python result processing. Requests are batched
 into one fixed-string grep per repository/revision and cached for repeated atoms;
-matching blobs are loaded in a batch and masked once. A timeout remains unverified,
+matching blobs are loaded in a batch, with separately cached legacy and strict
+masked views. A timeout remains unverified,
 never proof of absence. This is a time bound, not a byte or memory quota.
 Repository-only hits intentionally remain `found_outside_scope`; `token_match` is
 reserved for a token observed in directly linked file content.
-Repository fallback uses Python AST `def`/`async def`/`class` declarations and
+The new missing-definition fallback uses Python AST `def`/`async def`/`class` declarations and
 assignment targets (including annotated assignments with a value). Dictionary keys,
 keyword arguments, annotation-only names, and syntax errors are not definitions.
+Assignments must be at module scope, including module control-flow blocks.
+Function-local and class-body assignments, and assignment expressions (`:=`),
+cannot supply the new definition rescue. Explicit def/class declarations remain
+eligible in nested blocks.
 JS/TS fallback conservatively recognizes explicit function/class/const/let/var
 declaration headers (including nested blocks). Bare assignments, even apparently
 at module level, cannot supply rescue evidence: delimiter counts cannot establish
 scope when regex/string contents contain those characters. The fallback does not
 infer JS/TS scope from parentheses, brackets, or braces. Other ambiguous or
 unsupported language syntax cannot supply rescue evidence. These rules
-apply to repository fallback, not the separate legacy direct-read token checker.
+apply only to the new missing-definition fallback. Its declaration cache is
+separate from the pre-p4-1 repository mention cache and the legacy direct-read
+token checker. A legacy key, comparison, argument, or bare assignment may retain
+its old `not_found` rescue but cannot rescue `definition_missing`. JSON/Markdown
+content and filenames alone do not broaden the pre-p4-1 code search scope.
+The strict JS/TS view masks comments, strings and unambiguous regex literals.
+It stops considering later declarations at JSX/type/comparison `<`, template
+interpolation, ambiguous division/regex context, or malformed literals. Earlier
+explicit declarations remain eligible. This is a conservative prefix recognizer,
+not a complete JS/TS parser; the legacy lookup is unchanged at those boundaries.
 Target-file resolution reuses the repository basename index instead of scanning
 every file for each missing-definition atom.
 General `before`/`after` wording does not skip repository search. Only an explicit
