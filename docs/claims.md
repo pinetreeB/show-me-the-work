@@ -198,8 +198,8 @@ The following uncertainty codes retain the extracted claim and never count as a 
 - `binding_ambiguous`: multiple line references and quotations lack a definite one-to-one correspondence; explicit `각각`/`respectively` lists can be checked in order. A candidate range beyond the known file boundary, or a quote absent from every observed candidate range, remains a definite mismatch; an unobserved candidate preserves uncertainty.
 - `reported_claim`: a number or value attributes an earlier claim to an explicit third party and precedes a contrast such as `실제`/`actually`; first-person and the current report's own statements remain checkable. Literal K1/K5 quotations also remain checkable.
 - `inherited_binding`: a range or value disagrees with a file inherited from a section or paragraph that also names another file; a single-file section remains checkable.
-- `found_outside_scope`: a name missing from linked reads occurs in code at a supplied repository's designated commit (HEAD only when no commit was supplied). The source records commit, file, line, and whether the hit is a definition or code mention; documentation, string, and comment-only hits do not count.
-- `summary_label`: an immediate backtick tail after a file/line reference is an unmistakable prose list or item-count label. Korean phrases or multiword lowercase English phrases separated by slash/comma, and `N항목`/`N items` tails, qualify only without code punctuation, identifiers, or code/command keywords. Explicit literal-quote wording still requests comparison. Ambiguous expressions keep their prior checks, including changed conditions and arguments.
+- `found_outside_scope`: a name missing from linked reads has a proven declaration or assignment target in the supplied repository's designated commit (HEAD only for the existing missing-name search when no commit was supplied). The source records commit, file, line, and definition kind. Calls, conditions, parameters, slices, mapping keys, documentation, strings, and comments cannot rescue absence.
+- `summary_label`: an immediate backtick tail after a file/line reference is an item-count label (`N항목`/`N items`) or a slash/comma list of multiword Korean phrases. English phrases and single Korean identifiers are too ambiguous to exempt: a direct English list/count tail receives literal comparison, including when it has only one slash. A keyword denylist is not used to infer natural language. Labels are separate atoms and never enter quote candidates, ordered quote lists, or reference-group bindings. The original range claim is still checked, so a label cannot hide an invalid line number. Explicit literal-quote wording still requests comparison.
 - `object_kind`: an unlabelled SHA resolves to a non-commit object. Adjacent `tree`/`TREE` or `blob` labels (also `SHA (tree)`/`SHA (blob)`) require that exact object kind: `match/object_exists` on success, `mismatch/object_kind_mismatch` for another kind. Missing objects retain `commit_not_found` and repository-scope uncertainty. An explicit `commit` label still rejects non-commits with `not_commit`. A transcript echo alone cannot establish a tree/blob kind.
 - `repository_search_incomplete`: repository lookup failed or could not honor the claim's time, so absence cannot be confirmed.
 - `proposed_name`: the atom names a proposed, hypothetical, or future addition rather than an existing definition.
@@ -219,7 +219,7 @@ lines. Backtick tokens inside that description continue through their normal K4/
 extraction paths and do not multiply K9 atoms.
 
 Before a K4/K6 missing-name verdict, fixed-string `git grep` searches the supplied
-repository scope. A hit lowers the verdict to unverified; it does not verify a
+repository scope. A proven definition lowers the verdict to unverified; it does not verify a
 definition or value. For a K4 `definition_missing` result, a definition in another
 file of the same explicitly fixed repository tree changes the result to
 `unverifiable/found_outside_scope`. Calls, comments, strings, other repositories,
@@ -235,6 +235,16 @@ matching blobs are loaded in a batch and masked once. A timeout remains unverifi
 never proof of absence. This is a time bound, not a byte or memory quota.
 Repository-only hits intentionally remain `found_outside_scope`; `token_match` is
 reserved for a token observed in directly linked file content.
+Repository fallback uses Python AST `def`/`async def`/`class` declarations and
+assignment targets (including annotated assignments with a value). Dictionary keys,
+keyword arguments, annotation-only names, and syntax errors are not definitions.
+JS/TS fallback conservatively recognizes explicit function/class/const/let/var
+declaration headers (including nested blocks) and standalone module-level
+assignments outside parentheses, brackets, and braces. Other ambiguous or
+unsupported language syntax cannot supply rescue evidence. These rules
+apply to repository fallback, not the separate legacy direct-read token checker.
+Target-file resolution reuses the repository basename index instead of scanning
+every file for each missing-definition atom.
 General `before`/`after` wording does not skip repository search. Only an explicit
 revision that conflicts with the configured repository commit is skipped, and the
 skip reason is recorded in the claim source.

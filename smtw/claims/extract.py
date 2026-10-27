@@ -87,22 +87,27 @@ def code_shaped(value: str) -> bool:
 
 
 def summary_label(value: str) -> bool:
-    """Only unmistakable prose lists/count tails; ambiguous code stays a quote."""
+    """Count labels or multiword Korean lists only; English can be code."""
     value = value.strip()
     count = re.search(r'(?:^|[\s/,])\d+\s*(?:항목|items?)$', value, re.I)
     body = value[:count.start()].strip(' /,') if count else value
     if not body:
         return bool(count)
-    # No identifier punctuation, operators, brackets, quotes, or code keywords.
-    if not re.fullmatch(r'[A-Za-z가-힣\s/,]+', body) or re.search(
-            r'\b(?:if|elif|else|for|while|return|def|class|function|const|let|var|and|or|not|'
-            r'git|python|node|echo|cat|ls|grep|select|from)\b', body, re.I):
+    # A keyword denylist cannot prove that English phrases are natural language.
+    # Single Korean words can also be identifiers in a division/tuple expression.
+    if not re.fullmatch(r'[가-힣\s/,]+', body):
         return False
     parts = re.split(r'\s*[/,]\s*', body)
     if len(parts) < 2 and not count:
         return False
-    return all(re.fullmatch(r'[가-힣]+(?:\s+[가-힣]+)*', part)
-               or re.fullmatch(r'[a-z]+(?:\s+[a-z]+)+', part) for part in parts)
+    return all(re.fullmatch(r'[가-힣]+(?:\s+[가-힣]+)+', part) for part in parts)
+
+
+def ambiguous_summary_tail(value: str) -> bool:
+    """A rejected English list/count tail must still get a literal comparison."""
+    return bool(re.fullmatch(r'[A-Za-z가-힣\d\s/,]+', value)
+                and re.search(r'[A-Za-z]+\s+[A-Za-z]+', value)
+                and (re.search(r'[/,]', value) or re.search(r'\d+\s*(?:항목|items?)$', value, re.I)))
 
 
 def sha_object_kind(line: str, start: int, end: int) -> str:
@@ -715,18 +720,28 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                                         r'[\s`*:：,，;()\[\]{}-]*',
                                         masked(line)[b:match.start()], re.I)
                        for a, b, _ in ref_spans)
-        label_ticks = {m.start() for m in ticks if summary_label(m.group(1)) and any(
+        immediate_ticks = {m.start() for m in ticks if any(
             b <= m.start() and re.fullmatch(r'[\s`*:：-]*', line[b:m.start()])
             for _, b, _ in ref_spans)}
-        snippet_ticks = [m for m in ticks if numbered_snippet(m.group(1))
-                         or code_snippet(m.group(1)) or measured_tick(m)]
+        label_ticks = {m.start() for m in ticks if m.start() in immediate_ticks and summary_label(m.group(1))}
+        literal_ticks = {m.start() for m in ticks if m.start() in immediate_ticks
+                         and ambiguous_summary_tail(m.group(1)) and m.start() not in label_ticks}
+        binding_line = list(line)
         for m in ticks:
+            if m.start() in label_ticks:
+                binding_line[m.start():m.end()] = ' ' * (m.end()-m.start())
+        binding_line = ''.join(binding_line)
+        snippet_ticks = [m for m in ticks if m.start() not in label_ticks and (
+                         numbered_snippet(m.group(1)) or code_snippet(m.group(1)) or measured_tick(m))]
+        for m in ticks:
+            if m.start() in label_ticks:
+                continue  # Labels never enter quote candidates or reference groups.
             if line.lstrip().startswith('>') and QUOTE.fullmatch(m.group(1)):
                 continue
             if paths_in(m.group(1)) or REFERENCE.search(m.group(1)) or LOCATION.fullmatch(m.group(1)) or re.fullmatch(r'[\d,.]+', m.group(1)):
                 continue
             ordered_snippet = explicitly_ordered_quotes(line, snippet_ticks, len(ref_spans))
-            if (m.start() in label_ticks or numbered_snippet(m.group(1))
+            if (m.start() in literal_ticks or numbered_snippet(m.group(1))
                     or (code_snippet(m.group(1)) or measured_tick(m))
                     and (len(m.group(1)) >= 8 or ordered_snippet)):
                 snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
@@ -817,7 +832,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             else:
                 ranges = tuple((member.path, member.start, member.end) for member in group)
                 direct_gap = bool(re.fullmatch(r'[\s`*:：,，;()\[\]{}=→·/-]*',
-                                               line[spans[-1][1]:local[0][0]]))
+                                               binding_line[spans[-1][1]:local[0][0]]))
                 closed = bool((ordered or len(local) == 1 and direct_gap)
                               and not any(s[4] and '...' in s[2] for s in local))
                 grouped_snippets.update(s[0] for s in local)
@@ -836,8 +851,6 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     group_claim.candidate_quotes = ((snippet[2], snippet[4]),)
                     group_claim.candidate_group_closed = closed
                     group_claim.contextual_reason = '' if closed else 'binding_ambiguous'
-                    if snippet[0] in label_ticks:
-                        group_claim.contextual_reason = 'summary_label'
         for snippet in snippets:
             if snippet[0] in grouped_snippets:
                 continue
@@ -882,10 +895,19 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     claims.append(target)
                 target.quote, target.quote_code = snippet[2], snippet[4]
                 target.text = reference_text + ' ' + snippet[3]
-                if snippet[0] in label_ticks:
-                    target.contextual_reason = 'summary_label'
-                elif target.contextual_reason == 'summary_label':
-                    target.contextual_reason = ''
+        for m in ticks:
+            if m.start() not in label_ticks:
+                continue
+            _, _, owner = max((span for span in ref_spans if span[1] <= m.start()), key=lambda span: span[1])
+            # A label owns its atom, but cannot alter a code quote's binding.
+            target = replace(owner)
+            claims.append(target)
+            reference = REFERENCE.match(owner.text)
+            target.text = (reference.group() if reference else owner.text) + ' ' + m.group()
+            target.quote, target.quote_code = m.group(1), True
+            target.contextual_reason = 'summary_label'
+            target.candidate_quotes = ()
+            target.candidate_ranges = ()
         if not refs and previous_refs and snippets and not any(c.web_quote for c in quote_claims.values()):
             for c in previous_refs:
                 if c.report_line == line_no-1 and not c.quote and (

@@ -23,20 +23,22 @@ def inspect(tmp_path, text, source='if a:\n', **kwargs):
 
 @pytest.mark.parametrize('label', [
     '요청 처리/응답 정리/오류 안내', '요청 처리, 응답 정리, 오류 안내',
-    'request parsing / response formatting / error reporting',
-    'request parsing, response formatting, error reporting',
     '3항목', '3 items', '요청 처리/응답 정리 2항목',
-    'request parsing / response formatting 2 items',
 ])
 def test_claims_summary_tail_is_unverifiable_label(tmp_path, label):
-    claim = atoms(inspect(tmp_path, f'`logic.py:1` `{label}`'), 'K1')[0]
+    result = inspect(tmp_path, f'`logic.py:1` `{label}`')
+    claim, = [c for c in result['claims'] if c['reason_code'] == 'summary_label']
     assert (claim['verdict'], claim['reason_code']) == ('unverifiable', 'summary_label')
+    assert atoms(result, 'K1')[0]['reason_code'] == 'range_only'
 
 
 @pytest.mark.parametrize('quote', [
     'if a and b:', 'if a or b:', 'call(alpha, beta)',
     'alpha / beta / gamma', 'alpha, beta, gamma',
     'git status / git diff / git log',
+    'request parsing / response formatting / error reporting',
+    'request parsing, response formatting, error reporting',
+    'request parsing / response formatting 2 items',
     'request_parser / response_formatter / error_handler',
     'requestParser / responseFormatter / errorHandler',
     '요청 처리 / 응답 정리 / call()', '"요청 처리", "응답 정리"',

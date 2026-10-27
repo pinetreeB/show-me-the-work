@@ -2986,8 +2986,8 @@
       "summary": {
         "match": 57,
         "mismatch": 2,
-        "absent": 1,
-        "unverifiable": 31,
+        "absent": 3,
+        "unverifiable": 29,
         "range_only": 19
       },
       "verdict_reason_counts": {
@@ -3004,12 +3004,12 @@
           "value_mismatch": 1
         },
         "absent": {
-          "not_found": 1
+          "not_found": 3
         },
         "unverifiable": {
           "binding_ambiguous": 8,
           "command_result_missing": 1,
-          "found_outside_scope": 3,
+          "found_outside_scope": 1,
           "measurement_missing": 1,
           "no_read_of_file": 4,
           "non_file_quote": 1,
@@ -3239,7 +3239,7 @@
           "exempt": false,
           "text_sha256": "11462b2f982b050b69628d6e64938c68926504b64fa32e3e92991f48a67320f6",
           "reason_sha256": "fa8711f4f463145bf8f8770b7cc82603769174ab89411134e440154e824c3eab",
-          "source_sha256": "7262859d806fdc8196bc3ba9c1ce3d02f1daf124222560975ec42d59a7462626"
+          "source_sha256": "5d2355ea7b531362eb2e60df0804e81d4c078074e903597944378f78c71d8fb3"
         },
         {
           "report_line": 32,
@@ -4157,24 +4157,24 @@
         {
           "report_line": 111,
           "check_type": "K4",
-          "verdict": "unverifiable",
-          "reason_code": "found_outside_scope",
+          "verdict": "absent",
+          "reason_code": "not_found",
           "author_marked": false,
           "exempt": false,
           "text_sha256": "cb16041fd569d4112adff270388dad6f1a151c4239e2fd2d4ee17e55203879e7",
-          "reason_sha256": "fa8711f4f463145bf8f8770b7cc82603769174ab89411134e440154e824c3eab",
-          "source_sha256": "63a3cdd9d5ce81820c39ebef4e5ebde6456680e3ddbbf68fd72547c19cbf03b1"
+          "reason_sha256": "c0dfedebd1e105d29db8fb913b460cd1163169645d99d481a4019f11277f877f",
+          "source_sha256": "9272e1a555cb1cdc2c490772d135c27518a21697ba6abd41c89d3ce9dc7ef1e9"
         },
         {
           "report_line": 111,
           "check_type": "K6",
-          "verdict": "unverifiable",
-          "reason_code": "found_outside_scope",
+          "verdict": "absent",
+          "reason_code": "not_found",
           "author_marked": false,
           "exempt": false,
           "text_sha256": "cb16041fd569d4112adff270388dad6f1a151c4239e2fd2d4ee17e55203879e7",
-          "reason_sha256": "fa8711f4f463145bf8f8770b7cc82603769174ab89411134e440154e824c3eab",
-          "source_sha256": "63a3cdd9d5ce81820c39ebef4e5ebde6456680e3ddbbf68fd72547c19cbf03b1"
+          "reason_sha256": "c0dfedebd1e105d29db8fb913b460cd1163169645d99d481a4019f11277f877f",
+          "source_sha256": "9272e1a555cb1cdc2c490772d135c27518a21697ba6abd41c89d3ce9dc7ef1e9"
         },
         {
           "report_line": 112,
@@ -19713,8 +19713,8 @@
       "summary": {
         "match": 62,
         "mismatch": 57,
-        "absent": 4,
-        "unverifiable": 472,
+        "absent": 6,
+        "unverifiable": 470,
         "range_only": 124
       },
       "verdict_reason_counts": {
@@ -19730,16 +19730,16 @@
         },
         "absent": {
           "definition_missing": 1,
-          "not_found": 3
+          "not_found": 5
         },
         "unverifiable": {
           "binding_ambiguous": 183,
-          "found_outside_scope": 5,
+          "found_outside_scope": 2,
           "measurement_missing": 5,
           "no_read_of_file": 16,
           "non_file_quote": 14,
           "observation_conflict": 38,
-          "partial_range": 211
+          "partial_range": 212
         },
         "range_only": {
           "range_only": 124
@@ -22158,13 +22158,13 @@
         {
           "report_line": 206,
           "check_type": "K4",
-          "verdict": "unverifiable",
-          "reason_code": "found_outside_scope",
+          "verdict": "absent",
+          "reason_code": "not_found",
           "author_marked": false,
           "exempt": false,
           "text_sha256": "2c96146769ba16ef2617a3338af76e10361238c01fe5163b4a1822487fda93dd",
-          "reason_sha256": "fa8711f4f463145bf8f8770b7cc82603769174ab89411134e440154e824c3eab",
-          "source_sha256": "499d5ca4e2564f139f1453c94b2cac10d25e33be5dff9b9f172fe9da14857df1"
+          "reason_sha256": "c0dfedebd1e105d29db8fb913b460cd1163169645d99d481a4019f11277f877f",
+          "source_sha256": "84ac9fb8ddff90b6cc3f328a4fa737ae54fb39fc450e20c1a8cb726c83a10cd0"
         },
         {
           "report_line": 219,
@@ -23193,12 +23193,12 @@
           "report_line": 385,
           "check_type": "K4",
           "verdict": "unverifiable",
-          "reason_code": "found_outside_scope",
+          "reason_code": "partial_range",
           "author_marked": false,
           "exempt": false,
           "text_sha256": "19b9d0facd9a618f3900587cc16c2ab3eb7757226a08145940ec198bf4a5a6be",
           "reason_sha256": "5d2b860b246e9b2843fb269226331167c6ce1f6cec5755adabd99b74e1daa567",
-          "source_sha256": "54a90e41c74a58997e53de554e6d81d26488bbf10e82c4d9a206d4eaae33166e"
+          "source_sha256": "bc659b5b166e5a6a5e1a3366326445f3b6025c46447cb4b2ae75453bacea8271"
         },
         {
           "report_line": 409,
@@ -24809,13 +24809,13 @@
         {
           "report_line": 568,
           "check_type": "K4",
-          "verdict": "unverifiable",
-          "reason_code": "found_outside_scope",
+          "verdict": "absent",
+          "reason_code": "not_found",
           "author_marked": false,
           "exempt": false,
           "text_sha256": "87c8da9090fc424d0c5b81d6ae6e23d7b625d59558b8610fbb14b33175827b26",
-          "reason_sha256": "63fb2e4e58eadec088b9508a1060dc660e951477d523add750056bf3c058ce91",
-          "source_sha256": "9ddebe945abde64160976b8a046e44d30431e8e4a5fae54c6f59914f99367fc0"
+          "reason_sha256": "c0dfedebd1e105d29db8fb913b460cd1163169645d99d481a4019f11277f877f",
+          "source_sha256": "6dcf3c2b25b5c5b7c41d6d03931d773401c40c93d5c9dee3f7d8b7131ad9e9a9"
         },
         {
           "report_line": 571,

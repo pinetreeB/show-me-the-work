@@ -1,4 +1,4 @@
-"""75512be public decisions with two p4-1 F7 type-check amendments; no case inputs."""
+"""75512be public decisions with approved p4-1 F7/F2 amendments; no case inputs."""
 import hashlib
 import json
 import os

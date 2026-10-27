@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+import ast
 from pathlib import Path
 import re
 import subprocess
@@ -293,7 +294,7 @@ class Repositories:
 
     @staticmethod
     def _identifier_hit(path: str, line_number: int, line: str, token: str,
-                        revision: str, word: re.Pattern, definition: re.Pattern,
+                        revision: str, word: re.Pattern, definition: re.Pattern | set[int],
                         suffix: str) -> dict | None:
         if not code_path(path):
             return None
@@ -302,7 +303,8 @@ class Repositories:
             return None
         if token not in line or not word.search(line):
             return None
-        is_definition = bool(definition.search(line))
+        is_definition = (bool(definition.search(line)) if isinstance(definition, re.Pattern)
+                         else line_number in definition)
         if not is_definition and not re.search(r'[=(){}\[\];:]|\b(?:return|import|from|new|if|for|while)\b', line):
             return None
         return {'path': path, 'line': line_number, 'revision': revision,
@@ -360,20 +362,6 @@ class Repositories:
                 result[index:index+2] = '  '
                 index += 2
                 continue
-            if text[index] in {'\"', "'"}:
-                delimiter = text[index]
-                closing = index + 1
-                while closing < len(text):
-                    if text[closing] == '\n':
-                        closing = -1
-                        break
-                    if text[closing] == delimiter and text[closing-1] != '\\':
-                        break
-                    closing += 1
-                if closing > index and closing < len(text) and re.match(r'[ \t]*:', text[closing+1:]):
-                    result[index] = result[closing] = ' '
-                    index = closing + 1
-                    continue
             if python_like and text[index] == '#' or slash_comments and text.startswith('//', index):
                 while index < len(text) and text[index] != '\n':
                     result[index] = ' '
@@ -385,9 +373,75 @@ class Repositories:
             index += 1
         return ''.join(result).splitlines()
 
-    def _preload_masked_files(self, root: Path, revision: str, paths: list[str]) -> bool:
+    def _definition_sites(self, text: str, suffix: str, masked: list[str],
+                          tokens: list[str]) -> set[tuple[str, int]]:
+        """Only declarations/assignment targets, never uses or mapping keys."""
+        wanted = set(tokens)
+        sites = set()
+        if suffix in {'.py', '.pyi'}:
+            try:
+                tree = ast.parse(text)
+            except (SyntaxError, ValueError, RecursionError):
+                return sites  # Unparseable text is not proof of a definition.
+
+            def targets(node):
+                if isinstance(node, ast.Name):
+                    yield node.id, node.lineno
+                elif isinstance(node, ast.Attribute):
+                    parts, current = [], node
+                    while isinstance(current, ast.Attribute):
+                        parts.append(current.attr)
+                        current = current.value
+                    if isinstance(current, ast.Name):
+                        yield '.'.join([current.id, *reversed(parts)]), node.lineno
+                elif isinstance(node, (ast.Tuple, ast.List)):
+                    for item in node.elts:
+                        yield from targets(item)
+
+            for node in ast.walk(tree):
+                self.budget.check()
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if node.name in wanted:
+                        sites.add((node.name, node.lineno))
+                elif isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        sites.update((name, line) for name, line in targets(target) if name in wanted)
+                elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                    sites.update((name, line) for name, line in targets(node.target) if name in wanted)
+            return sites
+
+        # Explicit JS/TS declaration headers also work inside blocks/callbacks.
+        # Bare assignments need module scope, to exclude parameter defaults.
+        if suffix not in {'.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'}:
+            return sites
+        name = r'(?P<name>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)'
+        pattern = re.compile(
+            r'^\s*(?:export\s+(?:default\s+)?)?(?:'
+            r'(?:async\s+)?function\s*\*?\s+' + name + r'\s*\(|'
+            r'class\s+(?P<class>[A-Za-z_$][\w$]*)\s*(?:\{|extends\b)|'
+            r'(?:const|let|var)\s+(?P<declared>[A-Za-z_$][\w$]*)'
+            r'\s*(?::\s*[\w.$<>|\[\] ]+)?\s*=(?![=>])|'
+            r'(?P<assign>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)'
+            r'\s*(?::\s*[\w.$<>|\[\] ]+)?\s*=(?![=>]))')
+        parens = brackets = braces = 0
+        for number, line in enumerate(masked, 1):
+            self.budget.check()
+            matches = {match.start(): match for match in pattern.finditer(line)}
+            for index, char in enumerate(line):
+                match = matches.get(index)
+                if match and (match.group('assign') is None or parens == brackets == braces == 0):
+                    token = next(value for value in match.groupdict().values() if value)
+                    if token in wanted:
+                        sites.add((token, number))
+                parens += (char == '(') - (char == ')')
+                brackets += (char == '[') - (char == ']')
+                braces += (char == '{') - (char == '}')
+        return sites
+
+    def _preload_masked_files(self, root: Path, revision: str, paths: list[str], tokens: list[str]) -> bool:
         paths = [path for path in dict.fromkeys(paths)
-                 if ('masked_lines', str(root), revision, path) not in self.cache]
+                 if ('masked_lines', str(root), revision, path) not in self.cache
+                 or any(('definition_sites', str(root), revision, path, token) not in self.cache for token in tokens)]
         if not paths:
             return True
         self.budget.check()
@@ -411,8 +465,13 @@ class Repositories:
             size = int(header[2])
             blob = data[offset:offset+size]
             offset += size + 1
-            self.cache[('masked_lines', str(root), revision, path)] = self._mask_noncode(
-                decode(blob), Path(path).suffix.lower())
+            text, suffix = decode(blob), Path(path).suffix.lower()
+            masked = self._mask_noncode(text, suffix)
+            self.cache[('masked_lines', str(root), revision, path)] = masked
+            sites = self._definition_sites(text, suffix, masked, tokens)
+            for token in tokens:
+                self.cache[('definition_sites', str(root), revision, path, token)] = {
+                    line for name, line in sites if name == token}
         return complete and all(('masked_lines', str(root), revision, path) in self.cache
                                 for path in paths)
 
@@ -444,12 +503,6 @@ class Repositories:
                 token: re.compile(r'(?<![A-Za-z0-9_$])' + re.escape(token) + r'(?![A-Za-z0-9_$])')
                 for token in tokens
             }
-            definition_patterns = {
-                token: re.compile(
-                    r'\b(?:def|class|function|const|let|var)\s+' + re.escape(token) + r'\b|'
-                    + word_patterns[token].pattern + r'\s*(?::[^:=\n]+)?(?:=(?![=>])|:(?![=:]))')
-                for token in tokens
-            }
             parsed_rows: list[tuple[str, int, str, str]] = []
             if result.returncode == 0:
                 for row in decode(result.stdout).splitlines():
@@ -462,7 +515,7 @@ class Repositories:
                     if code_path(path):
                         parsed_rows.append((path, int(line_number), raw_line, suffix))
                 blobs_complete = self._preload_masked_files(
-                    root, fixed, [path for path, _, _, _ in parsed_rows])
+                    root, fixed, [path for path, _, _, _ in parsed_rows], tokens)
                 for path, line_number, _, suffix in parsed_rows:
                     self.budget.check()
                     lines = self.cache.get(('masked_lines', str(root), fixed, path), [])
@@ -472,7 +525,8 @@ class Repositories:
                             continue
                         hit = self._identifier_hit(
                             path, line_number, line, token, fixed,
-                            word_patterns[token], definition_patterns[token], suffix)
+                            word_patterns[token], self.cache.get(
+                                ('definition_sites', str(root), fixed, path, token), set()), suffix)
                         if hit:
                             hits[token].append(hit)
             else:
@@ -480,7 +534,7 @@ class Repositories:
             complete = result.returncode in (0, 1) and blobs_complete
             for token in tokens:
                 definitions = [hit for hit in hits[token] if hit['kind'] == 'definition']
-                selected = definitions or hits[token]
+                selected = definitions
                 self.cache[('grep', str(root), fixed, token)] = (bool(selected), complete, selected)
 
     def identifier(self, token: str, *, revision: str = '', when: str = '',
@@ -498,7 +552,9 @@ class Repositories:
                     complete = False
                     scopes.append(f'{root}@{fixed}: revision 조회 실패')
                     continue
-                target_files = {name for name in names if name and (
+                basename = normalize_path(other_definition, self.aliases).rsplit('/', 1)[-1]
+                candidates = self.cache[('basenames', str(root), fixed)].get(basename, [])
+                target_files = {name for name in candidates if name and (
                     matches_path(other_definition, str(root/name), self.aliases)
                     or matches_path(other_definition, name, self.aliases))}
                 if not target_files:
