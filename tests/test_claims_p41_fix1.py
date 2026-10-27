@@ -118,7 +118,6 @@ def test_claims_review_javascript_non_definition_is_not_a_definition(tmp_path, o
     'class moved_helper {}\n',
     'const moved_helper = () => 1;\n',
     'let moved_helper = 1;\n',
-    'moved_helper = 1;\n',
     'function wrapper() {\n    function moved_helper() {}\n}\n',
     'describe("synthetic", () => {\n    const moved_helper = () => 1;\n});\n',
 ])

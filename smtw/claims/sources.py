@@ -410,8 +410,9 @@ class Repositories:
                     sites.update((name, line) for name, line in targets(node.target) if name in wanted)
             return sites
 
-        # Explicit JS/TS declaration headers also work inside blocks/callbacks.
-        # Bare assignments need module scope, to exclude parameter defaults.
+        # Explicit JS/TS declaration headers do not require inferred scope.
+        # Bare assignments are never proof: character counts cannot distinguish
+        # regex/string braces from syntax or establish module-level bindings.
         if suffix not in {'.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'}:
             return sites
         name = r'(?P<name>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)'
@@ -420,22 +421,14 @@ class Repositories:
             r'(?:async\s+)?function\s*\*?\s+' + name + r'\s*\(|'
             r'class\s+(?P<class>[A-Za-z_$][\w$]*)\s*(?:\{|extends\b)|'
             r'(?:const|let|var)\s+(?P<declared>[A-Za-z_$][\w$]*)'
-            r'\s*(?::\s*[\w.$<>|\[\] ]+)?\s*=(?![=>])|'
-            r'(?P<assign>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)'
             r'\s*(?::\s*[\w.$<>|\[\] ]+)?\s*=(?![=>]))')
-        parens = brackets = braces = 0
         for number, line in enumerate(masked, 1):
             self.budget.check()
-            matches = {match.start(): match for match in pattern.finditer(line)}
-            for index, char in enumerate(line):
-                match = matches.get(index)
-                if match and (match.group('assign') is None or parens == brackets == braces == 0):
-                    token = next(value for value in match.groupdict().values() if value)
-                    if token in wanted:
-                        sites.add((token, number))
-                parens += (char == '(') - (char == ')')
-                brackets += (char == '[') - (char == ']')
-                braces += (char == '{') - (char == '}')
+            match = pattern.match(line)
+            if match:
+                token = next(value for value in match.groupdict().values() if value)
+                if token in wanted:
+                    sites.add((token, number))
         return sites
 
     def _preload_masked_files(self, root: Path, revision: str, paths: list[str], tokens: list[str]) -> bool:

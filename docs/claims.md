@@ -239,8 +239,10 @@ Repository fallback uses Python AST `def`/`async def`/`class` declarations and
 assignment targets (including annotated assignments with a value). Dictionary keys,
 keyword arguments, annotation-only names, and syntax errors are not definitions.
 JS/TS fallback conservatively recognizes explicit function/class/const/let/var
-declaration headers (including nested blocks) and standalone module-level
-assignments outside parentheses, brackets, and braces. Other ambiguous or
+declaration headers (including nested blocks). Bare assignments, even apparently
+at module level, cannot supply rescue evidence: delimiter counts cannot establish
+scope when regex/string contents contain those characters. The fallback does not
+infer JS/TS scope from parentheses, brackets, or braces. Other ambiguous or
 unsupported language syntax cannot supply rescue evidence. These rules
 apply to repository fallback, not the separate legacy direct-read token checker.
 Target-file resolution reuses the repository basename index instead of scanning
