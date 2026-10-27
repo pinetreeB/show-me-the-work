@@ -198,7 +198,7 @@ The following uncertainty codes retain the extracted claim and never count as a 
 - `binding_ambiguous`: multiple line references and quotations lack a definite one-to-one correspondence; explicit `각각`/`respectively` lists can be checked in order. A candidate range beyond the known file boundary, or a quote absent from every observed candidate range, remains a definite mismatch; an unobserved candidate preserves uncertainty.
 - `reported_claim`: a number or value attributes an earlier claim to an explicit third party and precedes a contrast such as `실제`/`actually`; first-person and the current report's own statements remain checkable. Literal K1/K5 quotations also remain checkable.
 - `inherited_binding`: a range or value disagrees with a file inherited from a section or paragraph that also names another file; a single-file section remains checkable.
-- `found_outside_scope`: a name missing from linked reads has a proven declaration or assignment target in the supplied repository's designated commit (HEAD only for the existing missing-name search when no commit was supplied). The source records commit, file, line, and definition kind. Calls, conditions, parameters, slices, mapping keys, documentation, strings, and comments cannot rescue absence.
+- `found_outside_scope`: the existing `not_found` search retains its pre-p4-1 code mention/key results. The separate `definition_missing` fallback requires a Python AST binding in another file of the same fixed tree. A legacy hit labelled `definition` is not an AST proof. The source records the commit, file, line, and hit kind.
 - `summary_label`: an immediate backtick tail after a file/line reference is an item-count label (`N항목`/`N items`) or a slash/comma list of multiword Korean phrases. English phrases and single Korean identifiers are too ambiguous to exempt: a direct English list/count tail receives literal comparison, including when it has only one slash. A keyword denylist is not used to infer natural language. Labels are separate atoms and never enter quote candidates, ordered quote lists, or reference-group bindings. The original range claim is still checked, so a label cannot hide an invalid line number. Explicit literal-quote wording still requests comparison.
 - `object_kind`: an unlabelled SHA resolves to a non-commit object. Adjacent `tree`/`TREE` or `blob` labels (also `SHA (tree)`/`SHA (blob)`) require that exact object kind: `match/object_exists` on success, `mismatch/object_kind_mismatch` for another kind. Missing objects retain `commit_not_found` and repository-scope uncertainty. An explicit `commit` label still rejects non-commits with `not_commit`. A transcript echo alone cannot establish a tree/blob kind.
 - `repository_search_incomplete`: repository lookup failed or could not honor the claim's time, so absence cannot be confirmed.
@@ -238,32 +238,21 @@ masked views. A timeout remains unverified,
 never proof of absence. This is a time bound, not a byte or memory quota.
 Repository-only hits intentionally remain `found_outside_scope`; `token_match` is
 reserved for a token observed in directly linked file content.
-The new missing-definition fallback uses Python AST `def`/`async def`/`class` declarations and
-assignment targets (including annotated assignments with a value). Dictionary keys,
-keyword arguments, annotation-only names, and syntax errors are not definitions.
-Assignments must be at module scope, including module control-flow blocks.
-Function-local and class-body assignments, and assignment expressions (`:=`),
-cannot supply the new definition rescue. Explicit def/class declarations remain
-eligible in nested blocks.
-JS/TS fallback conservatively recognizes explicit function/class/const/let/var
-declaration headers at statement boundaries (including nested blocks). The masked
-code must have no open parentheses or brackets, and the previous nonempty masked
-line must end in `;`, `{`, or `}` (or this must be the first such line). Comments
-and literal contents do not alter this context. A declaration inside an enclosing
-callback call or after an ambiguous continuation is conservatively excluded.
-Bare assignments, even apparently at module level, cannot supply rescue evidence:
-statement-context checks do not establish a module-level binding. Other ambiguous or
-unsupported language syntax cannot supply rescue evidence. These rules
-apply only to the new missing-definition fallback. Its declaration cache is
-separate from the pre-p4-1 repository mention cache and the legacy direct-read
-token checker. A legacy key, comparison, argument, or bare assignment may retain
-its old `not_found` rescue but cannot rescue `definition_missing`. JSON/Markdown
-content and filenames alone do not broaden the pre-p4-1 code search scope.
-The strict JS/TS view masks comments, strings and unambiguous regex literals.
-It stops considering later declarations at JSX/type/comparison `<`, template
-interpolation, ambiguous division/regex context, or malformed literals. Earlier
-explicit declarations remain eligible. This is a conservative prefix recognizer,
-not a complete JS/TS parser; the legacy lookup is unchanged at those boundaries.
+The new missing-definition fallback accepts Python files (`.py`/`.pyi`) only.
+Standard `ast.parse` must succeed. Only direct module and class body
+FunctionDef/AsyncFunctionDef/ClassDef declarations and Assign/initialized AnnAssign
+targets supply evidence. Class members use qualified names such as `Box.member`;
+they cannot rescue a claim about the unqualified module name `member`.
+Function bodies, control-flow bodies, assignment expressions, parameters, mapping
+keys, annotation-only targets, and parse failures supply no new definition proof.
+Class-qualified names use a separate Python candidate lookup and AST check;
+this never changes the legacy mention cache or its search decisions.
+JS/TS는 다음 회차(D1).
+JS/TS and all other non-Python languages cannot supply the new definition rescue,
+even when declaration-like text appears at a line or statement boundary.
+The pre-p4-1 `not_found` repository lookup and direct-read token checker remain
+independent. Their existing mentions, keys, and historical limitations are retained.
+JSON/Markdown content and filenames alone do not broaden that legacy code scope.
 Target-file resolution reuses the repository basename index instead of scanning
 every file for each missing-definition atom.
 General `before`/`after` wording does not skip repository search. Only an explicit

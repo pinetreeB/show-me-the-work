@@ -55,9 +55,9 @@ def test_claims_grok_expression_keeps_baseline_verdict(tmp_path, suffix, other, 
     'const text = "([{";\nconst moved_helper = 1;\n',
     'const text = `([{}])`;\n/* ([{ */\nconst moved_helper = 1;\n',
 ])
-def test_claims_real_statement_declaration_still_qualifies(tmp_path, suffix, other):
+def test_claims_real_js_ts_statement_declarations_are_deferred(tmp_path, suffix, other):
     repo, revision = repository(tmp_path, {'logic.py': 'moved_helper()\n', 'other' + suffix: other})
     report, _ = make_case(tmp_path, '`logic.py` 함수 `moved_helper` 정의가 있다.')
     claim, = atoms(run(report, repos=[str(repo)], commits={str(repo): revision}), 'K4')
-    assert (claim['verdict'], claim['reason_code']) == ('unverifiable', 'found_outside_scope')
-    assert claim['source']['repository_hit_kind'] == 'definition'
+    assert (claim['verdict'], claim['reason_code']) == ('absent', 'definition_missing')
+    assert not claim['source'].get('repository_hits')

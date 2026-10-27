@@ -55,18 +55,18 @@ def test_claims_fix2_review_preserves_baseline_and_blocks_new_rescue(tmp_path, c
     ('.py', 'def wrapper():\n    moved_helper: int = 1\n', False),
     ('.py', 'class Wrapper:\n    moved_helper: int = 1\n', False),
     ('.py', 'def wrapper():\n    class Inner:\n        moved_helper = 1\n', False),
-    ('.py', 'if ready:\n    moved_helper = 1\n', True),
-    ('.py', 'try:\n    moved_helper: int = 1\nexcept Exception:\n    pass\n', True),
+    ('.py', 'if ready:\n    moved_helper = 1\n', False),
+    ('.py', 'try:\n    moved_helper: int = 1\nexcept Exception:\n    pass\n', False),
     ('.mjs', "const r = /'/;\n/* '\nclass moved_helper {}\n' */\n", False),
     ('.cjs', 'const r = /["/]/;\n/* "\nfunction moved_helper() {}\n" */\n', False),
     ('.ts', 'const r = /`/;\nconst s = `\nconst moved_helper = 1;\n`;\n', False),
     ('.tsx', 'const view = <pre>\nclass moved_helper extends Base\n</pre>;\n', False),
     ('.js', 'const ratio = left / right /* comment\nfunction moved_helper() {}\n*/;\n', False),
     ('.jsx', 'const s = "\nconst moved_helper = 1;\n";\n', False),
-    ('.js', 'const r = /"/;\nfunction moved_helper() {}\n', True),
-    ('.ts', 'const r = /[}]/;\nexport const moved_helper = 1;\n', True),
-    ('.jsx', 'export function moved_helper() {\n  return <pre>text</pre>;\n}\n', True),
-    ('.js', 'function moved_helper() {}\nconst text = `${value}`;\n', True),
+    ('.js', 'const r = /"/;\nfunction moved_helper() {}\n', False),
+    ('.ts', 'const r = /[}]/;\nexport const moved_helper = 1;\n', False),
+    ('.jsx', 'export function moved_helper() {\n  return <pre>text</pre>;\n}\n', False),
+    ('.js', 'function moved_helper() {}\nconst text = `${value}`;\n', False),
 ])
 def test_claims_declaration_context_controls(tmp_path, suffix, other, defined):
     repo, revision = repository(tmp_path, {'logic.py': 'moved_helper()\n', 'other' + suffix: other})
@@ -93,7 +93,7 @@ def test_claims_pre_p41_code_mention_scope_is_preserved(tmp_path, token, files, 
     'class camelName {}',
 ])
 @pytest.mark.parametrize('source', ['value = 1\n', 'camelName()\n'])
-def test_claims_explicit_js_ts_definition_qualifies_in_both_routes(tmp_path, suffix, declaration, source):
+def test_claims_explicit_js_ts_definition_keeps_only_legacy_route(tmp_path, suffix, declaration, source):
     repo, revision = repository(tmp_path, {
         'logic.py': source,
         'core' + suffix: declaration + '\n',
@@ -101,9 +101,13 @@ def test_claims_explicit_js_ts_definition_qualifies_in_both_routes(tmp_path, suf
     })
     report, _ = make_case(tmp_path, '`logic.py` 함수 `camelName` 정의가 있다.')
     claim, = atoms(run(report, repos=[str(repo)], commits={str(repo): revision}), 'K4')
-    assert (claim['verdict'], claim['reason_code']) == ('unverifiable', 'found_outside_scope')
-    assert claim['source']['repository_hits'][0]['path'] == 'core' + suffix
-    assert claim['source']['repository_hit_kind'] == 'definition'
+    if source == 'value = 1\n':
+        assert (claim['verdict'], claim['reason_code']) == ('unverifiable', 'found_outside_scope')
+        assert claim['source']['repository_hits'][0]['path'] == 'core' + suffix
+        assert claim['source']['repository_hit_kind'] == 'definition'
+    else:
+        assert (claim['verdict'], claim['reason_code']) == ('absent', 'definition_missing')
+        assert not claim['source'].get('repository_hits')
 
 
 @pytest.mark.parametrize('first', ['legacy', 'strict'])

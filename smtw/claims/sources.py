@@ -388,183 +388,54 @@ class Repositories:
             index += 1
         return ''.join(result).splitlines()
 
-    def _js_declaration_lines(self, text: str) -> list[str]:
-        """A conservative code prefix, never a guess through ambiguous JS syntax.
-
-        Only the new declaration path uses this view. JSX, template interpolation,
-        ambiguous division/regex context, and malformed literals stop the prefix.
-        The legacy repository lookup keeps its original masking and decisions.
-        """
-        result = list(text)
-        index, previous = 0, ''
-        next_budget_check = 0
-        identifier = re.compile(r'[A-Za-z_$][\w$]*')
-        regex_after = {'', '=', '(', '[', '{', ',', ':', ';', 'return', 'throw', 'case', 'yield', '=>'}
-
-        def hide(start, end):
-            for offset in range(start, end, 65536):
-                self.budget.check()
-                stop = min(end, offset + 65536)
-                result[offset:stop] = ['\n' if char == '\n' else ' ' for char in text[offset:stop]]
-
-        def stop(start):
-            hide(start, len(text))
-            return ''.join(result).splitlines()
-
-        while index < len(text):
-            if index >= next_budget_check:
-                self.budget.check()
-                next_budget_check = index + 65536
-            char = text[index]
-            if char.isspace():
-                index += 1
-                continue
-            if text.startswith('//', index):
-                end = text.find('\n', index)
-                end = len(text) if end < 0 else end
-                hide(index, end)
-                index = end
-                continue
-            if text.startswith('/*', index):
-                end = text.find('*/', index + 2)
-                if end < 0:
-                    return stop(index)
-                hide(index, end + 2)
-                index = end + 2
-                continue
-            if char in {'"', "'", '`'}:
-                end = index + 1
-                while end < len(text):
-                    if end % 65536 == 0:
-                        self.budget.check()
-                    if text[end] == '\\':
-                        end += 2
-                        continue
-                    if text[end] == char:
-                        break
-                    if char == '`' and text.startswith('${', end):
-                        return stop(index)
-                    if char != '`' and text[end] in '\r\n':
-                        return stop(index)
-                    end += 1
-                if end >= len(text):
-                    return stop(index)
-                hide(index, end + 1)
-                index, previous = end + 1, 'literal'
-                continue
-            if char == '/':
-                if previous not in regex_after:
-                    return stop(index)
-                end, in_class = index + 1, False
-                while end < len(text):
-                    if end % 65536 == 0:
-                        self.budget.check()
-                    current = text[end]
-                    if current in '\r\n':
-                        return stop(index)
-                    if current == '\\':
-                        if end + 1 == len(text) or text[end + 1] in '\r\n':
-                            return stop(index)
-                        end += 2
-                        continue
-                    if current == '[':
-                        if in_class:
-                            return stop(index)
-                        in_class = True
-                    elif current == ']':
-                        in_class = False
-                    elif current == '/' and not in_class:
-                        break
-                    end += 1
-                if end >= len(text):
-                    return stop(index)
-                hide(index, end + 1)
-                index, previous = end + 1, 'literal'
-                continue
-            if char == '<':
-                return stop(index)  # JSX/type/comparison context is not inferred.
-            word = identifier.match(text, index)
-            if word:
-                previous = word.group()
-                index += len(previous)
-            elif text.startswith('=>', index):
-                index, previous = index + 2, '=>'
-            else:
-                index, previous = index + 1, char
-        return ''.join(result).splitlines()
-
     def _definition_sites(self, text: str, suffix: str, masked: list[str],
                           tokens: list[str]) -> set[tuple[str, int]]:
-        """Only declarations/assignment targets, never uses or mapping keys."""
-        wanted = set(tokens)
+        """Python AST bindings in direct module/class bodies only.
+
+        Class members use qualified names; a member is not a module binding.
+        The legacy lookup and its masking/classification remain independent.
+        """
         sites = set()
-        if suffix in {'.py', '.pyi'}:
-            try:
-                tree = ast.parse(text)
-            except (SyntaxError, ValueError, RecursionError):
-                return sites  # Unparseable text is not proof of a definition.
+        if suffix not in {'.py', '.pyi'}:
+            return sites
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError, RecursionError):
+            return sites
+        wanted = set(tokens)
 
-            def targets(node):
-                if isinstance(node, ast.Name):
-                    yield node.id, node.lineno
-                elif isinstance(node, ast.Attribute):
-                    parts, current = [], node
-                    while isinstance(current, ast.Attribute):
-                        parts.append(current.attr)
-                        current = current.value
-                    if isinstance(current, ast.Name):
-                        yield '.'.join([current.id, *reversed(parts)]), node.lineno
-                elif isinstance(node, (ast.Tuple, ast.List)):
-                    for item in node.elts:
-                        yield from targets(item)
+        def targets(node, prefix):
+            if isinstance(node, ast.Name):
+                yield prefix + node.id, node.lineno
+            elif isinstance(node, ast.Attribute) and not prefix:
+                parts, current = [], node
+                while isinstance(current, ast.Attribute):
+                    parts.append(current.attr)
+                    current = current.value
+                if isinstance(current, ast.Name):
+                    yield '.'.join([current.id, *reversed(parts)]), node.lineno
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                for item in node.elts:
+                    yield from targets(item, prefix)
+            elif isinstance(node, ast.Starred):
+                yield from targets(node.value, prefix)
 
-            pending = [(tree, True)]
-            while pending:
-                node, module_assignment = pending.pop()
+        pending = [('', tree.body)]
+        while pending:
+            prefix, body = pending.pop()
+            for node in body:
                 self.budget.check()
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    if node.name in wanted:
-                        sites.add((node.name, node.lineno))
-                    module_assignment = False
-                elif module_assignment and isinstance(node, ast.Assign):
+                    name = prefix + node.name
+                    if name in wanted:
+                        sites.add((name, node.lineno))
+                    if isinstance(node, ast.ClassDef):
+                        pending.append((name + '.', node.body))
+                elif isinstance(node, ast.Assign):
                     for target in node.targets:
-                        sites.update((name, line) for name, line in targets(target) if name in wanted)
-                elif module_assignment and isinstance(node, ast.AnnAssign) and node.value is not None:
-                    sites.update((name, line) for name, line in targets(node.target) if name in wanted)
-                pending.extend((child, module_assignment) for child in ast.iter_child_nodes(node))
-            return sites
-
-        # Explicit JS/TS headers require an unambiguous statement boundary.
-        # Bare assignments are never proof: character counts cannot distinguish
-        # regex/string braces from syntax or establish module-level bindings.
-        if suffix not in {'.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'}:
-            return sites
-        name = r'(?P<name>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)'
-        pattern = re.compile(
-            r'^\s*(?:export\s+(?:default\s+)?)?(?:'
-            r'(?:async\s+)?function\s*\*?\s+' + name + r'\s*\(|'
-            r'class\s+(?P<class>[A-Za-z_$][\w$]*)\s*(?:\{|extends\b)|'
-            r'(?:const|let|var)\s+(?P<declared>[A-Za-z_$][\w$]*)'
-            r'\s*(?::\s*[\w.$<>|\[\] ]+)?\s*=(?![=>]))')
-        delimiters, statement_boundary = [], True
-        for number, line in enumerate(self._js_declaration_lines(text), 1):
-            self.budget.check()
-            stripped = line.strip()
-            if not stripped:
-                continue
-            match = pattern.match(line) if not delimiters and statement_boundary else None
-            if match:
-                token = next(value for value in match.groupdict().values() if value)
-                if token in wanted:
-                    sites.add((token, number))
-            for char in line:
-                if char in '([':
-                    delimiters.append(char)
-                elif char in ')]':
-                    expected = '(' if char == ')' else '['
-                    if not delimiters or delimiters.pop() != expected:
-                        return sites  # Malformed delimiters cannot reset the context.
-            statement_boundary = stripped[-1] in ';{}'
+                        sites.update((name, line) for name, line in targets(target, prefix) if name in wanted)
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    sites.update((name, line) for name, line in targets(node.target, prefix) if name in wanted)
         return sites
 
     def _preload_masked_files(self, root: Path, revision: str, paths: list[str], tokens: list[str]) -> bool:
@@ -680,6 +551,26 @@ class Repositories:
                 declarations = definition_hits[token]
                 self.cache[('definitions', str(root), fixed, token)] = (bool(declarations), complete, declarations)
 
+    def _qualified_python_definitions(self, root: Path, revision: str, token: str) -> tuple[bool, bool, list[dict]]:
+        """Resolve class-qualified AST names without changing the legacy grep."""
+        key = ('qualified_definitions', str(root), revision, token)
+        if key not in self.cache:
+            result = self.git(root, 'grep', '-l', '-z', '-w', '-F', '-e', token.rsplit('.', 1)[-1],
+                              revision, '--', '*.py', '*.pyi')
+            paths = [row[len(revision)+1:] for row in decode(result.stdout).split('\0')
+                     if row.startswith(revision + ':')]
+            paths = [path for path in paths if code_path(path) and Path(path).suffix.lower() in {'.py', '.pyi'}]
+            complete = result.returncode in (0, 1)
+            if complete:
+                complete = self._preload_masked_files(root, revision, paths, [token])
+            hits = []
+            for path in paths:
+                self.budget.check()
+                for line in sorted(self.cache.get(('definition_sites', str(root), revision, path, token), set())):
+                    hits.append({'path': path, 'line': line, 'revision': revision, 'kind': 'definition'})
+            self.cache[key] = (bool(hits), complete, hits)
+        return self.cache[key]
+
     def identifier(self, token: str, *, revision: str = '', when: str = '',
                    other_definition: str = '') -> tuple[bool, bool, list[str], list[dict]]:
         found, complete, scopes, locations = False, bool(self.roots), [], []
@@ -707,9 +598,12 @@ class Repositories:
                 scopes.append(f'{root}@{fixed}: 명시 revision {revision} 불일치로 건너뜀')
                 continue
             key = ('definitions' if other_definition else 'grep', str(root), fixed, token)
-            if key not in self.cache:
-                self.preload_identifiers([(token, revision, when)])
-            hit, ok, hits = self.cache.get(key, (False, False, []))
+            if other_definition and '.' in token:
+                hit, ok, hits = self._qualified_python_definitions(root, fixed, token)
+            else:
+                if key not in self.cache:
+                    self.preload_identifiers([(token, revision, when)])
+                hit, ok, hits = self.cache.get(key, (False, False, []))
             if other_definition:
                 hits = [item for item in hits if item['kind'] == 'definition'
                         and item['path'] not in target_files]

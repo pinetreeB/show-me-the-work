@@ -125,12 +125,9 @@ def test_claims_review_javascript_non_definition_is_not_a_definition(tmp_path, o
     'function wrapper() {\n    function moved_helper() {}\n}\n',
     'describe("synthetic", () => {\n    const moved_helper = () => 1;\n});\n',
 ])
-def test_claims_review_javascript_declaration_statement_context(tmp_path,other):
+def test_claims_review_javascript_declarations_are_deferred(tmp_path,other):
     repo,revision=repository(tmp_path,{'logic.py':'moved_helper()\n','other.js':other})
     report,_=make_case(tmp_path,'`logic.py` 함수 `moved_helper` 정의가 있다.')
     claim=atoms(run(report,repos=[str(repo)],commits={str(repo):revision}),'K4')[0]
-    # An enclosing callback call keeps parentheses open: the strict path cannot
-    # prove its declaration context. Ordinary top-level/block headers still work.
-    expected = (('absent', 'definition_missing') if other.startswith('describe(')
-                else ('unverifiable', 'found_outside_scope'))
-    assert (claim['verdict'], claim['reason_code']) == expected
+    assert (claim['verdict'], claim['reason_code']) == ('absent', 'definition_missing')
+    assert not claim['source'].get('repository_hits')
