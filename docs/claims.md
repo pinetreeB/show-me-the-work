@@ -246,10 +246,13 @@ Function-local and class-body assignments, and assignment expressions (`:=`),
 cannot supply the new definition rescue. Explicit def/class declarations remain
 eligible in nested blocks.
 JS/TS fallback conservatively recognizes explicit function/class/const/let/var
-declaration headers (including nested blocks). Bare assignments, even apparently
-at module level, cannot supply rescue evidence: delimiter counts cannot establish
-scope when regex/string contents contain those characters. The fallback does not
-infer JS/TS scope from parentheses, brackets, or braces. Other ambiguous or
+declaration headers at statement boundaries (including nested blocks). The masked
+code must have no open parentheses or brackets, and the previous nonempty masked
+line must end in `;`, `{`, or `}` (or this must be the first such line). Comments
+and literal contents do not alter this context. A declaration inside an enclosing
+callback call or after an ambiguous continuation is conservatively excluded.
+Bare assignments, even apparently at module level, cannot supply rescue evidence:
+statement-context checks do not establish a module-level binding. Other ambiguous or
 unsupported language syntax cannot supply rescue evidence. These rules
 apply only to the new missing-definition fallback. Its declaration cache is
 separate from the pre-p4-1 repository mention cache and the legacy direct-read

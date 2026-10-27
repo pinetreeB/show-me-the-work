@@ -534,7 +534,7 @@ class Repositories:
                 pending.extend((child, module_assignment) for child in ast.iter_child_nodes(node))
             return sites
 
-        # Explicit JS/TS declaration headers do not require inferred scope.
+        # Explicit JS/TS headers require an unambiguous statement boundary.
         # Bare assignments are never proof: character counts cannot distinguish
         # regex/string braces from syntax or establish module-level bindings.
         if suffix not in {'.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'}:
@@ -546,13 +546,25 @@ class Repositories:
             r'class\s+(?P<class>[A-Za-z_$][\w$]*)\s*(?:\{|extends\b)|'
             r'(?:const|let|var)\s+(?P<declared>[A-Za-z_$][\w$]*)'
             r'\s*(?::\s*[\w.$<>|\[\] ]+)?\s*=(?![=>]))')
+        delimiters, statement_boundary = [], True
         for number, line in enumerate(self._js_declaration_lines(text), 1):
             self.budget.check()
-            match = pattern.match(line)
+            stripped = line.strip()
+            if not stripped:
+                continue
+            match = pattern.match(line) if not delimiters and statement_boundary else None
             if match:
                 token = next(value for value in match.groupdict().values() if value)
                 if token in wanted:
                     sites.add((token, number))
+            for char in line:
+                if char in '([':
+                    delimiters.append(char)
+                elif char in ')]':
+                    expected = '(' if char == ')' else '['
+                    if not delimiters or delimiters.pop() != expected:
+                        return sites  # Malformed delimiters cannot reset the context.
+            statement_boundary = stripped[-1] in ';{}'
         return sites
 
     def _preload_masked_files(self, root: Path, revision: str, paths: list[str], tokens: list[str]) -> bool:
