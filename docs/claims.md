@@ -199,6 +199,8 @@ The following uncertainty codes retain the extracted claim and never count as a 
 - `reported_claim`: a number or value attributes an earlier claim to an explicit third party and precedes a contrast such as `실제`/`actually`; first-person and the current report's own statements remain checkable. Literal K1/K5 quotations also remain checkable.
 - `inherited_binding`: a range or value disagrees with a file inherited from a section or paragraph that also names another file; a single-file section remains checkable.
 - `found_outside_scope`: a name missing from linked reads occurs in code at a supplied repository's designated commit (HEAD only when no commit was supplied). The source records commit, file, line, and whether the hit is a definition or code mention; documentation, string, and comment-only hits do not count.
+- `summary_label`: an immediate backtick tail after a file/line reference is an unmistakable prose list or item-count label. Korean phrases or multiword lowercase English phrases separated by slash/comma, and `N항목`/`N items` tails, qualify only without code punctuation, identifiers, or code/command keywords. Explicit literal-quote wording still requests comparison. Ambiguous expressions keep their prior checks, including changed conditions and arguments.
+- `object_kind`: an unlabelled SHA resolves to a non-commit object. Adjacent `tree`/`TREE` or `blob` labels (also `SHA (tree)`/`SHA (blob)`) require that exact object kind: `match/object_exists` on success, `mismatch/object_kind_mismatch` for another kind. Missing objects retain `commit_not_found` and repository-scope uncertainty. An explicit `commit` label still rejects non-commits with `not_commit`. A transcript echo alone cannot establish a tree/blob kind.
 - `repository_search_incomplete`: repository lookup failed or could not honor the claim's time, so absence cannot be confirmed.
 - `proposed_name`: the atom names a proposed, hypothetical, or future addition rather than an existing definition.
 - `item_token_only`: a review/item label followed only by a backtick token, number, or date does not establish an item description; explicit file/ordinal identifier row mappings remain supported.
@@ -218,10 +220,19 @@ extraction paths and do not multiply K9 atoms.
 
 Before a K4/K6 missing-name verdict, fixed-string `git grep` searches the supplied
 repository scope. A hit lowers the verdict to unverified; it does not verify a
-definition or value. This does not relax explicit value mismatches, missing
-definitions in a file, or literal quotation mismatches. Search errors also remain
+definition or value. For a K4 `definition_missing` result, a definition in another
+file of the same explicitly fixed repository tree changes the result to
+`unverifiable/found_outside_scope`. Calls, comments, strings, other repositories,
+and later working-tree definitions do not satisfy this fallback. A name absent
+throughout the repository retains its absent verdict. This does not relax explicit
+value mismatches or literal quotation mismatches. Search errors also remain
 unverified. Past/present factual statements about added or defined names continue
 to be checked for absence.
+Repository searches share the checker's time budget (60 seconds by default),
+including Git process timeouts and Python result processing. Requests are batched
+into one fixed-string grep per repository/revision and cached for repeated atoms;
+matching blobs are loaded in a batch and masked once. A timeout remains unverified,
+never proof of absence. This is a time bound, not a byte or memory quota.
 Repository-only hits intentionally remain `found_outside_scope`; `token_match` is
 reserved for a token observed in directly linked file content.
 General `before`/`after` wording does not skip repository search. Only an explicit

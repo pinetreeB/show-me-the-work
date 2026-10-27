@@ -628,7 +628,8 @@ class Checker:
             if not observations:
                 return False
             results = [check_one(c, evidence, self.budget) for evidence in observations]
-            return bool(results) and all(result.verdict == 'absent' and result.code == 'not_found'
+            missing_codes = {'not_found', 'definition_missing'} if c.check_type == 'K4' else {'not_found'}
+            return bool(results) and all(result.verdict == 'absent' and result.code in missing_codes
                                          for result in results)
         if c.check_type != 'K4':
             return False
@@ -654,7 +655,8 @@ class Checker:
                     'unverifiable', '떨어진 코드 인용의 파일 전체 대조로 결합을 확정하지 못함',
                     'binding_ambiguous')
             return
-        if c.check_type == 'K5' and c.candidate_ranges and self.resolve_ambiguous_reference(c):
+        if (c.check_type == 'K5' and c.candidate_ranges and c.contextual_reason != 'summary_label'
+                and self.resolve_ambiguous_reference(c)):
             return
         if c.contextual_reason and not (c.check_type == 'K1' and (
                 c.contextual_reason == 'binding_ambiguous' or c.contextual_reason == 'reported_claim' and c.quote)):
@@ -665,6 +667,7 @@ class Checker:
                 'non_file_quote': '제안·발화·출력·부재 설명은 파일 원문 인용으로 확정하지 않음',
                 'proposed_name': '제안·가정·도입 예정인 이름은 현재 존재 주장으로 확정하지 않음',
                 'item_token_only': '항목 번호 뒤 토큰·숫자만으로 항목 설명을 확정하지 않음',
+                'summary_label': '자연어 요약 꼬리표는 코드 원문 인용으로 대조하지 않음',
             }[c.contextual_reason]
             c.source = {'path': c.path, 'location': f'보고서:{c.report_line}', 'search_scope': []}
             if c.candidate_ranges:
@@ -740,7 +743,10 @@ class Checker:
         if c.check_type == 'K3':
             scope = self.repos.scope(c.repository_contexts)
             scoped = scope if len(scope) == 1 else None
-            for e in self.transcript.evidence:
+            object_result = self.repos.commit(c.value, scoped, c.object_kind)
+            typed_object = c.object_kind in {'tree', 'blob'} or bool(
+                set(object_result[2].get('object_kind', [])) - {'commit'})
+            for e in ([] if typed_object else self.transcript.evidence):
                 if e.problem or not e.complete or e.after_report and not c.current or not re.search(r'\bgit\b', e.command):
                     continue
                 if scoped:
@@ -753,9 +759,16 @@ class Checker:
                         c.verdict, c.reason, c.source = 'match', '연결된 git 읽기 명령 출력에서 SHA 확인', e.metadata()
                         c.reason_code = 'sha_observed'
                         return
-            c.verdict, c.reason, c.source = self.repos.commit(c.value, scoped)
+            c.verdict, c.reason, c.source = object_result
             c.reason_code = {'match': 'commit_exists', 'mismatch': 'not_commit', 'absent': 'commit_not_found',
                              'unverifiable': 'commit_unresolved'}[c.verdict]
+            if typed_object:
+                if c.verdict == 'match':
+                    c.reason_code = 'object_exists'
+                elif c.verdict == 'mismatch' and c.object_kind != 'commit':
+                    c.reason_code = 'object_kind_mismatch'
+                elif c.verdict == 'unverifiable' and not c.object_kind and c.source.get('object_kind'):
+                    c.reason_code = 'object_kind'
             c.source['repository_binding'] = 'explicit' if scoped else 'unknown'
             if not scoped and (c.verdict == 'absent' or not self.repos.roots):
                 c.verdict, c.reason, c.reason_code = 'unverifiable', 'SHA가 속한 저장소 범위 미확정', 'repo_scope_unknown'
@@ -906,9 +919,15 @@ class Checker:
         if c.inherited_binding and c.verdict == 'mismatch' and c.reason_code in {'range_exceeded', 'value_mismatch'}:
             c.verdict, c.reason_code = 'unverifiable', 'inherited_binding'
             c.reason = '상속한 파일과 범위·값의 연결 미확정'
-        if c.verdict == 'absent' and c.check_type in {'K4', 'K6'} and c.reason_code == 'not_found' and self.repos.roots:
+        missing_definition = c.check_type == 'K4' and c.reason_code == 'definition_missing'
+        if (c.verdict == 'absent' and c.check_type in {'K4', 'K6'}
+                and (c.reason_code == 'not_found' or missing_definition) and self.repos.roots):
             token = c.value if c.check_type == 'K4' else c.entity
-            hit, complete, scopes, hits = self.repos.identifier(token, revision=c.revision, when=c.when)
+            hit, complete, scopes, hits = self.repos.identifier(
+                token, revision=c.revision, when=c.when,
+                other_definition=c.path if missing_definition else '')
+            if missing_definition and not scopes and complete:
+                return  # No eligible fixed tree; preserve the original file verdict.
             c.source['repository_search_scope'] = scopes
             c.source['repository_hits'] = hits
             if hit:

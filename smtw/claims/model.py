@@ -56,6 +56,7 @@ class Claim:
     author_marked: bool = False
     current: bool = False
     revision: str = ""
+    object_kind: str = ""
     when: str = ""
     verdict: str = "unverifiable"
     reason: str = "근거 미확보"

@@ -1,4 +1,4 @@
-"""Always-on baseline source locks; no private evaluation data is required."""
+"""Approved source locks: 75512be plus p4-1 F6/F7/F2 amendments; no case input."""
 import ast
 import hashlib
 import json
@@ -10,7 +10,7 @@ FROZEN=json.loads((ROOT/"tests/fixtures/claims-core-75512be.json").read_text(enc
 
 
 @pytest.mark.parametrize("name",sorted(FROZEN))
-def test_claims_checker_source_frozen_to_75512be(name):
+def test_claims_checker_source_frozen_to_approved_baseline(name):
     source=(ROOT/"smtw/claims"/name).read_text(encoding="utf-8")
     if name=="transcripts.py":
         node=next(n for n in ast.parse(source).body if isinstance(n,ast.FunctionDef) and n.name=="parse_result")

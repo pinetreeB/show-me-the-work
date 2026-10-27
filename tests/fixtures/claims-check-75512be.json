@@ -2993,8 +2993,9 @@
       "verdict_reason_counts": {
         "match": {
           "commit_exists": 3,
+          "object_exists": 2,
           "quote_match": 2,
-          "sha_observed": 26,
+          "sha_observed": 24,
           "token_match": 23,
           "value_match": 3
         },
@@ -3904,23 +3905,23 @@
           "report_line": 70,
           "check_type": "K3",
           "verdict": "match",
-          "reason_code": "sha_observed",
+          "reason_code": "object_exists",
           "author_marked": false,
           "exempt": false,
           "text_sha256": "53fd2bbf0b0265d8e33e927aab39660ce4eb06399143579d561debdf19880cb9",
-          "reason_sha256": "ff6c83be5a8b58fb14c1f1f57d12f921fb0291e7b9ec51d2c1229dc3e169fd63",
-          "source_sha256": "b9c0d7b344035673c3bfa3e3fc2dd7870ae5c921ac1f3329c848982f383f0cc6"
+          "reason_sha256": "a48430e60c42c95bff7f70e3d66daa0bd52633d6c9a4fb58e6d67dac6775e4ec",
+          "source_sha256": "f36588ae0799638567717aa6eb701f12ca2de0d6ab1c9b19912fcfd640527f0c"
         },
         {
           "report_line": 71,
           "check_type": "K3",
           "verdict": "match",
-          "reason_code": "sha_observed",
+          "reason_code": "object_exists",
           "author_marked": false,
           "exempt": false,
           "text_sha256": "5a86f3fd9b5dfbfb6fa66d508e15e9d4ccb66507a7744d6bf01a9bad9296a7b2",
-          "reason_sha256": "ff6c83be5a8b58fb14c1f1f57d12f921fb0291e7b9ec51d2c1229dc3e169fd63",
-          "source_sha256": "ced845b052cbfcbf0baecbfb70205332824f84792272fe67940c63d6a3869643"
+          "reason_sha256": "a48430e60c42c95bff7f70e3d66daa0bd52633d6c9a4fb58e6d67dac6775e4ec",
+          "source_sha256": "f36588ae0799638567717aa6eb701f12ca2de0d6ab1c9b19912fcfd640527f0c"
         },
         {
           "report_line": 72,

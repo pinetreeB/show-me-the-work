@@ -1,4 +1,4 @@
-"""Frozen 75512be public decisions; private case inputs are never committed."""
+"""75512be public decisions with two p4-1 F7 type-check amendments; no case inputs."""
 import hashlib
 import json
 import os

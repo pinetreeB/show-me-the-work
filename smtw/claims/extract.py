@@ -86,6 +86,34 @@ def code_shaped(value: str) -> bool:
     return bool(re.search(r'[a-z][A-Z]|_|\.|\(\)', value))
 
 
+def summary_label(value: str) -> bool:
+    """Only unmistakable prose lists/count tails; ambiguous code stays a quote."""
+    value = value.strip()
+    count = re.search(r'(?:^|[\s/,])\d+\s*(?:항목|items?)$', value, re.I)
+    body = value[:count.start()].strip(' /,') if count else value
+    if not body:
+        return bool(count)
+    # No identifier punctuation, operators, brackets, quotes, or code keywords.
+    if not re.fullmatch(r'[A-Za-z가-힣\s/,]+', body) or re.search(
+            r'\b(?:if|elif|else|for|while|return|def|class|function|const|let|var|and|or|not|'
+            r'git|python|node|echo|cat|ls|grep|select|from)\b', body, re.I):
+        return False
+    parts = re.split(r'\s*[/,]\s*', body)
+    if len(parts) < 2 and not count:
+        return False
+    return all(re.fullmatch(r'[가-힣]+(?:\s+[가-힣]+)*', part)
+               or re.fullmatch(r'[a-z]+(?:\s+[a-z]+)+', part) for part in parts)
+
+
+def sha_object_kind(line: str, start: int, end: int) -> str:
+    """Bind a kind to this SHA, never to another hash in the sentence."""
+    before = re.search(r'\b(tree|blob|commit|커밋)\b[`*\s]*(?:SHA\b|hash\b)?\s*[:=]?\s*`?$',
+                       line[:start], re.I)
+    after = re.match(r'`?\s*\(\s*(tree|blob|commit|커밋)\s*\)', line[end:], re.I)
+    kind = (before or after).group(1).lower() if before or after else ''
+    return 'commit' if kind == '커밋' else kind
+
+
 def general_identifier(value: str) -> bool:
     """Names for tools, repositories, and status prose are not K4 targets."""
     return bool(STATUS_WORD.fullmatch(value) or TOOL_OR_REPOSITORY.fullmatch(value))
@@ -687,6 +715,9 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                                         r'[\s`*:：,，;()\[\]{}-]*',
                                         masked(line)[b:match.start()], re.I)
                        for a, b, _ in ref_spans)
+        label_ticks = {m.start() for m in ticks if summary_label(m.group(1)) and any(
+            b <= m.start() and re.fullmatch(r'[\s`*:：-]*', line[b:m.start()])
+            for _, b, _ in ref_spans)}
         snippet_ticks = [m for m in ticks if numbered_snippet(m.group(1))
                          or code_snippet(m.group(1)) or measured_tick(m)]
         for m in ticks:
@@ -695,7 +726,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if paths_in(m.group(1)) or REFERENCE.search(m.group(1)) or LOCATION.fullmatch(m.group(1)) or re.fullmatch(r'[\d,.]+', m.group(1)):
                 continue
             ordered_snippet = explicitly_ordered_quotes(line, snippet_ticks, len(ref_spans))
-            if (numbered_snippet(m.group(1))
+            if (m.start() in label_ticks or numbered_snippet(m.group(1))
                     or (code_snippet(m.group(1)) or measured_tick(m))
                     and (len(m.group(1)) >= 8 or ordered_snippet)):
                 snippets.append((m.start(), m.end(), m.group(1), m.group(), True))
@@ -805,6 +836,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     group_claim.candidate_quotes = ((snippet[2], snippet[4]),)
                     group_claim.candidate_group_closed = closed
                     group_claim.contextual_reason = '' if closed else 'binding_ambiguous'
+                    if snippet[0] in label_ticks:
+                        group_claim.contextual_reason = 'summary_label'
         for snippet in snippets:
             if snippet[0] in grouped_snippets:
                 continue
@@ -849,6 +882,10 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     claims.append(target)
                 target.quote, target.quote_code = snippet[2], snippet[4]
                 target.text = reference_text + ' ' + snippet[3]
+                if snippet[0] in label_ticks:
+                    target.contextual_reason = 'summary_label'
+                elif target.contextual_reason == 'summary_label':
+                    target.contextual_reason = ''
         if not refs and previous_refs and snippets and not any(c.web_quote for c in quote_claims.values()):
             for c in previous_refs:
                 if c.report_line == line_no-1 and not c.quote and (
@@ -938,12 +975,13 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                 if number and metric and (path or candidates) and not re.search(r'제한|설정|한도', header):
                     add('K2', value, a, value=number.group(1).replace(',', ''), unit=metric)
         for m in re.finditer(r'(?<![\w])[0-9a-f]{7,40}(?![\w])', line, re.I):
-            if re.fullmatch(r'20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])', m.group()) and not re.search(r'(?:\bcommit|\bSHA|해시|커밋)\s*[:=]?\s*`?$', line[:m.start()], re.I):
+            object_kind = sha_object_kind(line, m.start(), m.end())
+            if re.fullmatch(r'20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])', m.group()) and not object_kind and not re.search(r'(?:\bcommit|\bSHA|해시|커밋)\s*[:=]?\s*`?$', line[:m.start()], re.I):
                 continue
             nearby = sentence(line, m.start())
             in_tick = any(t.start() <= m.start() < t.end() for t in ticks)
-            if len(m.group()) == 40 or in_tick or re.search(r'commit|커밋|HEAD|해시|SHA|revision|리비전|parent|부모|대상|\bbase\b|\btarget\b|\bmerge\b', nearby, re.I):
-                add('K3', m.group(), m.start(), value=m.group(), path='')
+            if object_kind or len(m.group()) == 40 or in_tick or re.search(r'commit|커밋|HEAD|해시|SHA|revision|리비전|parent|부모|대상|\bbase\b|\btarget\b|\bmerge\b', nearby, re.I):
+                add('K3', m.group(), m.start(), value=m.group(), path='', object_kind=object_kind)
         for m in URL.finditer(line):
             value = m.group().rstrip('.,;)]}')
             add('K8', value, m.start(), value=value, path='')

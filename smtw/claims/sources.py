@@ -216,8 +216,10 @@ class Repositories:
                 return found
         return []
 
-    def commit(self, sha: str, roots: list[Path] | None = None) -> tuple[str, str, dict]:
+    def commit(self, sha: str, roots: list[Path] | None = None,
+               object_kind: str = '') -> tuple[str, str, dict]:
         answers = []
+        kinds = set()
         selected = self.roots if roots is None else roots
         for root in selected:
             key = ('sha', str(root), sha)
@@ -233,17 +235,36 @@ class Repositories:
                         self.cache[key] = ('absent', '저장소 객체 범위에 SHA 없음')
                     else:
                         obj = self.git(root, 'cat-file', '-t', sha)
+                        if obj.returncode == 0:
+                            self.cache[('object_kind', str(root), sha)] = decode(obj.stdout).strip()
                         self.cache[key] = (('match', 'commit 객체 확인') if obj.returncode == 0 and obj.stdout.strip() == b'commit'
                                            else ('mismatch', 'commit 아닌 객체') if obj.returncode == 0
                                            else ('unverifiable', '객체 종류 조회 실패'))
-            answers.append(self.cache[key])
+            answer = self.cache[key]
+            actual = self.cache.get(('object_kind', str(root), sha), '')
+            if actual:
+                kinds.add(actual)
+                expected = object_kind or 'commit'
+                if actual == expected:
+                    answer = ('match', f'{expected} 객체 확인')
+                elif object_kind:
+                    answer = ('mismatch', f'{expected} 아닌 {actual} 객체')
+                else:
+                    answer = ('unverifiable', 'commit 아닌 객체의 종류가 보고서에 명시되지 않음')
+            answers.append(answer)
         source = {'search_scope': [str(r) for r in selected], 'tool': 'git cat-file -t'}
+        if object_kind in {'tree', 'blob'} or kinds - {'commit'}:
+            source.update(object_kind=sorted(kinds), requested_object_kind=object_kind)
         if not answers:
             return 'unverifiable', '조회할 저장소 없음', source
         if any(v == 'unverifiable' for v, _ in answers):
+            if not object_kind and kinds - {'commit'}:
+                return 'unverifiable', 'commit 아닌 객체의 종류가 보고서에 명시되지 않음', source
             return 'unverifiable', '저장소 조회 실패 또는 모호한 SHA', source
         if any(v == 'match' for v, _ in answers):
-            return 'match', '후보 저장소에서 commit 객체 확인', source
+            return 'match', f'후보 저장소에서 {object_kind or "commit"} 객체 확인', source
+        if any(v == 'mismatch' for v, _ in answers):
+            return next((v, reason, source) for v, reason in answers if v == 'mismatch')
         return answers[0][0], answers[0][1], source
 
     def preload_commits(self, shas: list[str]) -> None:
@@ -262,6 +283,8 @@ class Repositories:
                     answer = ('unverifiable', '저장소 객체 조회 실패')
                 else:
                     kind = rows[index].rsplit(' ', 1)[-1]
+                    if kind in {'commit', 'tree', 'blob', 'tag'}:
+                        self.cache[('object_kind', str(root), sha)] = kind
                     answer = (('match', 'commit 객체 확인') if kind == 'commit'
                               else ('absent', '저장소 객체 범위에 SHA 없음') if kind == 'missing'
                               else ('unverifiable', '짧은 SHA가 여러 객체에 대응') if kind == 'ambiguous'
@@ -424,12 +447,13 @@ class Repositories:
             definition_patterns = {
                 token: re.compile(
                     r'\b(?:def|class|function|const|let|var)\s+' + re.escape(token) + r'\b|'
-                    + word_patterns[token].pattern + r'\s*(?::[^:=\n]+)?(?:=|:)')
+                    + word_patterns[token].pattern + r'\s*(?::[^:=\n]+)?(?:=(?![=>])|:(?![=:]))')
                 for token in tokens
             }
             parsed_rows: list[tuple[str, int, str, str]] = []
             if result.returncode == 0:
                 for row in decode(result.stdout).splitlines():
+                    self.budget.check()
                     parts = row.split(':', 3)
                     if len(parts) != 4 or not parts[2].isdigit():
                         continue
@@ -440,6 +464,7 @@ class Repositories:
                 blobs_complete = self._preload_masked_files(
                     root, fixed, [path for path, _, _, _ in parsed_rows])
                 for path, line_number, _, suffix in parsed_rows:
+                    self.budget.check()
                     lines = self.cache.get(('masked_lines', str(root), fixed, path), [])
                     line = lines[line_number-1] if line_number <= len(lines) else ''
                     for token in tokens:
@@ -458,10 +483,26 @@ class Repositories:
                 selected = definitions or hits[token]
                 self.cache[('grep', str(root), fixed, token)] = (bool(selected), complete, selected)
 
-    def identifier(self, token: str, *, revision: str = '', when: str = '') -> tuple[bool, bool, list[str], list[dict]]:
+    def identifier(self, token: str, *, revision: str = '', when: str = '',
+                   other_definition: str = '') -> tuple[bool, bool, list[str], list[dict]]:
         found, complete, scopes, locations = False, bool(self.roots), [], []
         for root in self.roots:
             fixed = self.commits.get(normalize_path(str(root)), 'HEAD')
+            target_files = set()
+            if other_definition:
+                # The new definition fallback is restricted to the same fixed tree.
+                if normalize_path(str(root)) not in self.commits:
+                    continue
+                names = self.files(root, fixed)
+                if names is None:
+                    complete = False
+                    scopes.append(f'{root}@{fixed}: revision 조회 실패')
+                    continue
+                target_files = {name for name in names if name and (
+                    matches_path(other_definition, str(root/name), self.aliases)
+                    or matches_path(other_definition, name, self.aliases))}
+                if not target_files:
+                    continue
             if revision and not (fixed.startswith(revision) or revision.startswith(fixed)):
                 complete = False
                 scopes.append(f'{root}@{fixed}: 명시 revision {revision} 불일치로 건너뜀')
@@ -470,6 +511,10 @@ class Repositories:
             if key not in self.cache:
                 self.preload_identifiers([(token, revision, when)])
             hit, ok, hits = self.cache.get(key, (False, False, []))
+            if other_definition:
+                hits = [item for item in hits if item['kind'] == 'definition'
+                        and item['path'] not in target_files]
+                hit = bool(hits)
             found |= hit
             complete &= ok
             locations.extend(hits)
