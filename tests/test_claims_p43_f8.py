@@ -11,14 +11,15 @@ from smtw.claims.model import Budget
 from tests.claims_support import agy_call, make_case, view
 
 
-def inspect(tmp_path, text, *, source='if ready:', observed=True, partial=False):
+def inspect(tmp_path, text, *, source='if ready:', observed=True, partial=False,
+            beta='unrelated destination\nif ready and extra:\nend'):
     rows = []
     if observed:
         content = '\n'.join([source, 'other source line', 'pointer anchor', 'last anchor'])
         rows += [agy_call('view_file', AbsolutePath='C:/synthetic/alpha.md'),
                  view('C:/synthetic/alpha.md', content, start=2 if partial else 1)]
     rows += [agy_call('view_file', AbsolutePath='C:/synthetic/beta.tsx'),
-             view('C:/synthetic/beta.tsx', 'unrelated destination\nif ready and extra:\nend')]
+             view('C:/synthetic/beta.tsx', beta)]
     report, transcript = make_case(tmp_path, text, rows)
     node, package = os.environ.get('SMTW_TEST_JS_NODE'), os.environ.get('SMTW_TEST_JS_PACKAGE')
     config = JSParserConfig(Path(node), Path(package)) if node and package else None
@@ -60,12 +61,48 @@ def test_claims_f8_explicit_literal_is_neither_label_nor_duplicate(tmp_path, quo
 
 @pytest.mark.parametrize('marker', MARKERS)
 @pytest.mark.parametrize('partial', [False, True])
-def test_claims_f8_missing_source_never_uses_next_pointer(tmp_path, marker, partial):
-    result = inspect(tmp_path, f'`alpha.md:3` ({marker}: `if ready and extra:`), `beta.tsx:2`',
+@pytest.mark.parametrize('quote', ['if ready and extra:', 'if tampered:'])
+def test_claims_f8_missing_source_never_uses_next_pointer(tmp_path, marker, partial, quote):
+    result = inspect(tmp_path, f'`alpha.md:3` ({marker}: `{quote}`), `beta.tsx:2`',
                      observed=partial, partial=partial)
     claim, = [c for c in result['claims'] if c.get('quote')]
     assert (claim['path'], claim['start'], claim['verdict']) == ('alpha.md', 1, 'unverifiable')
     assert claim['reason_code'] == ('partial_range' if partial else 'no_read_of_file')
+
+
+@pytest.mark.parametrize('pointer,marker,partial,table', [
+    ('`nosuch.md:1`', '행 1', False, False),
+    ('`nosuch.md:1`', '행 1', False, True),
+    ('`nosuch.md:1-4`', '행 1', False, False),
+    ('nosuch.md:1-2', '행 1', False, False),
+    ('`alpha.md:3`', '행 1', True, False),
+    ('`nosuch.md:1`', 'L 1', False, False),
+    ('`alpha.md:3`', 'L 1', True, False),
+    ('`nosuch.md:1`', '1줄', False, False),
+    ('`alpha.md:3`', '1줄', True, False),
+])
+def test_claims_f8_unobserved_tampered_quote_matches_direct_form(
+        tmp_path, pointer, marker, partial, table):
+    # A known synthetic mutation is still unverifiable without its target row.
+    # This locks measured behavior, not a decision that a verdict downgrade is safe.
+    path = 'alpha.md' if partial else 'nosuch.md'
+    parenthetical = f'{pointer} ({marker}: `if tampered:`), `beta.tsx:2`'
+    if table:
+        parenthetical = f'| proof | {parenthetical} |'
+    direct = f'`{path}:1` `if tampered:`'
+    beta = 'unrelated destination\nobserved beta line\nend'
+    assert 'if tampered:' not in beta
+    for index, text in enumerate((parenthetical, direct)):
+        folder = tmp_path / str(index)
+        folder.mkdir()
+        result = inspect(folder, text, observed=partial, partial=partial, beta=beta)
+        claim, = [c for c in result['claims'] if c.get('quote')]
+        assert (claim['check_type'], claim['path'], claim['start'], claim['end'],
+                claim['quote'], claim['verdict'], claim['reason_code']) == (
+            'K1', path, 1, 1, 'if tampered:', 'unverifiable',
+            'partial_range' if partial else 'no_read_of_file')
+        assert result['status'] == 'INCOMPLETE'
+        assert result['summary']['match'] == result['summary']['mismatch'] == 0
 
 
 @pytest.mark.parametrize('text', [
