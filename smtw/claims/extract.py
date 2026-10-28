@@ -201,6 +201,40 @@ def quote_scope(line: str, a: int, b: int) -> bool:
                 and not REFERENCE.search(line[parent[0]:parent[1]]))
 
 
+def parenthetical_line_quotes(line: str) -> dict[int, tuple]:
+    """Bind a complete `(line N: `literal`)` only to an adjacent file pointer."""
+    ticks = list(TICK.finditer(line))
+    result = {}
+    for tick in ticks:
+        parent = parent_span(line, tick.start())
+        if not parent or line[tick.end():parent[1]].strip():
+            continue
+        location = re.fullmatch(
+            r'\s*(?:(?:행|줄|line|L)\s*(\d+)|(\d+)\s*(?:행|줄))\s*[:：]\s*',
+            line[parent[0]:tick.start()], re.I)
+        if not location:
+            continue
+        previous = list(REFERENCE.finditer(line, 0, parent[0]-1))
+        if not previous:
+            continue
+        pointer = previous[-1]
+        cursor = pointer.end()
+        while tail := REFERENCE_TAIL.match(line, cursor):
+            cursor = tail.end()
+        owner_tick = next((t for t in ticks if t.start() < pointer.start() < t.end()), None)
+        if owner_tick:
+            # A reference embedded in literal code is not a source pointer.
+            if owner_tick.start()+1 != pointer.start() or owner_tick.end()-1 != cursor:
+                continue
+            cursor = owner_tick.end()
+        if (line[cursor:parent[0]-1].strip()
+                or not same_quote_scope(line, pointer.start(), parent[0]-1)):
+            continue
+        number = int(location.group(1) or location.group(2))
+        result[tick.start()] = (tick, parent, pointer.group('path'), number)
+    return result
+
+
 def reported_claim(line: str, pos: int) -> bool:
     """Recognize explicitly attributed metrics and corrected third-party claims."""
     metric = NUMBER.match(line, pos)
@@ -533,7 +567,11 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if fence_claim:
                 fence_lines.append(line)
             continue
-        paths = paths_in(line)
+        line_quotes = parenthetical_line_quotes(line)
+        def in_line_quote(pos):
+            return any(parent[0] <= pos < parent[1] for _, parent, _, _ in line_quotes.values())
+
+        paths = [p for p in paths_in(line) if not in_line_quote(p[0])]
         if line.startswith('#'):
             heading_paths = list(dict.fromkeys(p[2] for p in paths))
             heading_path = paths[0][2] if len(paths) == 1 else ''
@@ -612,6 +650,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         empty_path_refs = set()
         reference_groups = []
         for m in REFERENCE.finditer(line):
+            if in_line_quote(m.start()):
+                continue
             c = add('K1', m.group(), m.start(), path=m.group('path'),
                     start=int(m.group('start')), end=int(m.group('end') or m.group('start')))
             refs.append(c)
@@ -633,6 +673,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         ticks_for_refs = list(TICK.finditer(line))
         quotes_for_refs = list(QUOTE.finditer(line))
         for tail in INHERITED_REFERENCE.finditer(line):
+            if in_line_quote(tail.start()):
+                continue
             tick = next((t for t in ticks_for_refs if t.start() < tail.start() < t.end()), None)
             if tick is not None:
                 if tick.group(1).strip() != tail.group():
@@ -651,7 +693,12 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             refs.append(c)
             ref_spans.append((tail.start(), tail.end(), c))
         quoted_spans = [(m.start(), m.end()) for m in QUOTE.finditer(line)]
+        for tick, parent, path, number in line_quotes.values():
+            add('K1', path + ':' + str(number) + ' ' + tick.group(), tick.start(),
+                path=path, start=number, end=number, quote=tick.group(1), quote_code=True)
         for m in LOCATION.finditer(line):
+            if in_line_quote(m.start()):
+                continue
             if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans):
                 continue
             start = m.group('l') or m.group('p') or m.group('a') or m.group('n')
@@ -660,6 +707,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             refs.append(c)
             ref_spans.append((m.start(), m.end(), c))
         for m in SINGLE_LINE.finditer(line):
+            if in_line_quote(m.start()):
+                continue
             if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans):
                 continue
             header = next((table_headers[i] for i, (a,b) in enumerate(cell_spans(line)) if row and a <= m.start() < b and i < len(table_headers)), '')
@@ -731,9 +780,11 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
             if m.start() in label_ticks:
                 binding_line[m.start():m.end()] = ' ' * (m.end()-m.start())
         binding_line = ''.join(binding_line)
-        snippet_ticks = [m for m in ticks if m.start() not in label_ticks and (
+        snippet_ticks = [m for m in ticks if m.start() not in label_ticks and m.start() not in line_quotes and (
                          numbered_snippet(m.group(1)) or code_snippet(m.group(1)) or measured_tick(m))]
         for m in ticks:
+            if m.start() in line_quotes:
+                continue
             if m.start() in label_ticks:
                 continue  # Labels never enter quote candidates or reference groups.
             if line.lstrip().startswith('>') and QUOTE.fullmatch(m.group(1)):
@@ -916,6 +967,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
                     c.quote, c.quote_code = snippets[0][2], snippets[0][4]
         for m in ticks:
             value = m.group(1)
+            if m.start() in line_quotes:
+                continue
             if re.match(r'(?:[A-Za-z]:[\\/]|file://|https?://)', value) or '/' in value or '\\' in value:
                 continue
             if REFERENCE.search(value) or paths_in(value) or LOCATION.fullmatch(value) or SINGLE_LINE.fullmatch(value) or re.fullmatch(r'[0-9a-f]{7,40}', value, re.I):
@@ -963,6 +1016,8 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         for m, unit in malformed_metrics(line, paths):
             add('K2', m.group(), m.start(), value=m.group('number'), unit=unit, malformed_number=True)
         for m in NUMBER.finditer(line):
+            if in_line_quote(m.start()):
+                continue
             if any(a <= m.start() < b for a, b, _ in paths + ref_spans):
                 continue
             if touches_hex_sha(line, m.start(), m.end()):
