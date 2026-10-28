@@ -65,6 +65,11 @@ class Child:
         self.queue, self.buffer, self.threads = Queue(), b'', []
         self.failed = False
         self.deadline = deadline
+        try:
+            remaining(deadline)
+        except NoProof:
+            self.close()  # Process creation itself may consume the budget.
+            raise
 
         def reader(pipe, output):
             count = 0
@@ -109,18 +114,22 @@ class Child:
             item = self.queue.get(timeout=remaining(min(deadline, self.deadline)))
         except Empty:
             raise NoProof from None
+        remaining(min(deadline, self.deadline))
         if isinstance(item, Exception):
             raise NoProof
         return item
 
     def line(self, deadline):
+        remaining(min(deadline, self.deadline))
         while b'\n' not in self.buffer:
             chunk = self.receive(deadline)
             if chunk is None:
                 raise NoProof
             self.buffer += chunk
         line, self.buffer = self.buffer.split(b'\n', 1)
-        return json.loads(line.decode('utf-8'))
+        value = json.loads(line.decode('utf-8'))
+        remaining(min(deadline, self.deadline))
+        return value
 
     def all(self):
         chunks = []
@@ -132,9 +141,21 @@ class Child:
         return code, b''.join(chunks)
 
     def close(self):
-        if self.process.poll() is None:
-            self.process.kill()
-        self.process.wait(timeout=1)
+        # Windows termination can race process exit or be delayed by host load.
+        # Always wait after kill, and allow one bounded retry before giving up.
+        for attempt in range(2):
+            if self.process.poll() is None:
+                try:
+                    self.process.kill()
+                except OSError:
+                    pass  # The wait below decides whether the child exited.
+            try:
+                self.process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                if attempt:
+                    raise
+            else:
+                break
         for thread in self.threads:
             thread.join(timeout=0.05)
         for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
@@ -210,7 +231,9 @@ def tree(root, revision, deadline):
     fixed = git(root, ['rev-parse', '--verify', revision + '^{commit}'], deadline).decode('ascii').strip()
     if not re.fullmatch(r'[0-9a-f]{40}', fixed):
         raise NoProof
-    rows = git(root, ['ls-tree', '-r', '-l', '-z', fixed], deadline).split(b'\0')
+    data = git(root, ['ls-tree', '-r', '-l', '-z', fixed], deadline)
+    remaining(deadline)
+    rows = data.split(b'\0')
     if len(rows) - 1 > MAX_TREE:
         raise NoProof
     files = {}
@@ -227,7 +250,7 @@ def tree(root, revision, deadline):
 
 def candidates(root, revision, files, tokens, deadline):
     # NUL separates path/line, newline terminates source content. Binary ignored.
-    data = git(root, ['grep', '-I', '-n', '-z', '-F', '-f', '-', revision, '--',
+    data = git(root, ['grep', '--threads=1', '-I', '-n', '-z', '-F', '-f', '-', revision, '--',
                       *('*' + suffix for suffix in sorted(SUFFIXES))], deadline,
                data=('\n'.join(tokens) + '\n').encode('ascii'), codes=(0, 1))
     found = {token: set() for token in tokens}

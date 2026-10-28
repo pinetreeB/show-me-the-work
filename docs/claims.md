@@ -342,9 +342,28 @@ Limits apply to the new D1 phase, not to legacy search:
 | Total candidates | 256 paths after overbroad tokens have been removed |
 | Content | 1 MiB per blob, 32 MiB total candidate bytes; 2 MiB package metadata |
 | Search/worker output | Bounded while reading: 8 MiB per search command, 4 MiB total worker stdout; 10,000 raw hits and 10,000 emitted claim-hit records (including repeated claims) |
-| Time | At most 5 seconds and the remaining legacy deadline minus 1 second cleanup allowance |
+| Time | 5-second work deadline, capped by the remaining legacy deadline minus 1 second cleanup allowance |
 | Per-file parse | Python enforces 1 second per request/response frame; synchronous Node parsing cannot disable this deadline |
 | Worker | One per request, 128 MiB V8 heap (not a full RSS hard limit); killed and reaped on failure |
+
+Fixed-string grep uses one thread to avoid thread startup overhead on sparse
+inputs. Commit resolution and tree listing remain sequential; tags and moving
+references are listed only after resolving their fixed commit.
+Babel is still loaded once per proof request, with
+one worker shared by that request's files and no persistent cross-request worker.
+
+Python checks deadlines after process creation, queue delivery and JSON decoding,
+including responses already buffered in memory. OS process creation and cleanup
+can delay return beyond the work deadline; this is not a hard real-time latency
+guarantee. Such a delay must not permit expired evidence to change a claim.
+Cleanup waits after a kill error as well, and retries termination once after a
+wait timeout (at most two one-second waits, excluding OS call overhead). A final
+cleanup failure still discards all optional proof.
+Real parser correctness tests inject a 30-second phase/5-second frame allowance
+(still capped by the outer checker budget). Production defaults remain 5/1;
+controlled-clock tests verify expiry and proof discard without relying on host
+load. Real failure tests also verify child reaping; wall times belong in separate
+performance measurements, not a brittle six-second correctness assertion.
 
 The 10,000-file performance target concerns sparse matching inputs whose retained
 candidates are within 256, not parsing all 10,000 files. Excess matching candidates

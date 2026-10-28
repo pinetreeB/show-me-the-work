@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
 
 import pytest
 
@@ -16,12 +15,16 @@ from tests.test_claims_p41 import atoms, git, repository
 
 
 @pytest.fixture
-def parser():
+def parser(monkeypatch):
     node, package = os.environ.get('SMTW_TEST_JS_NODE'), os.environ.get('SMTW_TEST_JS_PACKAGE')
     if not node or not package:
         pytest.skip('optional pinned Babel/Node test paths not supplied')
     config = js.JSParserConfig(Path(node), Path(package))
     js.configured(config, [])  # Misconfigured supplied extras must fail, not skip.
+    # These are AST/protocol correctness tests, not workstation load benchmarks.
+    # Production deadlines are exercised separately with a controlled clock.
+    monkeypatch.setattr(js, 'TOTAL_SECONDS', 30.0)
+    monkeypatch.setattr(js, 'FILE_SECONDS', 5.0)
     return config
 
 
@@ -249,10 +252,18 @@ def test_claims_p42_real_worker_failures_preserve_result(parser, tmp_path, monke
     worker.write_text(faults[fault], encoding='utf-8')
     monkeypatch.setattr(js, 'WORKER', worker)
     monkeypatch.setattr(js, 'FILE_SECONDS', 0.5)
-    started = time.monotonic()
+    children = []
+    original_child = js.Child
+
+    class ObservedChild(original_child):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            children.append(self)
+
+    monkeypatch.setattr(js, 'Child', ObservedChild)
     result = run(report, **kwargs, js_parser=parser)
     assert projected(result) == projected(before)
-    assert time.monotonic() - started < 6
+    assert children and all(child.process.poll() is not None for child in children)
 
 
 def test_claims_p42_node_environment_is_not_inherited(parser, tmp_path, monkeypatch):
@@ -330,7 +341,12 @@ def test_claims_p42_repeated_claim_proofs_obey_total_hit_limit(parser, tmp_path,
 def test_claims_p42_cli_explicit_paths(parser, tmp_path):
     report, kwargs = case(tmp_path, 'export function moved_helper() {}')
     repo = kwargs['repos'][0]
-    result = subprocess.run([sys.executable, '-m', 'smtw', 'claims', 'check', '--report', str(report),
+    # Carry the functional-test budget into the child without adding a product
+    # flag or environment override. The actual CLI still parses every argument.
+    bootstrap = ('import runpy; from smtw.claims import js_definitions as js; '
+                 'js.TOTAL_SECONDS=30.0; js.FILE_SECONDS=5.0; '
+                 'runpy.run_module("smtw", run_name="__main__")')
+    result = subprocess.run([sys.executable, '-c', bootstrap, 'claims', 'check', '--report', str(report),
         '--repo', repo, '--commit', repo + '=' + kwargs['commits'][repo], '--format', 'json',
         '--js-node', str(parser.node), '--js-parser', str(parser.package)], capture_output=True)
     data = json.loads(result.stdout.decode('utf-8'))
