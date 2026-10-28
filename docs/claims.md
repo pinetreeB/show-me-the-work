@@ -247,14 +247,115 @@ Function bodies, control-flow bodies, assignment expressions, parameters, mappin
 keys, annotation-only targets, and parse failures supply no new definition proof.
 Class-qualified names use a separate Python candidate lookup and AST check;
 this never changes the legacy mention cache or its search decisions.
-JS/TS는 다음 회차(D1).
-JS/TS and all other non-Python languages cannot supply the new definition rescue,
-even when declaration-like text appears at a line or statement boundary.
+By default JS/TS and all other non-Python languages cannot supply the new
+definition rescue. An explicit optional JS/TS parser can add the bounded,
+post-check evidence described below; it never changes this Python/legacy path.
 The pre-p4-1 `not_found` repository lookup and direct-read token checker remain
 independent. Their existing mentions, keys, and historical limitations are retained.
 JSON/Markdown content and filenames alone do not broaden that legacy code scope.
 Target-file resolution reuses the repository basename index instead of scanning
 every file for each missing-definition atom.
+
+### Optional JS/TS module definitions (D1)
+
+The base installation still has no runtime dependencies. `check` accepts the
+paired `--js-node <absolute-node-executable>` and
+`--js-parser <absolute-babel-package-directory>` options. Python callers may pass
+`js_parser=JSParserConfig(node=Path(...), package=Path(...))` to `check.run`.
+No option means the pre-D1 behavior. Environment variables do not activate it.
+The executable must be the actual `node.exe` on Windows (`node` elsewhere), not a
+shell wrapper. Neither path is discovered through PATH, global npm packages,
+`npx`, nor the target repository's `node_modules`. Target code/config is never
+loaded or executed. The worker environment contains only Windows OS loader
+variables when needed, never `NODE_OPTIONS`, `NODE_PATH`, or caller credentials.
+The bounded Git commands also use the minimal child environment. On Windows,
+D1 resolves Git for Windows' adjacent `mingw64/bin/git.exe` (or `mingw32`) to avoid
+the `cmd/git.exe` launcher leaving a child alive after timeout. Unknown Windows
+Git wrapper layouts disable D1; the legacy Git path is unchanged.
+
+The supported package is **@babel/parser 8.0.8 (MIT)**, with npm integrity
+`sha512-Gq65JogAr0S2p0BzvfSJboyuiRnxDQApyOqHkKmkrvm+VlLK4gC3pKsiOKEdnhFBemrFbSnOu90mZZWDpiJnmQ==`.
+Its bundled `lib/index.js` SHA256 is
+`687860d40a126108176fcf0ff32f56c164c81fb045fffb7e2b246117fd6fa3a9`;
+both package version and entry bytes are checked before loading. Supported Node
+versions are `^22.18.0 || >=24.11.0`. Install and pin this optional package outside
+the inspected repository; the checker never installs/downloads anything.
+The tested dependency lock also contains `@babel/types 8.0.8`,
+`@babel/helper-string-parser 8.0.8`, and
+`@babel/helper-validator-identifier 8.0.6` (all MIT). The parser's runtime entry is
+bundled; these packages are not project-plugin discovery paths. Exact transitive
+integrities are recorded in the implementation evidence, not floated at runtime.
+
+For the optional pytest matrix, set the test-only `SMTW_TEST_JS_NODE` and
+`SMTW_TEST_JS_PACKAGE` paths and run `tests/test_claims_p42_d1.py` and
+`tests/test_claims_p42_reviews.py`. Their fixtures pass the explicit API config;
+the checker itself never reads these variables. Missing test paths skip the
+optional tests; supplied but invalid paths fail instead of silently skipping.
+
+D1 runs only after the legacy/Python check has completed. Only K4
+`absent/definition_missing` in an explicitly fixed commit, with an identifiable
+linked file, is eligible. `not_found`, K6 values, quotes, conflicting observations,
+negated/contextual claims, explicit time claims, and qualified JS member names
+are unchanged. The other-file AST hit becomes `unverifiable/found_outside_scope`,
+never `match`. It proves a static binding, not runtime execution, callability,
+type correctness, or the reported file's contents.
+
+The parser consumes the complete unmasked blob with `errorRecovery=false` and
+strict syntax; no partial parses, repairing text, or retrying a different grammar.
+Only direct `Program.body` function/class declarations and initialized simple
+Identifier variable targets are accepted. Functions need a body; classes exclude
+`declare` and `abstract`; variables exclude `declare` and restrict `kind` to
+`const`, `let`, `var`. Export wrappers must contain a real declaration with no
+source, specifiers, or type-only export; default functions/classes must be named.
+Bare assignments, named expressions, destructuring, parameters, imports,
+re-exports, `using`, ambient/overload-only/type/enum/namespace declarations,
+function/block/class-body bindings, object keys, comments, strings, regex bodies,
+and JSX text do not qualify. Overloads with a body-bearing implementation can
+qualify through that implementation only. A syntax error anywhere rejects the
+whole file, including earlier valid declarations.
+
+Full `.d.ts`, `.d.mts`, `.d.cts` suffixes are rejected before single-extension
+classification. `.mjs`/`.mts`/`.ts`/`.tsx` use module syntax; `.cjs`/`.cts` use
+strict script. `.js`/`.jsx` use module syntax only when the nearest package.json
+in the fixed tree says `type: module`; missing type or `commonjs` means strict
+script. Malformed/unknown type metadata rejects that file. JSX and TypeScript
+plugins follow the extension, never declaration-looking text. Thus a `.js` file
+without module metadata that contains any import/export remains unrescued,
+including an otherwise valid function in the same file. CommonJS property
+assignments and real nested definitions remain outside this first D1 scope.
+
+All D1 caches and child processes are independent of legacy caches and exceptions.
+Missing package/executable, incompatible engine, damaged input, parse failure,
+timeout, crash, malformed/oversized response, or limit exhaustion never changes
+the original verdict/reason/source or turns on the legacy `timed_out` flag.
+Syntax failure excludes that file only; worker/protocol/global-limit failure
+discards all pending D1 hits. A complete proof request must succeed before any
+original claim is changed.
+
+Limits apply to the new D1 phase, not to legacy search:
+
+| Resource | D1 limit and behavior |
+| --- | --- |
+| Requested names | 256 ASCII tokens, up to 256 bytes each |
+| Tree | 50,000 tracked entries across requested fixed trees |
+| Candidates per token | 64 matching code paths after binary-excluding fixed-string grep; excess token alone stays unchanged |
+| Total candidates | 256 paths after overbroad tokens have been removed |
+| Content | 1 MiB per blob, 32 MiB total candidate bytes; 2 MiB package metadata |
+| Search/worker output | Bounded while reading: 8 MiB per search command, 4 MiB total worker stdout; 10,000 raw hits and 10,000 emitted claim-hit records (including repeated claims) |
+| Time | At most 5 seconds and the remaining legacy deadline minus 1 second cleanup allowance |
+| Per-file parse | Python enforces 1 second per request/response frame; synchronous Node parsing cannot disable this deadline |
+| Worker | One per request, 128 MiB V8 heap (not a full RSS hard limit); killed and reaped on failure |
+
+The 10,000-file performance target concerns sparse matching inputs whose retained
+candidates are within 256, not parsing all 10,000 files. Excess matching candidates
+must return the original result within the deadline, rather than increasing the
+cap. Results record fixed commit/blob, line, AST kind, parser version/entry hash,
+policy and source goal. The worker is included in the claims code identity.
+
+문자열 리터럴만으로는 구제하지 않음(다음 회차: 리터럴 존재 주장 종류).
+D2 changes no verdict, extraction rule, or reason code. A matching string value
+does not establish a function/variable binding; the existing legacy key/mention
+limitations remain unchanged.
 General `before`/`after` wording does not skip repository search. Only an explicit
 revision that conflicts with the configured repository commit is skipped, and the
 skip reason is recorded in the claim source.

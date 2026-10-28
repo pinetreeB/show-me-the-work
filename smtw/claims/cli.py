@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from .check import run
+from .js_definitions import JSParserConfig
 from .code_identity import code_sha256
 from .paths import mapping
 
@@ -27,6 +28,8 @@ def add_claims_parser(subparsers):
     checks = parser.add_subparsers(dest='claims_command', required=True)
     check = checks.add_parser('check', help='결정론 주장 대조 (모델·API 호출 없음)')
     add_input_arguments(check)
+    check.add_argument('--js-node', type=Path, help='선택형 JS/TS 파서의 Node 실행 파일 절대 경로')
+    check.add_argument('--js-parser', type=Path, help='선택형 고정 @babel/parser 패키지 디렉터리 절대 경로')
     check.set_defaults(func=run_check)
     from .assist_cli import run_assist
     assist = checks.add_parser('assist', help='오프라인 참고 후보 선별 (모델 호출 없음)')
@@ -82,10 +85,14 @@ def run_check(args) -> int:
     try:
         if not math.isfinite(args.time_limit) or args.time_limit <= 0:
             raise ValueError('--time-limit은 양의 유한 초 단위 숫자여야 합니다.')
+        node, package = getattr(args, 'js_node', None), getattr(args, 'js_parser', None)
+        if bool(node) != bool(package):
+            raise ValueError('--js-node와 --js-parser는 함께 지정해야 합니다.')
+        js_parser = JSParserConfig(node, package) if node and package else None
         result = run(args.report, agy=args.agy, agy_auto=args.agy_auto, codex=args.codex, brain_root=args.agy_brain_root,
                      repos=args.repo, commits=mapping(args.commit), sources=mapping(args.source_file, basename_default=True),
                      default_file=mapping([args.default_file]) if args.default_file is not None else None,
-                     aliases=mapping(args.path_alias), time_limit=args.time_limit)
+                     aliases=mapping(args.path_alias), time_limit=args.time_limit, js_parser=js_parser)
         result['code_sha256'] = code_sha256()
         output = json.dumps(result, ensure_ascii=False, indent=2) if args.format == 'json' else render_text(result)
         code = {'PASS': 0, 'FAIL': 1, 'ERROR': 2, 'INCOMPLETE': 3}[result['status']]

@@ -16,6 +16,7 @@ from .model import Budget, Claim, DeadlineExceeded, Evidence, Transcript, summar
 from .paths import matches_path, normalize_path, normalize_url
 from .paraphrase import code_ellipsis, paraphrase_rule
 from .sources import Repositories, content_lines, file_lines, local_source
+from .js_definitions import JSParserConfig, rescue as rescue_js_definitions
 from .transcripts import browser_blocks, discover_agy, load_measurement_pointer, load_view_pointer, read_transcript, resolve_agy
 
 
@@ -946,7 +947,7 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
         commits: dict[str, str] | None = None, sources: dict[str, str] | None = None,
         default_file: dict[str, str] | None = None,
         aliases: dict[str, str] | None = None, time_limit: float = 60,
-        budget: Budget | None = None) -> dict:
+        budget: Budget | None = None, js_parser: JSParserConfig | None = None) -> dict:
     budget = budget or Budget(time_limit)
     if any(not re.fullmatch(r'[0-9a-fA-F]{7,40}', revision) for revision in (commits or {}).values()):
         raise ValueError('--commit 기준은 7~40자리 16진 SHA여야 합니다.')
@@ -999,6 +1000,8 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
         for c in claims[completed:]:
             c.verdict, c.reason = 'unverifiable', '시간 상한으로 검사하지 못함'
             c.reason_code = 'timed_out'
+    if not timed_out:
+        rescue_js_definitions(claims, repositories, js_parser)
     result = summarize(claims, timed_out=timed_out, unchecked_count=unchecked,
                        warnings=warnings, input_incomplete=not transcript.valid)
     result['transcript_format'] = transcript.version

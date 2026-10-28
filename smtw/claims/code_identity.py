@@ -6,7 +6,7 @@ import hashlib
 def code_sha256():
     root = Path(__file__).resolve().parent
     digest = hashlib.sha256()
-    for path in sorted(root.glob("*.py")):
+    for path in sorted([*root.glob("*.py"), *root.glob("*.mjs")]):
         digest.update(path.name.encode("utf-8") + b"\0")
         digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
         digest.update(b"\0")
