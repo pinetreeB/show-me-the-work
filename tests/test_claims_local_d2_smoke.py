@@ -29,10 +29,11 @@ class Reply:
 
 
 class SmokeOpener:
-    def __init__(self, *, fail_health=False, fail_at_claim=None, response_fault=None):
+    def __init__(self, *, fail_health=False, fail_at_claim=None, fail_chat_status=None, response_fault=None):
         self.calls = []
         self.fail_health = fail_health
         self.fail_at_claim = fail_at_claim
+        self.fail_chat_status = fail_chat_status
         self.response_fault = response_fault
         self.answers = {row['id']: row['expected'] for row in json.loads(
             (FIXTURE / 'answers.json').read_text(encoding='utf-8'))['items']}
@@ -57,6 +58,8 @@ class SmokeOpener:
         assert path == '/v1/chat/completions'
         packet = json.loads(body['messages'][1]['content'])
         item, = packet['data_block']
+        if self.fail_chat_status is not None:
+            raise HTTPError(request.full_url, self.fail_chat_status, RAW_CANARY, {}, io.BytesIO(RAW_CANARY.encode()))
         if item['id'] == self.fail_at_claim:
             raise HTTPError(request.full_url, 503, RAW_CANARY, {}, io.BytesIO(RAW_CANARY.encode()))
         assert not {'branch', 'atom', 'fixed_commit', 'target_evidence', 'other_file_evidence',
@@ -107,6 +110,11 @@ def test_twelve_sealed_items_use_fake_opener_and_keep_raw_success_body_out(tmp_p
     assert summary['quote_not_in_excerpt'] == summary['missing_quote_or_ref'] == 0
     assert summary['all_item_ids'] == summary['completed_item_ids'] == local_smoke.IDS
     assert summary['seal_sha256'] == local_smoke.SEALED_D1_SHA256
+    call = json.loads((tmp_path / 'out' / 'calls.jsonl').read_text(encoding='utf-8').splitlines()[0])
+    assert call['transport_receipt']['request']['stream'] is False
+    assert call['transport_receipt']['reasoning_policy'] == {
+        'client_setting': 'off', 'server_requirement': '--reasoning off',
+        'request_override_sent': False}
     assert_no_raw_body(tmp_path)
 
 
@@ -118,6 +126,21 @@ def test_error_body_never_persists_and_remaining_smoke_items_are_not_evaluated(t
     assert summary['local_error_count'] == 1
     assert summary['not_evaluated_count'] == 12
     assert summary['not_evaluated_item_ids'] == local_smoke.IDS
+    assert_no_raw_body(tmp_path)
+
+
+def test_first_chat_http_400_is_visible_in_safe_smoke_summary(tmp_path, capsys):
+    opener = SmokeOpener(fail_chat_status=400)
+    assert local_smoke.main(argv(tmp_path), opener=opener) == 2
+    assert [path for path, _ in opener.calls].count('/v1/chat/completions') == 1
+    summary = json.loads(summaries(tmp_path)[0].read_text(encoding='utf-8'))
+    assert summary['error'] == 'http_error'
+    assert summary['stage'] == 'chat'
+    assert summary['http_status'] == 400
+    assert summary['not_evaluated_count'] == 12
+    assert summary['not_evaluated_item_ids'] == local_smoke.IDS
+    printed = json.loads(capsys.readouterr().out)
+    assert printed['stage'] == 'chat' and printed['http_status'] == 400
     assert_no_raw_body(tmp_path)
 
 
@@ -147,6 +170,10 @@ def test_chat_failure_preserves_preflight_receipt_without_raw_body(tmp_path, fau
     assert receipt['response_schema_sha256'] == call['request_schema_sha256']
     assert receipt['server_start_args_sha256'] == 'a' * 64
     assert receipt['request']['max_tokens'] == 1024
+    assert receipt['request']['stream'] is False
+    assert receipt['reasoning_policy'] == {'client_setting': 'off',
+                                           'server_requirement': '--reasoning off',
+                                           'request_override_sent': False}
     assert_no_raw_body(tmp_path)
 
 

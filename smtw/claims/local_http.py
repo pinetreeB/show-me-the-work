@@ -363,8 +363,11 @@ class LocalHttpTransport:
             schema = _ordered_schema(request["response_schema"])
             self.last_receipt = {
                 "request": {"model": request["model"], "temperature": 0, "seed": 42,
-                            "max_tokens": OUTPUT_TOKEN_LIMIT, "reasoning": "off",
+                            "max_tokens": OUTPUT_TOKEN_LIMIT, "stream": False,
                             "response_format": "json_schema", "strict": True},
+                "reasoning_policy": {"client_setting": request["reasoning"],
+                                     "server_requirement": "--reasoning off",
+                                     "request_override_sent": False},
                 "server_start_args_sha256": request.get("server_start_args_sha256"),
                 "opener_injected": self._opener_injected,
                 "response_schema_sha256": hashlib.sha256(json.dumps(
@@ -447,7 +450,7 @@ class LocalHttpTransport:
 
             chat_payload = {"model": request["model"], "messages": messages,
                             "temperature": 0, "seed": 42, "max_tokens": OUTPUT_TOKEN_LIMIT,
-                            "reasoning_format": "none", "stream": False,
+                            "stream": False,
                             "response_format": {"type": "json_schema", "json_schema": {
                                 "name": "claims_judgments", "strict": True, "schema": schema}}}
             result = self._json(base, "/v1/chat/completions", stage="chat", deadline=deadline,

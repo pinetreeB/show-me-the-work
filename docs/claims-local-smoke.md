@@ -11,6 +11,7 @@ memory at least 20,000 MiB, RAM free at least 30 GiB, and no other llama-server;
 only the environment owner confirms these. The agreed model is `judge-qwen38-27b`, context
 16,384, one slot, reasoning off. The owner's running resource limits still need
 to be supplied. Do not reuse the earlier probe's receipt or startup SHA.
+With the server set to `--reasoning off`, requests omit `reasoning_format`.
 
 From the repository root, set `SMTW_LOCAL_JUDGE_OUT` to the approved private output
 directory, `SMTW_LOCAL_JUDGE_STOP` to the owner's stop-flag path, and
@@ -41,6 +42,7 @@ Read `smoke-summary.json` in the printed run directory: the twelve-row compariso
 shows expected, normalized, verified, and not-evaluated outcomes. Read
 `local_error_count`, `not_evaluated_count`, `quote_not_in_excerpt`, and
 `missing_quote_or_ref` together; omitted/error items stay in the denominator.
+Failures also show `error`, `stage`, `http_status`, and available server/HOLD notices in that summary.
 `calls.jsonl` and `run-summary.json` contain identity, code/schema/startup hashes,
 token method/counts, usage, timing, and safe failure stages. Raw prompt, response,
 error body, and response prefixes are not stored. Accepted normalized judgments

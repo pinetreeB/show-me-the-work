@@ -74,6 +74,11 @@ def test_d2_structured_transport_error_stops_run_and_marks_remaining(tmp_path):
     summary = json.loads(next((tmp_path / "out").rglob("run-summary.json")).read_text(encoding="utf-8"))
     assert summary["remaining_item_ids"] == ["d2-001"]
     assert summary["code_sha256"] == code_sha256()
+    assert {key: summary[key] for key in ("error", "stage", "http_status",
+                                          "server_computation_ended", "next_request", "operator_notice")} == {
+        "error": "connection_dropped", "stage": "chat", "http_status": None,
+        "server_computation_ended": "UNKNOWN", "next_request": "HOLD",
+        "operator_notice": "서버 연산 종료 미확인 — 다음 요청 보류"}
 
 
 def test_d2_run_limit_is_injected_and_stops_before_transport(tmp_path):

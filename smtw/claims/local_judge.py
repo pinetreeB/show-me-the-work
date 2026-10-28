@@ -228,8 +228,9 @@ def _safe_transport_receipt(receipt) -> dict | None:
                      "opener_injected", "elapsed_ms")
     safe = {key: receipt[key] for key in scalar_fields if key in receipt}
     groups = {
-        "request": ("model", "temperature", "seed", "max_tokens", "reasoning",
+        "request": ("model", "temperature", "seed", "max_tokens", "stream",
                     "response_format", "strict"),
+        "reasoning_policy": ("client_setting", "server_requirement", "request_override_sent"),
         "identity": ("model_id", "build_info", "n_ctx", "model_path"),
         "usage": ("input_tokens", "output_tokens"),
     }
@@ -287,9 +288,12 @@ def run_local_judge(folder: Path, *, scope_file: Path, output_root: Path, config
                   "code_sha256": code_sha256(), "all_item_ids": all_ids,
                   "completed_item_ids": [item_id for item_id in all_ids if item_id not in pending],
                   "remaining_item_ids": pending, "envelope": {"judgments": "array"}}
-        if error_record and error_record.get("server_computation_ended") == "UNKNOWN":
-            result.update(server_computation_ended="UNKNOWN", next_request="HOLD",
-                          operator_notice="서버 연산 종료 미확인 — 다음 요청 보류")
+        if error_record:
+            for key in ("stage", "http_status", "server_computation_ended", "next_request", "operator_notice"):
+                if key in error_record:
+                    result[key] = error_record[key]
+            if error_record.get("server_computation_ended") == "UNKNOWN":
+                result.update(next_request="HOLD", operator_notice="서버 연산 종료 미확인 — 다음 요청 보류")
         (destination / "run-summary.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2),
             encoding="utf-8")
@@ -308,7 +312,7 @@ def run_local_judge(folder: Path, *, scope_file: Path, output_root: Path, config
                       "code_sha256": code_sha256(), "envelope": {"judgments": "array"},
                       "server_start_args_sha256": server_start_args_sha256}
             _write_record(output_root, record)
-            raise LocalJudgeRunError(summary(error, remaining))
+            raise LocalJudgeRunError(summary(error, remaining, record))
         data = (folder / entry["file"]).read_bytes()
         if _sha(data) != entry["sha256"] or len(data.decode("utf-8")) > 30000:
             raise ValueError("packet changed after preflight")
@@ -397,7 +401,7 @@ def run_local_judge(folder: Path, *, scope_file: Path, output_root: Path, config
                 record.update(next_request="HOLD", operator_notice="서버 연산 종료 미확인 — 다음 요청 보류")
         _write_record(output_root, record)
         if error:
-            raise LocalJudgeRunError(summary(error, remaining, error_record))
+            raise LocalJudgeRunError(summary(error, remaining, record))
         (destination / f"judgments-{index:03d}.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
         (destination / f"verified-{index:03d}.json").write_text(json.dumps(verified, ensure_ascii=False, indent=2), encoding="utf-8")
         results.append(verified)

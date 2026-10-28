@@ -74,6 +74,10 @@ def summarize_smoke(run: dict, answers: dict, seal: dict, output_root: Path) -> 
                'expected_matches': sum(row['matches_expected'] for row in comparisons),
                'local_error_count': int(bool(run.get('error'))), **counts,
                'comparison': comparisons, 'run': str(folder)}
+    for key in ('error', 'stage', 'http_status', 'server_computation_ended',
+                'next_request', 'operator_notice'):
+        if key in run:
+            summary[key] = run[key]
     path = folder / 'smoke-summary.json'
     path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
     return {**summary, 'summary_file': str(path)}

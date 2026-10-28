@@ -131,10 +131,11 @@ def test_success_preflights_counts_and_posts_strict_openai_request():
     body = opener.calls[-1]["body"]
     assert body["messages"][1]["content"] == json.dumps(
         sent["untrusted_data"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    assert {key: body[key] for key in ("model", "temperature", "seed", "max_tokens",
-                                       "reasoning_format", "stream")} == {
+    assert set(body) == {"model", "messages", "temperature", "seed", "max_tokens",
+                         "stream", "response_format"}
+    assert {key: body[key] for key in ("model", "temperature", "seed", "max_tokens", "stream")} == {
         "model": MODEL, "temperature": 0, "seed": 42, "max_tokens": 1024,
-        "reasoning_format": "none", "stream": False}
+        "stream": False}
     json_schema = body["response_format"]["json_schema"]
     assert json_schema["strict"] is True
     item = json_schema["schema"]["properties"]["judgments"]["items"]
@@ -153,6 +154,38 @@ def test_success_preflights_counts_and_posts_strict_openai_request():
     assert len(receipt["chat_template_sha256"]) == 64
     assert receipt["server_start_args_sha256"] == start_args_sha
     assert receipt["opener_injected"] is True
+    assert receipt["request"]["stream"] is False
+    assert "reasoning" not in receipt["request"] and "reasoning_format" not in receipt["request"]
+    assert receipt["reasoning_policy"] == {"client_setting": "off",
+                                           "server_requirement": "--reasoning off",
+                                           "request_override_sent": False}
+
+
+def test_think_block_in_content_is_rejected_without_stripping_or_persistence(tmp_path):
+    from pathlib import Path
+    from smtw.claims.local_judge import LocalConfig, LocalJudgeRunError, run_local_judge
+
+    fixture = Path(__file__).parent / "fixtures" / "local-judge-d1"
+    valid = json.dumps({"judgments": [{"id": "d1-01", "rationale": "No evidence.",
+                                      "verdict": "not_enough_evidence"}]})
+    opener = FakeOpener(routes(chat_value=chat(content="<think>RAW_THINK_CANARY</think>" + valid)))
+    config = LocalConfig(address="http://localhost:8099", model=MODEL, deadline_seconds=180,
+                         input_tokens=14000, output_tokens=1024, json_mode="schema",
+                         protocol="openai-compatible", seed=42, temperature=0, reasoning="off")
+    output = tmp_path / "out"
+    with pytest.raises(LocalJudgeRunError) as raised:
+        run_local_judge(fixture / "packets", scope_file=fixture / "scope.json",
+                        output_root=output, config=config, transport=transport(opener), max_calls=12)
+    assert raised.value.result["error"] == "local_invalid_response"
+    assert raised.value.result["not_evaluated"] == 12
+    assert sum(call["path"] == "/v1/chat/completions" for call in opener.calls) == 1
+    assert not list(output.rglob("judgments-*.json"))
+    for path in output.rglob("*"):
+        if path.is_file():
+            assert b"RAW_THINK_CANARY" not in path.read_bytes()
+    receipt = json.loads((output / "calls.jsonl").read_text(encoding="utf-8"))["transport_receipt"]
+    assert receipt["reasoning_policy"]["request_override_sent"] is False
+    assert "reasoning" not in receipt["request"]
 
 
 @pytest.mark.parametrize("address", [
@@ -596,7 +629,10 @@ def test_strict_chat_response_validation(replacement, kind):
     assert len(caught.value.receipt["response_schema_sha256"]) == 64
     assert caught.value.receipt["request"] == {
         "model": MODEL, "temperature": 0, "seed": 42, "max_tokens": 1_024,
-        "reasoning": "off", "response_format": "json_schema", "strict": True}
+        "stream": False, "response_format": "json_schema", "strict": True}
+    assert caught.value.receipt["reasoning_policy"] == {
+        "client_setting": "off", "server_requirement": "--reasoning off",
+        "request_override_sent": False}
     assert caught.value.receipt["input_tokens"] == 4
     assert "toy" not in json.dumps(caught.value.receipt) and "messages" not in caught.value.receipt
 
