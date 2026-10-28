@@ -534,7 +534,7 @@ def fixed_sources(items: list[dict], commits: dict[str, str], aliases: dict[str,
     return result
 
 
-def _excerpt(item: dict, source: PacketSource, aliases: dict[str, str], cache: dict) -> tuple[str, dict] | None:
+def _excerpt(item: dict, source: PacketSource, aliases: dict[str, str], cache: dict) -> tuple[str, dict, set[int]] | None:
     if item["paths"] and source.scope_basis != "checkpoint":
         if not any(matches_path(path, source.path, aliases) for path in item["paths"]):
             return None
@@ -570,13 +570,20 @@ def _excerpt(item: dict, source: PacketSource, aliases: dict[str, str], cache: d
         length += len(f"{n}: {source.lines[n]}") + 1
         if length >= 1500:
             break
-    text = "\n".join(window)
+    text = "\n".join(window)[:1500]
     counts = dict(Counter(re.findall(r"\[REDACTED:([a-z_]+)\]", text)))
-    return text[:1500], counts
+    # A numbered prefix surviving truncation does not prove that its source row
+    # was fully transmitted.  Keep exact complete rows for target coverage only.
+    complete_lines = {
+        n for n in source.lines
+        if f"{n}: {safe_lines.get(n, '[REDACTED:unavailable]')}" in text.split("\n")
+    }
+    return text, counts, complete_lines
 
 
 def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
-                  aliases: dict[str, str] | None = None, rng=None, blocklist=None) -> tuple[list[dict], dict]:
+                  aliases: dict[str, str] | None = None, rng=None, blocklist=None,
+                  local_candidates: bool = False) -> tuple[list[dict], dict]:
     from .privacy import privacy_reason
     aliases = aliases or {}
     rng = rng or random.SystemRandom()
@@ -606,10 +613,20 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
                     or hard_excluded(source.path) or hard_excluded(normalize_path(source.path, aliases))
                     or matches_path(source.path, str(report.resolve()), aliases)):
                 continue
+            # A repository hit pinned to another file is context, not a license
+            # to send that file at a different revision (or from a transcript).
+            # The original claim target remains eligible through its own approved
+            # transcript or fixed-commit evidence.
+            pinned_other = [target for target in selected.get("other_file_evidence", [])
+                            if matches_path(target["path"], source.path, aliases)] if local_candidates else []
+            if pinned_other and any(source.kind != "fixed_commit"
+                                    or source.revision.casefold() != target["revision"]
+                                    for target in pinned_other):
+                continue
             found = _excerpt(selected, source, aliases, redacted_sources)
             if not found:
                 continue
-            text, counts = found
+            text, counts, complete_lines = found
             # Screen the captured original lines as well as the transmitted text:
             # redaction and clipping must not conceal a name from the blocklist.
             numbers = [int(n) for n in re.findall(r"(?m)^(\d+):", text)]
@@ -627,6 +644,8 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
             identities.add(identity)
             excerpts.append({"path": display_path(safe_path), "source": source.kind, "revision": source.revision,
                              "_path_sha256": hashlib.sha256(source.path.encode("utf-8")).hexdigest(),
+                              "_source_path": source.path,
+                              "_complete_lines": complete_lines,
                              "observation": source.observation, "scope_basis": source.scope_basis, "text": text,
                              "redactions": dict(Counter(counts) + Counter(path_counts))})
         if private_reason:
@@ -647,6 +666,22 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
         rng.shuffle(excerpts)
         counts = Counter()
         item = {"id": selected["id"], "branch": selected["branch"], "report_line": selected["report_line"]}
+        if local_candidates and selected["branch"] in {"pointer_missing", "no_read_of_file", "partial_range",
+                                                        "found_outside_scope"}:
+            item["fixed_commit"] = True
+            item["target_evidence"] = [
+                {"path": display_path(redact(target["path"])[0]), "start_line": target["start"],
+                 "end_line": target["end"], "excerpt_index": None}
+                for target in selected.get("target_evidence", [])
+            ]
+        if local_candidates and "atom" in selected:
+            item["atom"] = dict(selected["atom"])
+        if local_candidates and selected.get("other_file_evidence"):
+            item["other_file_evidence"] = [
+                {"path": display_path(redact(target["path"])[0]), "start_line": target["start"],
+                 "end_line": target["end"], "revision": target["revision"], "excerpt_index": None}
+                for target in selected["other_file_evidence"]
+            ]
         for key, cap in [("claim", 300), ("before", 200), ("after", 200)]:
             value, redactions = redact(selected[key])
             item[key] = value[:cap]
@@ -655,8 +690,27 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
         for index, excerpt in enumerate(excerpts, 1):
             item_path_hashes.append({"item_id": selected["id"], "ref": index,
                                      "sha256": excerpt.pop("_path_sha256")})
+            source_path = excerpt.pop("_source_path")
+            complete_lines = excerpt.pop("_complete_lines")
             excerpt["ref"] = index
             counts.update(excerpt["redactions"])
+            for target_index, target in enumerate(selected.get("target_evidence", [])):
+                if not matches_path(target["path"], source_path, aliases):
+                    continue
+                if all(number in complete_lines for number in range(target["start"], target["end"] + 1)):
+                    item["target_evidence"][target_index] = {
+                        "path": excerpt["path"], "start_line": target["start"],
+                        "end_line": target["end"], "excerpt_index": index,
+                    }
+            for target_index, target in enumerate(selected.get("other_file_evidence", [])):
+                if (source.kind != "fixed_commit" or source.revision.casefold() != target["revision"]
+                        or not matches_path(target["path"], source_path, aliases)):
+                    continue
+                if all(number in complete_lines for number in range(target["start"], target["end"] + 1)):
+                    item["other_file_evidence"][target_index] = {
+                        "path": excerpt["path"], "start_line": target["start"],
+                        "end_line": target["end"], "revision": target["revision"], "excerpt_index": index,
+                    }
         item["excerpts"] = excerpts
         item["redactions"] = dict(counts)
         if len(encoded(item)) > 6000:

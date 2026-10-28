@@ -13,7 +13,10 @@ ELIGIBLE = {"observation_conflict", "paraphrased_quote", "range_only"}
 FIXED_ONLY = {"pointer_missing", "no_read_of_file", "partial_range"}
 EXCLUDED = {"command_result_missing", "binding_ambiguous", "malformed_number",
             "measurement_missing", "repo_scope_unknown", "commit_missing_file"}
+LOCAL_ELIGIBLE = ELIGIBLE | {"binding_ambiguous"}
+LOCAL_FIXED_ONLY = FIXED_ONLY | {"found_outside_scope"}
 PRIORITY = {"observation_conflict": 0, "paraphrased_quote": 1,
+            "binding_ambiguous": 2, "found_outside_scope": 2,
             "not_extracted_numeric_or_quote": 2, "range_only": 3}
 SELECT_PATH = re.compile(PATH.pattern.removesuffix(r"\b") + r"(?![A-Za-z0-9_])", re.I)
 ASSERTION = re.compile(
@@ -64,7 +67,7 @@ def identifiers(text: str) -> list[str]:
 
 
 def select_candidates(report: str, checked: dict, *, limit: int = 40,
-                      fixed_commit: bool = False) -> dict:
+                      fixed_commit: bool = False, local_candidates: bool = False) -> dict:
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
         raise ValueError("선별 상한은 0 이상의 정수여야 합니다.")
     atoms, _ = extract(report, Budget(60))
@@ -76,7 +79,8 @@ def select_candidates(report: str, checked: dict, *, limit: int = 40,
     covered = set()
     report_id = hashlib.sha256(report.encode("utf-8")).hexdigest()
 
-    def make_item(index: int, branch: str, claim: dict | None = None, atom=None) -> dict:
+    def make_item(index: int, branch: str, claim: dict | None = None, atom=None,
+                  atom_key: str = "") -> dict:
         part = parts[index]
         text = part["text"]
         paths = [m.group() for m in SELECT_PATH.finditer(text)]
@@ -86,8 +90,12 @@ def select_candidates(report: str, checked: dict, *, limit: int = 40,
                    "end": int(m.group("end") or m.group("start"))} for m in REFERENCE.finditer(text)]
         if atom is not None and atom.path and atom.start:
             ranges.append({"path": atom.path, "start": atom.start, "end": atom.end or atom.start})
-        identity = f"{report_id}:{index}:{branch}:{len(candidates)}"
-        return {
+        # Keep the historical ID contract for the default/team path.  The local
+        # path needs an atom-specific identity because several check atoms can
+        # legitimately share a report row.
+        identity = (f"{report_id}:{index}:{branch}:{atom_key}"
+                    if local_candidates else f"{report_id}:{index}:{branch}:{len(candidates)}")
+        item = {
             "id": "a-" + hashlib.sha256(identity.encode()).hexdigest()[:16],
             "branch": branch, "priority": PRIORITY.get(branch, 4),
             "report_line": part["line"], "claim": text,
@@ -98,8 +106,41 @@ def select_candidates(report: str, checked: dict, *, limit: int = 40,
             "check_type": claim.get("check_type", "") if claim else "",
             "reason_code": claim.get("reason_code", "") if claim else "",
         }
+        if local_candidates and claim:
+            item["atom"] = {"check_type": item["check_type"], "sentence_start": part["start"],
+                            "sentence_end": part["end"]}
+        if local_candidates and claim and branch in LOCAL_FIXED_ONLY:
+            # Keep the originally reported range separate from a repository hit
+            # in another file.  A hit can add context, never replace this target.
+            targets = []
+            if atom is not None:
+                for target in ranges:
+                    copied = dict(target)
+                    if copied["path"] == atom.path and copied not in targets:
+                        targets.append(copied)
+            if atom is not None and atom.path and atom.start:
+                target = {"path": atom.path, "start": atom.start, "end": atom.end or atom.start}
+                if target not in targets:
+                    targets.append(target)
+            if branch == "found_outside_scope":
+                other_targets = []
+                for hit in claim.get("source", {}).get("repository_hits", []):
+                    path, line, revision = hit.get("path"), hit.get("line"), hit.get("revision")
+                    if (isinstance(path, str) and isinstance(line, int) and line > 0
+                            and isinstance(revision, str) and re.fullmatch(r"[0-9a-fA-F]{40}", revision)):
+                        target = {"path": path, "start": line, "end": line,
+                                  "revision": revision.casefold()}
+                        if target not in other_targets:
+                            other_targets.append(target)
+                            paths.append(path)
+                            ranges.append({"path": path, "start": line, "end": line})
+                item["other_file_evidence"] = other_targets
+            item["paths"] = list(dict.fromkeys(p for p in paths if p))
+            item["ranges"] = ranges
+            item["target_evidence"] = targets
+        return item
 
-    for claim in checked.get("claims", []):
+    for claim_index, claim in enumerate(checked.get("claims", [])):
         key = (claim["report_line"], claim["check_type"], claim["text"])
         atom = lookup[key].popleft() if lookup[key] else None
         indexes = [i for i, p in enumerate(parts) if p["line"] == claim["report_line"] and
@@ -115,14 +156,26 @@ def select_candidates(report: str, checked: dict, *, limit: int = 40,
             excluded[verdict] += 1
             continue
         branch = "range_only" if verdict == "range_only" else reason
-        if reason in EXCLUDED or branch not in ELIGIBLE | FIXED_ONLY:
+        eligible = LOCAL_ELIGIBLE if local_candidates else ELIGIBLE
+        fixed_only = LOCAL_FIXED_ONLY if local_candidates else FIXED_ONLY
+        if (reason in EXCLUDED and not local_candidates or branch not in eligible | fixed_only):
             excluded[reason or "ineligible"] += 1
             continue
-        if branch in FIXED_ONLY and not fixed_commit:
+        if branch in fixed_only and not fixed_commit:
             excluded["fixed_commit_required"] += 1
             continue
+        if local_candidates and branch == "found_outside_scope" and not any(
+                isinstance(hit, dict) and isinstance(hit.get("path"), str)
+                and isinstance(hit.get("line"), int) and hit["line"] > 0
+                and re.fullmatch(r"[0-9a-fA-F]{40}", str(hit.get("revision", "")))
+                for hit in claim.get("source", {}).get("repository_hits", [])):
+            excluded["fixed_target_missing"] += 1
+            continue
         if indexes:
-            candidates.append(make_item(indexes[0], branch, claim, atom))
+            candidate = make_item(indexes[0], branch, claim, atom, str(claim_index))
+            if local_candidates:
+                candidate["atom"]["ordinal"] = claim_index
+            candidates.append(candidate)
         else:
             excluded["no_sentence"] += 1
 
@@ -150,7 +203,8 @@ def select_candidates(report: str, checked: dict, *, limit: int = 40,
     for candidate in candidates:
         line = candidate["report_line"]
         identity = conflict_key(candidate)
-        group = identity if identity in conflict_keys else (line, "ordinary")
+        group = identity if identity in conflict_keys else (
+            candidate["id"] if local_candidates else (line, "ordinary"))
         if group not in grouped:
             grouped[group] = {**candidate, "branches": [candidate["branch"]],
                              "paths": list(candidate["paths"]), "ranges": list(candidate["ranges"]),

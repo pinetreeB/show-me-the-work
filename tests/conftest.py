@@ -35,3 +35,17 @@ def forbid_real_claims_judge_launch(monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.fail("REAL MODEL LAUNCH FORBIDDEN: global test tripwire")
 
     monkeypatch.setattr(judge, "_launch", forbidden)
+
+
+@pytest.fixture(autouse=True)
+def forbid_test_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests use injected transports; even loopback and DNS are forbidden."""
+    import socket
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("NETWORK CALL FORBIDDEN: global test tripwire")
+
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(socket, "getaddrinfo", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)

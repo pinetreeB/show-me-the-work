@@ -392,7 +392,7 @@ runtime must be measured on independently labelled reports before operational us
 
 `smtw claims assist --report report.md --codex transcript.jsonl --select-only --format json`은 판정을 변경하지 않고 참고 후보를 출력한다. `--aggregate`는 갈래별 총 후보/선별 건수와 제외 사유만 남긴다. 기본 `--limit 20`, 초과는 `deferred_count`이며 0은 집계 전용이다. 우선순위는 observation_conflict, paraphrased_quote, 숫자·인용 미추출 문장, range_only, 나머지 순서다.
 
-pointer_missing/no_read_of_file/partial_range는 명시 SHA `--commit 저장소=SHA`가 있을 때만 후보가 된다. command_result_missing/binding_ambiguous/malformed_number/measurement_missing/repo_scope_unknown/commit_missing_file 및 match/absent/mismatch 원자는 제외한다. 미추출 여부는 같은 줄의 개별 문장/표 셀 단위로 대조한다. 선별 성공 종료 코드는 0이며 기존 check의 상태/요약/종료 코드를 바꾸지 않는다. 모델 실행기는 없다.
+pointer_missing/no_read_of_file/partial_range는 명시 SHA `--commit 저장소=SHA`가 있을 때만 후보가 된다. 기본/팀 선별은 command_result_missing/binding_ambiguous/malformed_number/measurement_missing/repo_scope_unknown/commit_missing_file 및 match/absent/mismatch 원자를 제외한다. `--local-candidates`는 로컬 참고 경로에서만 binding_ambiguous를 추가하고, fixed SHA의 다른 파일 정의 hit가 줄·revision과 함께 있는 found_outside_scope만 추가한다. 이 경로는 같은 보고 행의 원자를 병합하지 않는다. 미추출 여부는 같은 줄의 개별 문장/표 셀 단위로 대조한다. 선별 성공 종료 코드는 0이며 기존 check의 상태/요약/종료 코드를 바꾸지 않는다. 모델 실행기는 없다.
 
 ### Phase1 assist — 패킷 dry-run
 
@@ -400,7 +400,7 @@ pointer_missing/no_read_of_file/partial_range는 명시 SHA `--commit 저장소=
 
 주장 300자, 앞뒤 문맥 각 200자, 번호가 유지된 발췌 3개×1500자, 직렬화된 항목 6000자, 지시문 포함 호출 30000자 상한이다. 발췌 순서는 섞고 ref는 보낸 순서로 고정한다. 충돌 판들을 모두 3개 이내에 담지 못하면 `incomplete_conflict`, 연결 근거가 없으면 `no_excerpt`다. 민감 경로(별칭 해석 포함)는 `skipped_sensitive`, 발췌의 가림 4곳 이상은 `redaction_limit`, 항목 크기 초과는 `packet_too_large`로 제외한다. 주장·문맥도 저장 전에 가리며 토큰/JWT/전화/주민번호/이메일/password 패턴을 처리한다.
 
-manifest는 파일 SHA256·UTF-8 바이트/문자 수·가림 수·항목 id와 제외 사유만 기록한다. 패킷의 `data_block`은 지시문이 아닌 신뢰하지 않는 데이터로 명시한다. 개인정보 탐지 전체성을 보장하는 도구는 아니며 새 모델 전송 경로를 열지 않는다.
+로컬 후보의 원래 대상 범위는 `target_evidence`에 전송된 발췌의 표시 경로, 목표 줄 범위, 발췌 번호를 기록한다. 다른 파일의 정의 hit는 해당 fixed commit SHA를 포함한 별도 `other_file_evidence` 문맥 포인터이며 원래 대상의 증거가 아니다. 이 포인터는 같은 SHA의 fixed_commit 발췌가 줄 전체를 실제로 덮을 때만 연결한다. 두 값 모두 단독 신뢰 플래그가 아니며 해당 번호 발췌의 번호 줄이 각각의 범위를 실제로 덮는지로 다시 확인한다. 원래 목표 줄을 담지 못한 발췌는 fixed-only 반박 근거가 될 수 없다. manifest는 파일 SHA256·UTF-8 바이트/문자 수·가림 수·항목 id와 제외 사유만 기록한다. 패킷의 `data_block`은 지시문이 아닌 신뢰하지 않는 데이터로 명시한다. 개인정보 탐지 전체성을 보장하는 도구는 아니며 새 모델 전송 경로를 열지 않는다.
 
 ### Phase1 assist — 인용 재검증과 참고 구역
 

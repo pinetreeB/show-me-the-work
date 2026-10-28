@@ -29,6 +29,7 @@ def check_inputs(args):
 
 def run_assist(args) -> int:
     try:
+        local_candidates = bool(getattr(args, "local_candidates", False))
         case_id = getattr(args, "case_id", None)
         scope_file = getattr(args, "scope_file", None)
         scope = None
@@ -68,7 +69,8 @@ def run_assist(args) -> int:
             raise ValueError("선별/dry-run에는 --report가 필요합니다.")
         checked = check_inputs(args)
         result = select_candidates(args.report.read_text(encoding="utf-8-sig"), checked,
-                                   limit=args.limit, fixed_commit=bool(args.commit))
+                                   limit=args.limit, fixed_commit=bool(args.commit),
+                                   local_candidates=local_candidates)
         if args.dry_run:
             if args.out is None:
                 raise ValueError("--dry-run에는 --out이 필요합니다.")
@@ -101,9 +103,12 @@ def run_assist(args) -> int:
                         scoped_sources.append(source)
                 elif allowed_source(case_id, source.path, scope):
                     scoped_sources.append(source)
-            packets, summary = build_packets(result, scoped_sources, report=args.report, aliases=aliases, blocklist=blocklist)
+            packets, summary = build_packets(result, scoped_sources, report=args.report, aliases=aliases,
+                                             blocklist=blocklist, local_candidates=local_candidates)
             summary.update(case_id=case_id, scope_sha256=scope.sha256,
                            skipped_out_of_scope=len(sources) - len(scoped_sources), **source_stats)
+            if local_candidates:
+                summary["local_selection"] = True
             manifest = write_packets(args.out, packets, summary)
             print(json.dumps(manifest, ensure_ascii=False, indent=2))
             return 0

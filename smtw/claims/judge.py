@@ -263,6 +263,8 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
         raise ValueError("unsupported usage service")
     sent = load_sent_items(folder)  # Validate every hash and file before any call.
     manifest = read_json(folder / "manifest.json")
+    if manifest.get("local_selection") is True:
+        raise ValueError("locally selected packets require --provider local")
     scope = load_scope(scope_file)
     validate_scope(manifest, sent, scope)
     validate_contract(manifest)
@@ -370,19 +372,49 @@ def main(argv=None):
     parser.add_argument("--blocklist-file", type=Path)
     parser.add_argument("--max-calls", type=int, default=4)
     parser.add_argument("--allow-unknown-usage", action="store_true")
-    parser.add_argument("--config-dir", required=True,
+    parser.add_argument("--config-dir",
                         help="explicit Claude configuration directory (absolute, existing)")
-    parser.add_argument("--usage-service", required=True, choices=sorted(USAGE_SERVICES),
+    parser.add_argument("--usage-service", choices=sorted(USAGE_SERVICES),
                         help="usage widget service that matches --config-dir")
     parser.add_argument("--lean-context", action="store_true",
                         help="opt in to Phase 2 lean context with an empty temporary cwd")
+    parser.add_argument("--provider", choices=("subscription", "local"), default="subscription",
+                        help="judge backend; local remains injection-only until an environment transport is approved")
+    parser.add_argument("--local-address")
+    parser.add_argument("--local-model")
+    parser.add_argument("--local-deadline-seconds", type=int)
+    parser.add_argument("--local-input-tokens", type=int)
+    parser.add_argument("--local-output-tokens", type=int)
+    parser.add_argument("--local-json-mode")
+    parser.add_argument("--local-protocol")
+    parser.add_argument("--local-seed", type=int)
+    parser.add_argument("--local-temperature", type=float)
+    parser.add_argument("--local-reasoning")
     args = parser.parse_args(argv)
     try:
-        result = judge(args.packets, scope_file=args.scope_file, output_root=args.out_root,
-                       max_calls=args.max_calls,
-                       allow_unknown_usage=args.allow_unknown_usage,
-                       lean_context=args.lean_context, blocklist_file=args.blocklist_file,
-                       config_dir=args.config_dir, usage_service=args.usage_service)
+        if args.provider == "local":
+            # There is intentionally no production transport here.  This CLI
+            # path validates every required setting, then fails closed until
+            # the environment owner supplies a reviewed protocol implementation.
+            from .local_judge import LocalConfig, run_local_judge
+            config = LocalConfig(address=args.local_address, model=args.local_model,
+                                 deadline_seconds=args.local_deadline_seconds,
+                                 input_tokens=args.local_input_tokens,
+                                 output_tokens=args.local_output_tokens,
+                                 json_mode=args.local_json_mode, protocol=args.local_protocol,
+                                 seed=args.local_seed, temperature=args.local_temperature,
+                                 reasoning=args.local_reasoning)
+            result = run_local_judge(args.packets, scope_file=args.scope_file,
+                                     output_root=args.out_root, max_calls=args.max_calls,
+                                     blocklist_file=args.blocklist_file, config=config)
+        else:
+            if args.config_dir is None or args.usage_service is None:
+                parser.error("subscription provider requires --config-dir and --usage-service")
+            result = judge(args.packets, scope_file=args.scope_file, output_root=args.out_root,
+                           max_calls=args.max_calls,
+                           allow_unknown_usage=args.allow_unknown_usage,
+                           lean_context=args.lean_context, blocklist_file=args.blocklist_file,
+                           config_dir=args.config_dir, usage_service=args.usage_service)
     except (OSError, ValueError, KeyError, TypeError):
         print("Judge refused or failed; check packet/usage/TTY and receipts.", file=sys.stderr)
         return 2

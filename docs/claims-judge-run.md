@@ -60,6 +60,52 @@ judge-runs/<회차>/에 따로 저장합니다. 판정 결과는 “LLM 참고 �
 원래 대조기의 status·요약·종료 코드는 변경하지 않습니다. 잘못된 인용은 표시하지 않습니다.
 호출 실패·원출력 형식 오류는 중단하며 자동 재시도하지 않습니다.
 
+### D1 local 제공자 준비 경계
+
+`--provider local`은 D1에서 가짜 전송기 시험만 받는 어댑터입니다. 실제 HTTP, loopback,
+소켓 전송기는 이 저장소에 연결하지 않았습니다. 따라서 환경 담당자가 protocol과 전송 구현을
+별도 검토·승인하기 전에는 CLI 실행이 `local transport is not wired`로 거부됩니다. 이 거부는
+서버 기동, 모델 다운로드, 클라우드 대체 또는 자동 재시도를 하지 않습니다.
+
+local을 선택할 때는 다음 값을 모두 명시해야 합니다: `--local-address`, `--local-model`,
+`--local-deadline-seconds`, `--local-input-tokens`, `--local-output-tokens`,
+`--local-json-mode`, `--local-protocol`, `--local-seed`, `--local-temperature`,
+`--local-reasoning`. 주소·모델 identity·deadline·입출력 token 상한·JSON 방식·protocol·seed·
+temperature·reasoning에는 접속 가능한 기본값이 없습니다. subscription 전용
+`--config-dir`과 `--usage-service`는 local에 요구하지 않습니다.
+
+어댑터는 기존 패킷 SHA, scope, source/privacy, 원본 `judge-output.schema.json` 계약과
+인용 재검증을 다시 적용합니다. local 서버가 nullable JSON Schema를 지원하지 않을 경우에만
+요청 본문에는 `evidence_ref`를 optional integer로 한 호환 schema를 보내며, 원본 schema 파일과
+그 hash는 바꾸지 않습니다. 응답은 정확히 한 개의 `judgments` envelope, 요청 model identity,
+상태 200, 그리고 빠짐·중복·알 수 없는 ID 없는 전체 결과를 만족해야 합니다.
+
+timeout, overload, JSON 잘림/형식 오류, model identity 불일치는 `calls.jsonl`에
+`outcome: local_error`, `evaluation: not_evaluated`로 남기고 중단합니다. 이는 모델의 유효한
+`not_enough_evidence` 판정과 다릅니다. 유효 결과는 `quote_not_in_excerpt`와
+`missing_quote_or_ref`를 포함한 재검증 집계를 receipt에 남깁니다. 원래 check의 status, summary,
+exit code는 어느 경우에도 바꾸지 않습니다.
+
+주소는 자격증명 없는 명시적 loopback HTTP 주소만, JSON 방식은 `schema` 또는 `json_object`,
+protocol은 `openai-compatible`·`llama-cpp-native`·D1 fake 전용 `synthetic-v1`, reasoning은
+`off` 또는 별도 content로 분리하는 `separate`만 받습니다. 수신 envelope는 model/status/body와
+입력·출력 token usage를 모두 가져야 하며 상한 초과는 조용히 자르지 않고 실패합니다. D1 fake
+transport는 응답 후 deadline 초과도 실패로 기록합니다. 실제 전송의 취소는 아직 구현하지 않았으므로
+환경 담당자의 protocol 계약 없이는 실행하지 않습니다.
+
+기본 receipt 정책은 `hash_only`입니다. 원문 응답은 저장하지 않고 output SHA, 바이트 수, model,
+token usage, 설정, canonical schema hash 및 request compatibility-schema hash만 기록합니다. 원문
+응답을 저장하는 정책은 환경 담당자의 별도 보존·접근 승인과 전송 구현이 갖춰진 뒤에만 추가합니다.
+전송 데이터는 원본 packet SHA를 유지하되, 모델에는 branch·checker verdict·reason code를 뺀 별도
+사본만 보냅니다. receipt의 `transmitted_data_sha256`은 이 모델 가시 사본을 재현하며 원본 N2
+target evidence 정책은 정제 전 packet으로 계속 확인합니다.
+
+`fixed_commit` 후보의 `contradicted` 참고 표시는 실제로 전송된 발췌가 요청 target path/range를
+덮는 `target_evidence`를 독립적으로 증명할 때만 허용합니다. target evidence가 없거나 불완전하면
+모델의 반박은 `not_enough_evidence`로 낮춥니다. `--local-candidates`를 명시한 local 경로만
+`binding_ambiguous`와 `found_outside_scope` 후보를 추가할 수 있습니다. 기본 선별과 team/subscription
+패킷은 기존 후보 계약을 유지하며, local 표시가 든 패킷은 subscription judge가 사전 거부합니다.
+
 L4는 범위 파일에 명시한 저장소와 고정 커밋의 파일 줄을 git show로 읽어
 경로:줄 번호와 정확한 인용을 포함한 합성 문장을 만듭니다. 코드·문서 줄을 섞으며,
 20자 미만 원문·민감 경로·비밀 패턴이 있는 줄과 발췌는 제외합니다.

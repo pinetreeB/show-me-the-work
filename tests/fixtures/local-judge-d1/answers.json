@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "purpose": "synthetic plumbing smoke, not accuracy qualification",
+  "items": [
+    {
+      "id": "d1-01",
+      "group_id": "independent-toy-01",
+      "truth": "true",
+      "evidence_adequate": true,
+      "expected": {
+        "id": "d1-01",
+        "verdict": "supported",
+        "rationale": "The supplied assignment states the claimed number.",
+        "evidence_ref": 1,
+        "evidence_quote": "BATCH_LIMIT = 7"
+      },
+      "synthetic_source_lines": 1,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-02",
+      "group_id": "independent-toy-02",
+      "truth": "true",
+      "evidence_adequate": true,
+      "expected": {
+        "id": "d1-02",
+        "verdict": "supported",
+        "rationale": "The function returns the stated string.",
+        "evidence_ref": 1,
+        "evidence_quote": "    return \"hello\""
+      },
+      "synthetic_source_lines": 2,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-03",
+      "group_id": "independent-toy-03",
+      "truth": "true",
+      "evidence_adequate": true,
+      "expected": {
+        "id": "d1-03",
+        "verdict": "supported",
+        "rationale": "This is a literal-existence claim, not a definition claim.",
+        "evidence_ref": 1,
+        "evidence_quote": "const stage = \"draft\";"
+      },
+      "synthetic_source_lines": 1,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-04",
+      "group_id": "independent-toy-04",
+      "truth": "true",
+      "evidence_adequate": true,
+      "expected": {
+        "id": "d1-04",
+        "verdict": "supported",
+        "rationale": "The complete tuple contains the two claimed colors.",
+        "evidence_ref": 1,
+        "evidence_quote": "ALLOWED_COLORS = (\"blue\", \"green\")"
+      },
+      "synthetic_source_lines": 1,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-05",
+      "group_id": "independent-toy-05",
+      "truth": "false",
+      "evidence_adequate": true,
+      "expected": {
+        "id": "d1-05",
+        "verdict": "contradicted",
+        "rationale": "The supplied assignment states 3, not 9.",
+        "evidence_ref": 1,
+        "evidence_quote": "RETRY_LIMIT = 3"
+      },
+      "synthetic_source_lines": 1,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-06",
+      "group_id": "independent-toy-06",
+      "truth": "false",
+      "evidence_adequate": true,
+      "expected": {
+        "id": "d1-06",
+        "verdict": "contradicted",
+        "rationale": "The flag is explicitly disabled.",
+        "evidence_ref": 1,
+        "evidence_quote": "CACHE_ENABLED = False"
+      },
+      "synthetic_source_lines": 1,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-07",
+      "group_id": "independent-toy-07",
+      "truth": "false",
+      "evidence_adequate": true,
+      "expected": {
+        "id": "d1-07",
+        "verdict": "contradicted",
+        "rationale": "The strict comparison excludes equality.",
+        "evidence_ref": 1,
+        "evidence_quote": "    return value > 5"
+      },
+      "synthetic_source_lines": 2,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-08",
+      "group_id": "independent-toy-08",
+      "truth": "false",
+      "evidence_adequate": true,
+      "expected": {
+        "id": "d1-08",
+        "verdict": "contradicted",
+        "rationale": "The complete toy file defines only launch_alpha.",
+        "evidence_ref": 1,
+        "evidence_quote": "def launch_alpha():"
+      },
+      "synthetic_source_lines": 2,
+      "source_completeness": "complete_file"
+    },
+    {
+      "id": "d1-09",
+      "group_id": "independent-toy-09",
+      "truth": "unknown",
+      "evidence_adequate": false,
+      "expected": {
+        "id": "d1-09",
+        "verdict": "not_enough_evidence",
+        "rationale": "Only line 1 is supplied; line 20 is unavailable.",
+        "evidence_ref": null,
+        "evidence_quote": ""
+      },
+      "synthetic_source_lines": 1,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-10",
+      "group_id": "independent-toy-10",
+      "truth": "unknown",
+      "evidence_adequate": false,
+      "expected": {
+        "id": "d1-10",
+        "verdict": "not_enough_evidence",
+        "rationale": "The supplied observation has no revision or time identity.",
+        "evidence_ref": null,
+        "evidence_quote": ""
+      },
+      "synthetic_source_lines": 1,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-11",
+      "group_id": "independent-toy-11",
+      "truth": "unknown",
+      "evidence_adequate": false,
+      "expected": {
+        "id": "d1-11",
+        "verdict": "not_enough_evidence",
+        "rationale": "One file excerpt cannot establish repository-wide absence.",
+        "evidence_ref": null,
+        "evidence_quote": ""
+      },
+      "synthetic_source_lines": 1,
+      "source_completeness": "excerpt"
+    },
+    {
+      "id": "d1-12",
+      "group_id": "independent-toy-12",
+      "truth": "unknown",
+      "evidence_adequate": false,
+      "expected": {
+        "id": "d1-12",
+        "verdict": "not_enough_evidence",
+        "rationale": "The claim does not identify which of two candidate files was selected.",
+        "evidence_ref": null,
+        "evidence_quote": ""
+      },
+      "synthetic_source_lines": 1,
+      "source_completeness": "excerpt"
+    }
+  ]
+}
