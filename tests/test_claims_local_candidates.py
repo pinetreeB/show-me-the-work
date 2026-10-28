@@ -1,5 +1,6 @@
 from pathlib import Path
 import random
+import pytest
 
 from smtw.claims.assist import select_candidates
 from smtw.claims.packets import PacketSource, build_packets
@@ -28,7 +29,8 @@ def test_local_candidate_expansion_is_opt_in_and_preserves_same_line_atoms():
     assert {item["claim"] for item in local["items"]} == {"첫 문장이다.", "둘째 문장이다."}
 
 
-def test_local_other_file_candidate_requires_fixed_hit_and_transmits_covered_target():
+@pytest.mark.parametrize("tail", [None, "transcript_read", "different_revision"])
+def test_local_other_file_candidate_requires_fixed_hit_and_transmits_covered_target(tail):
     report = "`logic.py:1` 함수 `moved_name` 정의가 있다."
     hit = {"path": "other.ts", "line": 2, "revision": SHA, "kind": "definition"}
     checked = {"claims": [claim("logic.py:1", "found_outside_scope", source={"repository_hits": [hit]})]}
@@ -45,7 +47,10 @@ def test_local_other_file_candidate_requires_fixed_hit_and_transmits_covered_tar
         [PacketSource("C:/synthetic/repo/logic.py", {1: "export const original = 1;"},
                       "fixed_commit", revision=SHA),
          PacketSource("C:/synthetic/repo/other.ts", {1: "header", 2: "export const moved_name = 1;"},
-                      "fixed_commit", revision=SHA)],
+                      "fixed_commit", revision=SHA)] + (
+            [PacketSource("C:/synthetic/unrelated/unused.ts", {1: "unrelated source"},
+                          "transcript_read" if tail == "transcript_read" else "fixed_commit",
+                          revision="" if tail == "transcript_read" else "b" * 40)] if tail else []),
         report=Path("report.md"), rng=random.Random(0), local_candidates=True,
     )
     assert summary["sent_count"] == 1

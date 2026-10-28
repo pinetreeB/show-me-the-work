@@ -48,6 +48,16 @@ def add_claims_parser(subparsers):
                         help='로컬 참고 경로에서만 추가 미확인 원자를 선별')
     assist.add_argument('--aggregate', action='store_true', help='갈래별 건수만 출력')
     assist.set_defaults(func=run_assist)
+    from .judge import add_judge_arguments, run_judge_args
+    judge = checks.add_parser('judge', help='명시 제공자와 설정으로 참고 판정을 실행합니다.')
+    add_judge_arguments(judge)
+
+    def dispatch_judge(args):
+        if args.provider == 'subscription' and (args.config_dir is None or args.usage_service is None):
+            judge.error('subscription provider requires --config-dir and --usage-service')
+        return run_judge_args(args)
+
+    judge.set_defaults(func=dispatch_judge)
 
 
 def add_input_arguments(parser, *, report_required=True):

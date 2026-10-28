@@ -364,8 +364,8 @@ def judge(folder: Path, *, scope_file: Path, output_root: Path, max_calls: int =
             "unknown_usage_allowed": allow_unknown_usage}
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+def add_judge_arguments(parser):
+    """Register the judge CLI contract for the top-level claims dispatcher."""
     parser.add_argument("--packets", type=Path, required=True)
     parser.add_argument("--scope-file", type=Path, required=True)
     parser.add_argument("--out-root", type=Path, required=True)
@@ -379,7 +379,7 @@ def main(argv=None):
     parser.add_argument("--lean-context", action="store_true",
                         help="opt in to Phase 2 lean context with an empty temporary cwd")
     parser.add_argument("--provider", choices=("subscription", "local"), default="subscription",
-                        help="judge backend; local remains injection-only until an environment transport is approved")
+                        help="judge backend; local requires all approved explicit D2 settings")
     parser.add_argument("--local-address")
     parser.add_argument("--local-model")
     parser.add_argument("--local-deadline-seconds", type=int)
@@ -390,26 +390,47 @@ def main(argv=None):
     parser.add_argument("--local-seed", type=int)
     parser.add_argument("--local-temperature", type=float)
     parser.add_argument("--local-reasoning")
-    args = parser.parse_args(argv)
+    parser.add_argument("--local-stop-file", type=Path,
+                        help="active local I/O stops when this explicitly supplied file exists")
+    parser.add_argument("--local-server-start-args-sha256",
+                        help="optional explicit SHA-256 supplied by the server owner; no server file is read")
+    return parser
+
+
+def local_config_from_args(args):
+    """Build the local config from parsed CLI arguments without hidden defaults."""
+    from .local_judge import LocalConfig
+    return LocalConfig(address=args.local_address, model=args.local_model,
+                       deadline_seconds=args.local_deadline_seconds,
+                       input_tokens=args.local_input_tokens, output_tokens=args.local_output_tokens,
+                       json_mode=args.local_json_mode, protocol=args.local_protocol,
+                       seed=args.local_seed, temperature=args.local_temperature,
+                       reasoning=args.local_reasoning)
+
+
+def run_judge_args(args, *, local_transport=None):
+    """Run parsed arguments; ``local_transport`` keeps fake-only tests injectable."""
     try:
         if args.provider == "local":
-            # There is intentionally no production transport here.  This CLI
-            # path validates every required setting, then fails closed until
-            # the environment owner supplies a reviewed protocol implementation.
-            from .local_judge import LocalConfig, run_local_judge
-            config = LocalConfig(address=args.local_address, model=args.local_model,
-                                 deadline_seconds=args.local_deadline_seconds,
-                                 input_tokens=args.local_input_tokens,
-                                 output_tokens=args.local_output_tokens,
-                                 json_mode=args.local_json_mode, protocol=args.local_protocol,
-                                 seed=args.local_seed, temperature=args.local_temperature,
-                                 reasoning=args.local_reasoning)
+            from .local_judge import run_local_judge
+            config = local_config_from_args(args)
+            config.validate_d2_runtime()
+            if local_transport is None:
+                if args.local_server_start_args_sha256 is None:
+                    raise ValueError("real local execution requires --local-server-start-args-sha256")
+                # This import is deliberately local: subscription use never imports
+                # urllib or creates a local transport.
+                from .local_http import LocalHttpTransport
+                local_transport = LocalHttpTransport(
+                    stop_requested=(lambda: bool(args.local_stop_file and args.local_stop_file.exists())))
             result = run_local_judge(args.packets, scope_file=args.scope_file,
                                      output_root=args.out_root, max_calls=args.max_calls,
-                                     blocklist_file=args.blocklist_file, config=config)
+                                     blocklist_file=args.blocklist_file, config=config,
+                                     transport=local_transport, stop_file=args.local_stop_file,
+                                     server_start_args_sha256=args.local_server_start_args_sha256)
         else:
             if args.config_dir is None or args.usage_service is None:
-                parser.error("subscription provider requires --config-dir and --usage-service")
+                raise ValueError("subscription provider requires --config-dir and --usage-service")
             result = judge(args.packets, scope_file=args.scope_file, output_root=args.out_root,
                            max_calls=args.max_calls,
                            allow_unknown_usage=args.allow_unknown_usage,
@@ -420,3 +441,12 @@ def main(argv=None):
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_judge_arguments(parser)
+    args = parser.parse_args(argv)
+    if args.provider == "subscription" and (args.config_dir is None or args.usage_service is None):
+        parser.error("subscription provider requires --config-dir and --usage-service")
+    return run_judge_args(args)

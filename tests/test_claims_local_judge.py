@@ -204,8 +204,11 @@ def test_requires_explicit_config_and_injected_transport(tmp_path):
 def test_local_compatibility_schema_leaves_canonical_contract_unchanged():
     original = judge.SCHEMA.read_bytes()
     compat = compatibility_schema()
-    assert compat["properties"]["judgments"]["items"]["properties"]["evidence_ref"] == {
-        "type": "integer", "minimum": 1}
+    properties = compat["properties"]["judgments"]["items"]["properties"]
+    assert list(properties) == ["evidence_ref", "evidence_quote", "rationale", "id", "verdict"]
+    assert properties["evidence_ref"] == {"type": ["integer", "null"], "minimum": 1}
+    assert "evidence_quote" not in compat["properties"]["judgments"]["items"]["required"]
+    assert "$schema" not in json.dumps(compat) and '"title"' not in json.dumps(compat)
     assert judge.SCHEMA.read_bytes() == original
 
 

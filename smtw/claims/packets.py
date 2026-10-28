@@ -703,7 +703,7 @@ def build_packets(selection: dict, sources: list[PacketSource], *, report: Path,
                         "end_line": target["end"], "excerpt_index": index,
                     }
             for target_index, target in enumerate(selected.get("other_file_evidence", [])):
-                if (source.kind != "fixed_commit" or source.revision.casefold() != target["revision"]
+                if (excerpt["source"] != "fixed_commit" or excerpt["revision"].casefold() != target["revision"]
                         or not matches_path(target["path"], source_path, aliases)):
                     continue
                 if all(number in complete_lines for number in range(target["start"], target["end"] + 1)):
