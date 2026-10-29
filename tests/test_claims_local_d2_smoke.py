@@ -108,6 +108,7 @@ def test_twelve_sealed_items_use_fake_opener_and_keep_raw_success_body_out(tmp_p
     assert summary['expected_matches'] == summary['input_count'] == summary['evaluated_count'] == 12
     assert summary['not_evaluated_count'] == summary['local_error_count'] == 0
     assert summary['quote_not_in_excerpt'] == summary['missing_quote_or_ref'] == 0
+    assert summary['binding_ambiguous_capped'] == 0
     assert summary['all_item_ids'] == summary['completed_item_ids'] == local_smoke.IDS
     assert summary['seal_sha256'] == local_smoke.SEALED_D1_SHA256
     call = json.loads((tmp_path / 'out' / 'calls.jsonl').read_text(encoding='utf-8').splitlines()[0])

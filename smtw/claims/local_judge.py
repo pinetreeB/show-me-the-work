@@ -134,6 +134,46 @@ def _target_evidence_complete(item: dict) -> bool:
     return True
 
 
+def verify_local_judgments(judgments, sent: dict[str, dict]) -> tuple[list[dict], dict]:
+    """Normalize local-only safety caps, then verify canonical judgments offline.
+
+    The returned rows remain valid frozen-schema judgments for persistence.  The
+    verification result separately records deterministic normalization reasons,
+    so receipt and smoke readers can explain a local safety downgrade without
+    extending a saved model judgment.
+    """
+    normalized = json.loads(json.dumps(validate_judgments(judgments)))
+    normalization = []
+    for row in normalized:
+        item = sent.get(row["id"])
+        if item is None:
+            continue
+        reason_code = None
+        # Apply this cap before any evidence checks.  A single apparently
+        # supportive excerpt cannot resolve an ambiguous source binding.
+        if row["verdict"] == "supported" and item.get("branch") == "binding_ambiguous":
+            reason_code = "binding_ambiguous_capped"
+        # Preserve the D2 N2 coverage behavior while making it reusable for
+        # offline re-verification of already-normalized local outputs.
+        elif (row["verdict"] in {"supported", "contradicted"}
+              and not _target_evidence_complete(item)):
+            reason_code = "target_evidence_incomplete"
+        if reason_code is not None:
+            row["verdict"] = "not_enough_evidence"
+            row.pop("evidence_ref", None)
+            row.pop("evidence_quote", None)
+            row["rationale"] = ("Deterministic local evidence safety cap."
+                                if reason_code == "binding_ambiguous_capped"
+                                else "Target evidence is incomplete.")
+            normalization.append({"id": row["id"], "verdict": row["verdict"],
+                                  "reason_code": reason_code})
+    verified = verify_judgments(normalized, sent)
+    verified["counts"]["binding_ambiguous_capped"] = sum(
+        row["reason_code"] == "binding_ambiguous_capped" for row in normalization)
+    verified["normalization"] = normalization
+    return normalized, verified
+
+
 def _model_packet(packet: dict) -> dict:
     """Copy packet data while removing deterministic checker hints from items.
 
@@ -344,15 +384,7 @@ def run_local_judge(folder: Path, *, scope_file: Path, output_root: Path, config
             if {row.get("id") for row in rows if isinstance(row, dict)} != set(entry["item_ids"]) or len(rows) != len(entry["item_ids"]):
                 raise ValueError("local response must contain every sent id exactly once")
             response_stage = "verification"
-            # A fixed-commit item may be contradicted only when target coverage is real.
-            covered = {item["id"]: _target_evidence_complete(item) for item in packet["data_block"]}
-            for row in rows:
-                if row.get("verdict") in {"supported", "contradicted"} and not covered[row["id"]]:
-                    row["verdict"] = "not_enough_evidence"
-                    row.pop("evidence_ref", None)
-                    row.pop("evidence_quote", None)
-                    row["rationale"] = "Target evidence is incomplete."
-            verified = verify_judgments(rows, subset)
+            rows, verified = verify_local_judgments(rows, subset)
         except Exception as exc:
             candidate = getattr(exc, "record", None)
             if isinstance(candidate, dict):

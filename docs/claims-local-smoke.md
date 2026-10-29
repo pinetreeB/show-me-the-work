@@ -42,6 +42,8 @@ Read `smoke-summary.json` in the printed run directory: the twelve-row compariso
 shows expected, normalized, verified, and not-evaluated outcomes. Read
 `local_error_count`, `not_evaluated_count`, `quote_not_in_excerpt`, and
 `missing_quote_or_ref` together; omitted/error items stay in the denominator.
+`binding_ambiguous_capped` counts local `binding_ambiguous` support judgments forced to `not_enough_evidence`, with that reason code retained in normalized verification results.
+This cap leaves contradicted/NEI judgments and the team path unchanged; missing references still follow the existing verification rule.
 Failures also show `error`, `stage`, `http_status`, and available server/HOLD notices in that summary.
 `calls.jsonl` and `run-summary.json` contain identity, code/schema/startup hashes,
 token method/counts, usage, timing, and safe failure stages. Raw prompt, response,

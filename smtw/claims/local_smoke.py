@@ -44,7 +44,8 @@ def verify_smoke_seal(seal_file: Path, packets: Path, scope_file: Path) -> dict:
 def summarize_smoke(run: dict, answers: dict, seal: dict, output_root: Path) -> dict:
     expected = {item['id']: item['expected']['verdict'] for item in answers['items']}
     results = {}
-    counts = {'quote_not_in_excerpt': 0, 'missing_quote_or_ref': 0}
+    counts = {'quote_not_in_excerpt': 0, 'missing_quote_or_ref': 0,
+              'binding_ambiguous_capped': 0}
     folder = Path(run['run'])
     for path in sorted(folder.glob('judgments-*.json')):
         rows = read_json(path)
@@ -53,15 +54,18 @@ def summarize_smoke(run: dict, answers: dict, seal: dict, output_root: Path) -> 
             continue
         verified = read_json(verified_path)
         displayed = {row['id']: row['verdict'] for row in verified['items']}
+        normalization = {row['id']: row['reason_code']
+                         for row in verified.get('normalization', [])}
         for key in counts:
-            counts[key] += verified['counts'][key]
+            counts[key] += verified['counts'].get(key, 0)
         for row in rows:
             results[row['id']] = {'normalized_verdict': row['verdict'],
-                                  'verified_verdict': displayed.get(row['id'], 'not_enough_evidence')}
+                                  'verified_verdict': displayed.get(row['id'], 'not_enough_evidence'),
+                                  'reason_code': normalization.get(row['id'])}
     comparisons = []
     for key in IDS:
         result = results.get(key, {'normalized_verdict': 'not_evaluated',
-                                   'verified_verdict': 'not_evaluated'})
+                                   'verified_verdict': 'not_evaluated', 'reason_code': None})
         comparisons.append({'id': key, 'expected': expected[key], **result,
                             'matches_expected': result['verified_verdict'] == expected[key]})
     summary = {'version': 1, 'purpose': 'synthetic plumbing smoke; not quality qualification',
