@@ -480,3 +480,89 @@ def test_compaction_reread_matches_relative_and_absolute_paths(tmp_path):
     assert result['compaction']['stale_claim_lines'] == []
     assert result['compaction']['stale_files'] == []
 
+
+@pytest.mark.parametrize('mode', [
+    'relative_turn_cwd',
+    'absolute_add',
+    'absolute_update',
+    'js_writes_absolute',
+    'js_writes_relative_turn_cwd',
+])
+def test_codex_apply_patch_report_write_sets_cutoff_for_reads_and_compaction(tmp_path, mode):
+    r, t = make_case(tmp_path, '`engine.py` 함수 `valid_name`')
+    rel_patch = '*** Begin Patch\n*** Add File: report.md\n+`engine.py` 함수 `valid_name`\n*** End Patch'
+    abs_add = f'*** Begin Patch\n*** Add File: {r.as_posix()}\n+`engine.py` 함수 `valid_name`\n*** End Patch'
+    abs_update = f'*** Begin Patch\n*** Update File: {r.as_posix()}\n@@\n+`engine.py` 함수 `valid_name`\n*** End Patch'
+    rows = []
+    if mode == 'relative_turn_cwd':
+        rows.append({'type': 'turn_context', 'payload': {'cwd': str(tmp_path)}})
+        rows.append(codex_call('apply_patch', {'input': rel_patch}, 'patch-report'))
+        rows.append(codex_output('Done', 'patch-report'))
+    elif mode == 'absolute_add':
+        rows.append({'type': 'response_item', 'payload': {
+            'type': 'custom_tool_call', 'name': 'apply_patch',
+            'call_id': 'patch-report', 'input': abs_add}})
+        rows.append({'type': 'response_item', 'payload': {
+            'type': 'custom_tool_call_output', 'call_id': 'patch-report', 'output': 'Done'}})
+    elif mode == 'absolute_update':
+        rows.append(codex_call('apply_patch', {'patch': abs_update}, 'patch-report'))
+        rows.append(codex_output('Done', 'patch-report'))
+    elif mode == 'js_writes_absolute':
+        rows.append({'type': 'response_item', 'payload': {
+            'type': 'custom_tool_call', 'name': 'exec', 'call_id': 'patch-report',
+            'input': f'text(await tools.apply_patch({json.dumps(abs_add)}));'}})
+        rows.append({'type': 'response_item', 'payload': {
+            'type': 'custom_tool_call_output', 'call_id': 'patch-report', 'output': 'Done'}})
+    else:
+        rows.append({'type': 'turn_context', 'payload': {'cwd': str(tmp_path)}})
+        rows.append({'type': 'response_item', 'payload': {
+            'type': 'custom_tool_call', 'name': 'exec', 'call_id': 'patch-report',
+            'input': f'text(await tools.apply_patch({json.dumps(rel_patch)}));'}})
+        rows.append({'type': 'response_item', 'payload': {
+            'type': 'custom_tool_call_output', 'call_id': 'patch-report', 'output': 'Done'}})
+    rows += [
+        codex_call('exec_command', {'cmd': f'Get-Content {ENGINE}'}, 'read-after'),
+        codex_output('def valid_name(): pass\n', 'read-after'),
+        {'type': 'compacted', 'timestamp': '2026-01-01T00:01:00Z', 'payload': {'message': 'synthetic'}},
+    ]
+    write_transcript(t, rows)
+    transcript = read_transcript(t, 'codex', r, r.read_text(encoding='utf-8'), {}, Budget(30))
+    assert [e.after_report for e in transcript.evidence] == [True]
+    assert transcript.compaction_orders == []
+    result = run(r, codex=t)
+    assert result['status'] == 'INCOMPLETE'
+    assert result['claims'][0]['verdict'] == 'unverifiable'
+    assert result['compaction'] == {'count': 0, 'orders': [], 'steps': [],
+                                    'stale_claim_lines': [], 'stale_files': []}
+
+
+@pytest.mark.parametrize('mode', [
+    'redirect_absolute',
+    'redirect_relative_cwd',
+    'set_content_absolute',
+    'set_content_relative_cwd',
+])
+def test_agy_shell_write_to_report_sets_cutoff_for_reads_and_checkpoint(tmp_path, mode):
+    r, t = make_case(tmp_path, '`engine.py` 함수 `valid_name`')
+    if mode == 'redirect_absolute':
+        write_row = agy_call('run_command', CommandLine=f'echo text > "{r.as_posix()}"')
+    elif mode == 'redirect_relative_cwd':
+        write_row = agy_call('run_command', CommandLine='echo text > report.md', Cwd=str(tmp_path))
+    elif mode == 'set_content_absolute':
+        write_row = agy_call('run_command', CommandLine=f'Set-Content "{r.as_posix()}" text')
+    else:
+        write_row = agy_call('run_command', CommandLine='Set-Content report.md text', Cwd=str(tmp_path))
+    rows = [
+        write_row, generic(''),
+        agy_call('view_file', AbsolutePath=ENGINE), view(ENGINE, 'def valid_name(): pass'),
+        checkpoint(step=12),
+    ]
+    write_transcript(t, rows)
+    transcript = read_transcript(t, 'agy', r, r.read_text(encoding='utf-8'), {}, Budget(30))
+    assert [e.after_report for e in transcript.evidence] == [True]
+    assert transcript.compaction_orders == []
+    result = run(r, agy=str(t))
+    assert result['status'] == 'INCOMPLETE'
+    assert result['claims'][0]['verdict'] == 'unverifiable'
+    assert result['compaction'] == {'count': 0, 'orders': [], 'steps': [],
+                                    'stale_claim_lines': [], 'stale_files': []}

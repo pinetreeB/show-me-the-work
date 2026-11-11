@@ -1055,16 +1055,23 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
         if patch_targets:
             targets.extend(patch_targets)
             unresolved = False
+        wrote_report = False
         for target in targets:
-            writes.setdefault(normalize_path(observed_path(target, call.cwd), aliases), call.order)
+            normalized_target = normalize_path(observed_path(target, call.cwd), aliases)
+            writes.setdefault(normalized_target, call.order)
+            if normalized_target in report_targets:
+                wrote_report = True
         if unresolved:
             unresolved_write_orders.append(call.order)
         content = str(call.args.get('CodeContent') or call.args.get('content')
                       or call.args.get('Content') or '')
         target = call.write_path
-        if target and (normalize_path(observed_path(target, call.cwd), aliases) in report_targets
-                       or content and content == report_text):
-            report_targets.add(normalize_path(observed_path(target, call.cwd), aliases))
+        if target:
+            normalized_target = normalize_path(observed_path(target, call.cwd), aliases)
+            if normalized_target in report_targets or content and content == report_text:
+                report_targets.add(normalized_target)
+                wrote_report = True
+        if wrote_report:
             report_writes.append(call.order)
         # apply_patch is never evidence, but its path headers mark future self-reads.
 
