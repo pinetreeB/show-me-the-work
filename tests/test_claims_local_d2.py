@@ -48,6 +48,7 @@ def test_d2_request_strips_local_metadata_and_persists_no_raw_response(tmp_path)
     visible_item = request["untrusted_data"]["data_block"][0]
     for hidden in ("fixed_commit", "target_evidence", "other_file_evidence", "atom"):
         assert hidden not in visible_item
+        assert f'"{hidden}":' not in rendered
     assert request["claim_ids"] == ["d2-001"] and "run_deadline" in request
     written = "\n".join(path.read_text(encoding="utf-8") for path in (tmp_path / "out").rglob("*")
                         if path.is_file())

@@ -18,7 +18,7 @@ import uuid
 from .judge_contract import PROMPT, SCHEMA, cli_schema, validate_contract
 from .judge_scope import JudgeScope, load_scope
 from .advisory import load_sent_items, read_json, verify_judgments
-from .packets import display_path, sensitive_path, hard_excluded, sent_sources, redact
+from .packets import display_path, hard_excluded, sent_sources, redact
 from .judge_scope import work_source_basis
 from .privacy import load_blocklist, needs_blocklist, validate_packet_privacy
 

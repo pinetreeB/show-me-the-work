@@ -8,7 +8,7 @@ import pytest
 from smtw.claims.check import run
 from smtw.claims.extract import extract
 from smtw.claims.model import Budget
-from tests.claims_support import agy_call, generic, make_case, view, write_transcript
+from tests.claims_support import agy_call, generic, make_case, view
 
 
 def atoms(result, kind):

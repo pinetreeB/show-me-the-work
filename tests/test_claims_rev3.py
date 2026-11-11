@@ -8,10 +8,8 @@ import sys
 import pytest
 
 from smtw.claims.check import run
-from smtw.claims.extract import extract
-from smtw.claims.model import Budget
 from tests.claims_support import agy_call, generic, make_case, view
-from tests.test_claims_contract import git_repo
+from tests.test_claims_contract import git_repo  # noqa: F401
 
 
 MISSING = '1234567890abcdef1234567890abcdef12345678'
@@ -73,7 +71,7 @@ def test_p6_explicit_quote_forms_remain_checked(tmp_path, report):
     ('저장소: `{root}`\n저장소: omitted-project 커밋 `{sha}`', 'unverifiable'),
     ('저장소 repo 및 저장소 omitted-project 커밋 `{sha}`', 'unverifiable'),
 ])
-def test_p7_absence_requires_explicit_repository_scope(tmp_path, git_repo, layout, expected):
+def test_p7_absence_requires_explicit_repository_scope(tmp_path, git_repo, layout, expected):  # noqa: F811
     root, _ = git_repo
     r, _ = make_case(tmp_path, layout.format(root=root, sha=MISSING))
     claim = atoms(run(r, repos=[str(root)]), 'K3')[0]
@@ -82,27 +80,27 @@ def test_p7_absence_requires_explicit_repository_scope(tmp_path, git_repo, layou
 
 
 @pytest.mark.parametrize('name', ['`repo`', '저장소 repo', 'repo 저장소'])
-def test_p7_named_repository_can_establish_scope(tmp_path, git_repo, name):
+def test_p7_named_repository_can_establish_scope(tmp_path, git_repo, name):  # noqa: F811
     root, _ = git_repo
     r, _ = make_case(tmp_path, f'{name} 커밋 `{MISSING}`')
     assert atoms(run(r, repos=[str(root)]), 'K3')[0]['verdict'] == 'absent'
 
 
-def test_p7_commit_option_alone_does_not_establish_repo_scope(tmp_path, git_repo):
+def test_p7_commit_option_alone_does_not_establish_repo_scope(tmp_path, git_repo):  # noqa: F811
     root, sha = git_repo
     r, _ = make_case(tmp_path, f'저장소: `{root}` 커밋 `{MISSING}`')
     claim = atoms(run(r, commits={str(root): sha}), 'K3')[0]
     assert (claim['verdict'], claim['reason_code']) == ('unverifiable', 'repo_scope_unknown')
 
 
-def test_p7_other_repo_git_output_cannot_rescue_scoped_absence(tmp_path, git_repo):
+def test_p7_other_repo_git_output_cannot_rescue_scoped_absence(tmp_path, git_repo):  # noqa: F811
     root, _ = git_repo
     r, t = make_case(tmp_path, f'저장소: `{root}` 커밋 `{MISSING}`', [
         agy_call('run_command', CommandLine='git log -1', Cwd='C:/other/project'), generic(MISSING)])
     assert atoms(run(r, repos=[str(root)], agy=str(t)), 'K3')[0]['verdict'] == 'absent'
 
 
-def test_p7_existing_commit_still_matches_without_scope(tmp_path, git_repo):
+def test_p7_existing_commit_still_matches_without_scope(tmp_path, git_repo):  # noqa: F811
     root, sha = git_repo
     r, _ = make_case(tmp_path, f'커밋 `{sha}`')
     assert atoms(run(r, repos=[str(root)]), 'K3')[0]['verdict'] == 'match'
@@ -169,7 +167,7 @@ def test_p9_read_observation_precedes_source_file(tmp_path, monkeypatch, body, c
     assert (item['verdict'], item['reason_code']) == (verdict, code)
 
 
-def test_p9_unknown_transcript_revision_never_falls_back_to_fixed_commit(tmp_path, git_repo):
+def test_p9_unknown_transcript_revision_never_falls_back_to_fixed_commit(tmp_path, git_repo):  # noqa: F811
     root, sha = git_repo
     r, t = make_case(tmp_path, f'commit {sha} `engine.py` 2줄',
         [agy_call('view_file', AbsolutePath=str(root/'engine.py')), view(str(root/'engine.py'), 'one')])
@@ -177,7 +175,7 @@ def test_p9_unknown_transcript_revision_never_falls_back_to_fixed_commit(tmp_pat
     assert (item['verdict'], item['reason_code']) == ('unverifiable', 'observation_time_unresolved')
 
 
-def test_p9_without_read_fixed_commit_remains_available(tmp_path, git_repo):
+def test_p9_without_read_fixed_commit_remains_available(tmp_path, git_repo):  # noqa: F811
     root, sha = git_repo
     r, _ = make_case(tmp_path, '`engine.py` 2줄')
     assert atoms(run(r, commits={str(root): sha}), 'K2')[0]['verdict'] == 'match'

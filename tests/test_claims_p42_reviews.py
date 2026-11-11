@@ -7,7 +7,7 @@ from tests.test_claims_p41_fix2 import BARE_ASSIGNMENTS
 from tests.test_claims_p41_fix3 import FIX2_REVIEW_CASES
 from tests.test_claims_p41_fix4 import EXPRESSION_DECLARATIONS
 from tests.test_claims_p41_fix5 import GROK_FIX4_CASES
-from tests.test_claims_p42_d1 import case, parser, projected
+from tests.test_claims_p42_d1 import case, parser, projected  # noqa: F401
 
 
 LANGUAGES = ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx']
@@ -27,7 +27,7 @@ CASES += [('.js', text) for text in [
 
 
 @pytest.mark.parametrize('suffix,other', CASES)
-def test_claims_p42_previous_bypasses_keep_both_routes(parser, tmp_path, suffix, other):
+def test_claims_p42_previous_bypasses_keep_both_routes(parser, tmp_path, suffix, other):  # noqa: F811
     report, kwargs = case(tmp_path, other, suffix)
     baseline = run(report, **kwargs)
     assert projected(run(report, **kwargs, js_parser=parser)) == projected(baseline)

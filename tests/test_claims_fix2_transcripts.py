@@ -7,7 +7,7 @@ import pytest
 from smtw.claims.check import run
 from smtw.claims.model import Budget
 from smtw.claims.transcripts import read_transcript
-from tests.claims_support import agy_call, generic, make_case, write_transcript
+from tests.claims_support import agy_call, generic, make_case
 
 
 def _codex_call(name, args, ident='call-synthetic'):

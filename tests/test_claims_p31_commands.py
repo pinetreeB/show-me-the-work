@@ -1,6 +1,5 @@
 """Shell output is never packet provenance (p3-1h); all text is synthetic."""
 import json
-from pathlib import Path
 
 import pytest
 

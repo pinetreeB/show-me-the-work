@@ -69,7 +69,8 @@ def test_fake_judge_verified_and_append_only_logs(tmp_path):
 def test_preflight_refuses_before_executor(tmp_path,setting):
     folder=packet_folder(tmp_path)
     def fail(*args):pytest.fail("executor called on refused input")
-    with pytest.raises(ValueError):invoke(folder,tmp_path,executor=fail,**setting)
+    with pytest.raises(ValueError):
+        invoke(folder,tmp_path,executor=fail,**setting)
     assert not (tmp_path/"out/calls.jsonl").exists()
 
 
@@ -86,7 +87,8 @@ def test_sensitive_environment_values_never_looked_up():
     assert clean["CLAUDE_CONFIG_DIR"]==str(Path.home()/".claude-personal")
     assert clean["CLAUDE_CODE_PLUGIN_CACHE_DIR"]==str(Path.home()/".claude"/"plugins")
     env["ANTHROPIC_API_KEY"]="synthetic"
-    with pytest.raises(ValueError):runner.child_environment(env)
+    with pytest.raises(ValueError):
+        runner.child_environment(env)
 
 
 @pytest.mark.parametrize("mutation",["hash","missing","case","source","size","secret"])
@@ -94,19 +96,27 @@ def test_packet_validation_refuses_before_fake(tmp_path,mutation):
     folder=packet_folder(tmp_path)
     manifest=json.loads((folder/"manifest.json").read_text(encoding="utf-8"))
     path=folder/"packet-001.json"
-    if mutation=="missing":path.unlink()
-    elif mutation=="hash":path.write_text("{}")
-    elif mutation=="case":manifest["case_id"]="excluded-customer"
+    if mutation=="missing":
+        path.unlink()
+    elif mutation=="hash":
+        path.write_text("{}")
+    elif mutation=="case":
+        manifest["case_id"]="excluded-customer"
     else:
         packet=json.loads(path.read_text(encoding="utf-8"))
-        if mutation=="source":packet["data_block"][0]["excerpts"][0]["path"]="~/customer/task.md"
-        elif mutation=="secret":packet["data_block"][0]["claim"]="password=synthetic1234"
-        else:packet["padding"]="x"*30001
-        data=json.dumps(packet).encode();path.write_bytes(data)
+        if mutation=="source":
+            packet["data_block"][0]["excerpts"][0]["path"]="~/customer/task.md"
+        elif mutation=="secret":
+            packet["data_block"][0]["claim"]="password=synthetic1234"
+        else:
+            packet["padding"]="x"*30001
+        data=json.dumps(packet).encode()
+        path.write_bytes(data)
         manifest["packets"][0].update(sha256=runner.sha(data),bytes=len(data),characters=len(data.decode()))
     (folder/"manifest.json").write_text(json.dumps(manifest))
     def fail(*args):pytest.fail("executor called on invalid packet")
-    with pytest.raises((ValueError,OSError)):invoke(folder,tmp_path,executor=fail)
+    with pytest.raises((ValueError,OSError)):
+        invoke(folder,tmp_path,executor=fail)
 
 
 def test_unknown_usage_requires_explicit_override(tmp_path):
@@ -118,7 +128,8 @@ def test_unknown_usage_requires_explicit_override(tmp_path):
 def test_usage_rechecked_between_calls(tmp_path):
     folder=packet_folder(tmp_path)
     usage=iter([{"known":True,"five_hour":0,"weekly":0},{"known":True,"five_hour":40,"weekly":0}])
-    with pytest.raises(ValueError):invoke(folder,tmp_path,usage_reader=lambda:next(usage))
+    with pytest.raises(ValueError):
+        invoke(folder,tmp_path,usage_reader=lambda:next(usage))
 
 
 def test_usage_cache_shape_and_staleness(tmp_path):
@@ -145,7 +156,8 @@ def test_single_real_launcher_site_statically():
 def test_nonzero_and_malformed_output_are_logged_without_stderr(tmp_path):
     folder=packet_folder(tmp_path)
     def fake(*args):return SimpleNamespace(returncode=7,stdout="{}",stderr="synthetic-private-note")
-    with pytest.raises(ValueError):invoke(folder,tmp_path,executor=fake)
+    with pytest.raises(ValueError):
+        invoke(folder,tmp_path,executor=fake)
     log=(tmp_path/"out/calls.jsonl").read_text(encoding="utf-8")
     assert "synthetic-private-note" not in log and '"exit_code": 7' in log
 
@@ -168,10 +180,13 @@ def test_prompt_schema_hashes_frozen_in_manifest_and_call(tmp_path):
 @pytest.mark.parametrize("field",["prompt_sha256","schema_sha256","cli_schema_sha256","version"])
 def test_changed_contract_refuses_before_executor(tmp_path,field):
     folder=packet_folder(tmp_path)
-    path=folder/"manifest.json";manifest=json.loads(path.read_text(encoding="utf-8"))
-    manifest["judge_contract"][field]="changed";path.write_text(json.dumps(manifest))
+    path=folder/"manifest.json"
+    manifest=json.loads(path.read_text(encoding="utf-8"))
+    manifest["judge_contract"][field]="changed"
+    path.write_text(json.dumps(manifest))
     def fail(*args):pytest.fail("changed contract was executed")
-    with pytest.raises(ValueError):invoke(folder,tmp_path,executor=fail)
+    with pytest.raises(ValueError):
+        invoke(folder,tmp_path,executor=fail)
 
 
 def test_prompt_treats_injection_as_data_and_schema_is_bounded(tmp_path):
@@ -191,7 +206,8 @@ def test_compact_cli_schema_retains_array_constraints_and_empty_tools():
     original=runner.SCHEMA.read_text(encoding="utf-8")
     argv=runner.command(original,"claude-p.cmd")
     assert "\n" not in argv[-1] and "\r" not in argv[-1]
-    expected=json.loads(original);expected.pop("$schema")
+    expected=json.loads(original)
+    expected.pop("$schema")
     assert json.loads(argv[-1])["properties"]["judgments"]==expected
     assert json.loads(argv[-1])["type"]=="object"
     assert argv[argv.index("--tools")+1]==""
@@ -200,7 +216,8 @@ def test_compact_cli_schema_retains_array_constraints_and_empty_tools():
 
 def test_native_executable_discovery_uses_files_only(tmp_path,monkeypatch):
     binary=tmp_path/"node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-    binary.parent.mkdir(parents=True);binary.write_bytes(b"fake only")
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"fake only")
     monkeypatch.setattr(runner,"os",SimpleNamespace(name="nt"))
     monkeypatch.setattr(runner.shutil,"which",lambda name:str(tmp_path/"claude.cmd") if name=="claude" else None)
     assert runner.resolve_executable()==str(binary.resolve())
@@ -220,7 +237,8 @@ def test_usage_widget_milliseconds_seconds_and_invalid_clocks(tmp_path,monkeypat
     cache.write_text(json.dumps(value),encoding="utf-8")
     result=runner.read_usage(cache)
     assert result["known"] is known
-    if known:assert result=={"known":True,"five_hour":59,"weekly":69}
+    if known:
+        assert result=={"known":True,"five_hour":59,"weekly":69}
 
 
 @pytest.mark.parametrize("missing", ["scope_file", "output_root"])
@@ -401,7 +419,8 @@ def test_lean_disabled_preserves_argv_bytes_and_executor_signature(tmp_path):
                 "--no-session-persistence", "--output-format", "json",
                 "--disable-slash-commands", "--strict-mcp-config", "--json-schema",
                 runner.cli_schema(schema)]
-    encode = lambda argv: json.dumps(argv, ensure_ascii=True).encode("ascii")
+    def encode(argv):
+        return json.dumps(argv, ensure_ascii=True).encode("ascii")
     assert encode(runner.command(schema, "claude-p")) == encode(baseline)
     assert encode(runner.command(schema, "claude-p", lean_context=False)) == encode(baseline)
     before = Path.cwd()

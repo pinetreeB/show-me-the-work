@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
 import time
@@ -11,9 +10,8 @@ import pytest
 
 from smtw.claims.check import Checker, check_one, run
 from smtw.claims.extract import extract
-from smtw.claims.model import Budget, Claim, Evidence, line_counts, summarize
-from smtw.claims.paths import mapping, matches_path, normalize_url
-from smtw.claims.sources import local_source
+from smtw.claims.model import Budget, Claim, Evidence, line_counts
+from smtw.claims.paths import mapping
 from smtw.claims.transcripts import read_transcript, resolve_agy
 from tests.claims_support import agy_call, generic, make_case, view, write_transcript
 

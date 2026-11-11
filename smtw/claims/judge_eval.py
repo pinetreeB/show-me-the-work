@@ -154,7 +154,10 @@ def collect_pool(scope_file: Path):
                        "observation": hashlib.sha256((revision + ":" + name).encode()).hexdigest()[:16]}
                 if len(statement(row)) > 300 or redact(statement(row))[0] != statement(row):
                     continue
-                pool.append(row); seen.add(quote); counts[category] += 1; taken += 1
+                pool.append(row)
+                seen.add(quote)
+                counts[category] += 1
+                taken += 1
                 if taken >= 30 or counts[category] >= 200:
                     break
             if taken:
@@ -269,7 +272,8 @@ def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2,
                     and redact(altered)[0] == altered
                     and redact(statement(row))[0] == statement(row)):
                 eligible.append((row, altered))
-        if not eligible:raise ValueError("no valid paired mutation for "+kind)
+        if not eligible:
+            raise ValueError("no valid paired mutation for "+kind)
         for _ in range(per_kind):
             available = [pair for pair in eligible if pair[0]["quote"] not in used] or eligible
             # Mix code/document and both approved roots without answer-dependent fields.
@@ -280,7 +284,8 @@ def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2,
             used.add(row["quote"])
             for claim, verdict in [(statement(row),"supported"),(altered,"contradicted")]:
                 key="q-"+f"{rng.getrandbits(64):016x}"
-                if key in truth:raise ValueError("duplicate generated id")
+                if key in truth:
+                    raise ValueError("duplicate generated id")
                 if redact(claim)[0]!=claim:
                     raise ValueError("mutation is not safe after redaction")
                 item={"id":key,"branch":"evidence_review","report_line":row["report_line"],
@@ -288,7 +293,8 @@ def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2,
                       "excerpts":[{"path":row["path"],"source":row.get("source", "git_show"),"revision":row.get("revision", ""),
                                    "ref":1,"version":"A","observation":row["observation"],
                                    "text":row["text"],"redactions":row["redactions"]}]}
-                items.append(item);item_cases[key]=row["case"]
+                items.append(item)
+                item_cases[key]=row["case"]
                 item_sources[key] = (row["quote"], row.get("category", "code"))
                 truth[key]={"verdict":verdict,"mutation":kind if verdict=="contradicted" else None}
     if len(used) < min(60, per_kind * len(KINDS)):
@@ -344,8 +350,10 @@ def generate(pool: list[dict], output: Path, *, scope_file: Path, seed: int = 2,
 
 
 def summarize(folder: Path, *, scope_file: Path) -> str:
-    sent=load_sent_items(folder);manifest=read_json(folder/"manifest.json")
-    validate_contract(manifest);validate_scope(manifest,sent,load_scope(scope_file))
+    sent=load_sent_items(folder)
+    manifest=read_json(folder/"manifest.json")
+    validate_contract(manifest)
+    validate_scope(manifest,sent,load_scope(scope_file))
     lines=["| Packet | Items | Excerpt source paths | Redactions |",
            "|---|---:|---|---:|"]
     for entry in manifest["packets"]:
@@ -359,10 +367,12 @@ def summarize(folder: Path, *, scope_file: Path) -> str:
 def read_run(folder: Path, sent: dict):
     rows, displayed, not_in = {}, {}, 0
     files=sorted(folder.glob("judgments-*.json"))
-    if not files:raise ValueError("no judge outputs")
+    if not files:
+        raise ValueError("no judge outputs")
     for path in files:
         judgments=validate_judgments(read_json(path))
-        if any(row["id"] in rows for row in judgments):raise ValueError("duplicate run id")
+        if any(row["id"] in rows for row in judgments):
+            raise ValueError("duplicate run id")
         verified=read_json(path.with_name(path.name.replace("judgments-","verified-")))
         # Recompute the displayed subset, independently of a supplied verdict file.
         actual=verify_judgments(judgments,sent)
@@ -376,19 +386,23 @@ def read_run(folder: Path, sent: dict):
 
 def score(folder: Path, truth_file: Path, runs: list[Path], *, scope_file: Path):
     summarize(folder, scope_file=scope_file)
-    if len(runs) not in {1,3}:raise ValueError("supply one run or exactly three reproducibility runs")
-    sent=load_sent_items(folder);truth=read_json(truth_file)["items"]
-    if set(truth)!=set(sent):raise ValueError("truth ids differ from sent ids")
+    if len(runs) not in {1,3}:
+        raise ValueError("supply one run or exactly three reproducibility runs")
+    sent=load_sent_items(folder)
+    truth=read_json(truth_file)["items"]
+    if set(truth)!=set(sent):
+        raise ValueError("truth ids differ from sent ids")
     if any(row["verdict"] not in {"supported","contradicted"} for row in truth.values()):
         raise ValueError("invalid truth label")
     evaluated=[read_run(run,sent) for run in runs]
     positives={key for key,row in truth.items() if row["verdict"]=="contradicted"}
     negatives=set(truth)-positives
     measures=[]
+    def ratio(a, b):
+        return a / b if b else None
     for raw,shown,bad in evaluated:
         flags={key for key,row in shown.items() if row["verdict"]=="contradicted"}
         tp,fp=len(flags&positives),len(flags&negatives)
-        ratio=lambda a,b: a/b if b else None
         measures.append({"recall":ratio(tp,len(positives)),"precision":ratio(tp,tp+fp),
             "false_display_rate":ratio(fp,len(negatives)),
             "quote_not_in_excerpt_rate":ratio(bad,len(raw)),
@@ -431,7 +445,8 @@ def main(argv=None):
     g.add_argument("--out-root",type=Path,required=True)
     g.add_argument("--batch-size", type=int, help="packets per batch folder; default: no split")
     g.add_argument("--limit-items", type=int, help="first K items before shuffle; K must preserve complete pairs")
-    h=sub.add_parser("summary");h.add_argument("--packets",type=Path,required=True)
+    h=sub.add_parser("summary")
+    h.add_argument("--packets",type=Path,required=True)
     s=sub.add_parser("score")
     s.add_argument("--packets",type=Path,required=True)
     s.add_argument("--truth",type=Path,required=True)

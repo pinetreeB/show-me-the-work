@@ -21,7 +21,16 @@ def main() -> int:
 
     wheel = _single(sorted(args.wheel_dir.glob("*.whl")), "wheel")
     root = args.root.resolve()
-    expected_smtw = {f"smtw/{path.name}" for path in (root / "smtw").glob("*.py")}
+    expected_smtw = {
+        path.relative_to(root).as_posix()
+        for path in (root / "smtw").rglob("*.py")
+        if "__pycache__" not in path.parts
+    }
+    expected_claims_data = {
+        "smtw/claims/js_definitions.mjs",
+        "smtw/claims/judge-output.schema.json",
+        "smtw/claims/judge-prompt-v1.txt",
+    }
     # COMPAT-02 (v2.6.1): the legacy package ships physical thin shims so
     # `python -m fable_lite.<submodule>` works; mirror the smtw rule and demand
     # exact source-tree parity instead of the former __init__-only contract.
@@ -51,6 +60,9 @@ def main() -> int:
         missing = sorted(expected_smtw - wheel_smtw)
         unexpected = sorted(wheel_smtw - expected_smtw)
         raise SystemExit(f"canonical package mismatch: missing={missing}, unexpected={unexpected}")
+    missing_claims_data = sorted(expected_claims_data - record_paths)
+    if missing_claims_data:
+        raise SystemExit(f"missing smtw/claims package data: {missing_claims_data}")
     if wheel_shim != expected_shim:
         missing = sorted(expected_shim - wheel_shim)
         unexpected = sorted(wheel_shim - expected_shim)

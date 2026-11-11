@@ -93,7 +93,8 @@ def test_agy_missing_result_or_interruption_rejects_shell_batch(tmp_path,interru
         {"name":"run_command","args":{"CommandLine":"cat "+ROOT+"/.env"}},
     ]}
     rows=[planner]
-    if interruption:rows.append({"type":interruption,"content":"cancelled"})
+    if interruption:
+        rows.append({"type":interruption,"content":"cancelled"})
     rows.append(generic("EXCLUDED_MARKER"))
     assert not packet_sources(tmp_path,rows,"agy")
 
@@ -108,7 +109,8 @@ def test_agy_extra_generic_invalidates_prior_shell_output(tmp_path):
 def test_shell_aux_pointer_never_opens_another_step(tmp_path,notice,monkeypatch):
     aux=tmp_path/"aux"
     target=aux/("steps/3/output.txt" if "steps/" in notice else "tasks/task-9.log")
-    target.parent.mkdir(parents=True);target.write_text("EXCLUDED_MARKER",encoding="utf-8")
+    target.parent.mkdir(parents=True)
+    target.write_text("EXCLUDED_MARKER",encoding="utf-8")
     original=Path.open
     def guarded(path,*args,**kwargs):
         assert path != target, "shell pointer file opened"
@@ -124,7 +126,8 @@ def test_shell_aux_pointer_never_opens_another_step(tmp_path,notice,monkeypatch)
     "Hong-Gildong_Trading", "Ｈｏｎｇ　Ｇｉｌｄｏｎｇ　Ｔｒａｄｉｎｇ",
 ])
 def test_blocklist_normalizes_synthetic_name_variants(tmp_path,variant):
-    path=tmp_path/"block.txt";path.write_text("# synthetic names\n홍길동상사 # comment\nHong Gildong Trading\n",encoding="utf-8")
+    path=tmp_path/"block.txt"
+    path.write_text("# synthetic names\n홍길동상사 # comment\nHong Gildong Trading\n",encoding="utf-8")
     block=load_blocklist(path)
     assert block.metadata()["count"]==2 and block.matches(variant)
 
@@ -133,12 +136,14 @@ def test_halfwidth_jamo_name_matches(tmp_path):
     source="ㅎㅗㅇㄱㅣㄹㄷㅗㅇㅅㅏㅇㅅㅏ"
     replacements={unicodedata.normalize("NFKC",chr(n)):chr(n) for n in range(0xFFA0,0xFFDD)}
     half="".join(replacements.get(unicodedata.normalize("NFKC",char),char) for char in source)
-    path=tmp_path/"block.txt";path.write_text("홍길동상사",encoding="utf-8")
+    path=tmp_path/"block.txt"
+    path.write_text("홍길동상사",encoding="utf-8")
     assert load_blocklist(path).matches(half)
 
 
 def test_short_name_warns_without_echo_and_remains_blocked(tmp_path):
-    path=tmp_path/"block.txt";path.write_text("# ignored\nQ # short\n",encoding="utf-8")
+    path=tmp_path/"block.txt"
+    path.write_text("# ignored\nQ # short\n",encoding="utf-8")
     with pytest.warns(UserWarning,match="shorter than two") as records:
         block=load_blocklist(path)
     assert "Q" not in str(records[0].message)

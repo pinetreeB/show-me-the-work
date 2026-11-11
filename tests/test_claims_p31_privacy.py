@@ -1,6 +1,5 @@
 """Privacy gates use synthetic names only; no real blocklist is accessed."""
 import json
-from pathlib import Path
 
 import pytest
 

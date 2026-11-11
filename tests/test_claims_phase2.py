@@ -1,5 +1,6 @@
 import pytest
 from smtw.claims.check import run
+from smtw.claims.packets import redact
 from tests.claims_support import agy_call, generic, make_case, view
 
 URL = "https://example.invalid/guide#usage"
@@ -36,8 +37,6 @@ def test_web_anchor_without_read_stays_unverifiable(tmp_path):
         agy_call("view_file",AbsolutePath="C:/sample/state.json"),view("C:/sample/state.json",'original string actually observed')])
     claims=[c for c in run(r,agy=str(t))["claims"] if c["check_type"]=="K5"]
     assert len(claims)==1 and claims[0]["verdict"]=="unverifiable"
-
-from smtw.claims.packets import redact
 
 @pytest.mark.parametrize("text", [
     "commit auth " + "a1"*20, "| token | " + "a1"*20 + " |",

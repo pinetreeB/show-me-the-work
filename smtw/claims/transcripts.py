@@ -11,7 +11,7 @@ import re
 
 from .model import Budget, Evidence, Transcript, line_counts
 from .paths import matches_path, normalize_path, normalize_url
-from .sources import content_lines, decode, file_lines
+from .sources import content_lines, file_lines
 
 
 FILE_TOKEN = re.compile(r'''(?:[A-Za-z]:[\\/]|/|\.?\.?[/\\])?[^\s`"'<>;|{}=]+\.(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|csv|tsv)(?:@[\da-f]+)?''', re.I)

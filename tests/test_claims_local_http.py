@@ -162,7 +162,6 @@ def test_success_preflights_counts_and_posts_strict_openai_request():
 
 
 def test_think_block_in_content_is_rejected_without_stripping_or_persistence(tmp_path):
-    from pathlib import Path
     from smtw.claims.local_judge import LocalConfig, LocalJudgeRunError, run_local_judge
 
     fixture = Path(__file__).parent / "fixtures" / "local-judge-d1"

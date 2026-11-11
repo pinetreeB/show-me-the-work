@@ -1,6 +1,4 @@
 """The outbound source policy must not change the deterministic checker."""
-import json
-
 import pytest
 
 from smtw.claims.check import run

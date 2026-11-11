@@ -1,6 +1,5 @@
 """Synthetic work-document scope, audit trail and offline CLI acceptance."""
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest

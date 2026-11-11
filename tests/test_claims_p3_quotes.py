@@ -1,6 +1,5 @@
 import hashlib
 import json
-from pathlib import Path
 
 from smtw.claims.advisory import verify_judgments
 from smtw.claims.judge_contract import PROMPT, contract, validate_contract

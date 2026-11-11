@@ -17,8 +17,10 @@ def echo_chain(tmp_path,monkeypatch):
     def forbidden(*args,**kwargs):pytest.fail("REAL JUDGE LAUNCH FORBIDDEN")
     monkeypatch.setattr(judge,"_launch",forbidden)
     compiler=Path(os.environ.get("WINDIR",r"C:\Windows"))/"Microsoft.NET/Framework64/v4.0.30319/csc.exe"
-    if not compiler.exists():pytest.skip("local .NET Framework compiler unavailable")
-    folder=tmp_path/"echo with spaces";folder.mkdir()
+    if not compiler.exists():
+        pytest.skip("local .NET Framework compiler unavailable")
+    folder=tmp_path/"echo with spaces"
+    folder.mkdir()
     source=folder/"Echo.cs"
     source.write_text(r"""using System;
 using System.Web.Script.Serialization;
@@ -62,7 +64,8 @@ def test_schema_tools_and_model_roundtrip_exactly(echo_chain,route,lean):
         echoed=json.loads(completed.stdout)
     assert echoed["argv"]==argv[1:]
     actual=echoed["argv"]
-    expected=json.loads(original);expected.pop("$schema")
+    expected=json.loads(original)
+    expected.pop("$schema")
     wrapped=json.loads(actual[actual.index("--json-schema")+1])
     assert wrapped=={"type":"object","properties":{"judgments":expected},
                     "required":["judgments"],"additionalProperties":False}

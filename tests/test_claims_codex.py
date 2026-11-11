@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 
 from smtw.claims.check import run
-from smtw.claims.model import Budget
-from smtw.claims.transcripts import js_calls, read_transcript
-from tests.claims_support import make_case, write_transcript
+from smtw.claims.transcripts import js_calls
+from tests.claims_support import make_case
 
 
 def call(name, args, ident='call-synthetic'):
