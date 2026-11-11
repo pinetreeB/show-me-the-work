@@ -90,6 +90,10 @@ def render_text(result: dict) -> str:
     output.append(f"시간 상한: {result.get('timed_out', False)}, 미검사: {result.get('unchecked_count', 0)}")
     for warning in result.get('warnings', []):
         output.append('참고: ' + (warning if isinstance(warning, str) else json.dumps(warning, ensure_ascii=False)))
+    compaction = result.get('compaction', {})
+    if compaction.get('count', 0) > 0:
+        output.append(f"컨텍스트 압축 감지: {compaction['count']}회 "
+                      f"(압축 후 미재열람 인용 {len(compaction.get('stale_claim_lines', []))}건)")
     return '\n'.join(output)
 
 

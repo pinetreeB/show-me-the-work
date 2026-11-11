@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, replace
 import json
+import io
 import ast
 from pathlib import Path
 import posixpath
@@ -404,6 +405,21 @@ class Call:
                    or self.args.get('file_path') or self.args.get('path') or '')
 
     @property
+    def write_path(self):
+        """Literal target of a direct file write, including agy ``Path`` arguments.
+
+        ``path`` deliberately ignores ``Path``: a ``read_file(Path=...)`` result
+        carries no self-identifying header, so it must never bind a read.  A
+        write target only excludes later self-reads, which is fail-safe, and a
+        non-write call never has one.
+        """
+        if not self.write:
+            return ''
+        return str(self.args.get('AbsolutePath') or self.args.get('TargetFile')
+                   or self.args.get('file_path') or self.args.get('path')
+                   or self.args.get('Path') or '')
+
+    @property
     def url(self):
         return str(self.args.get('Url') or self.args.get('URL') or self.args.get('url') or '')
 
@@ -458,7 +474,8 @@ def command_write_targets(call: Call, _wrapper_depth: int = 0) -> tuple[list[str
     """
     command, _ = success_marker(call.command)
     if not command:
-        return ([call.path] if call.path else [], False)
+        target = call.write_path or call.path
+        return ([target] if target else [], False)
     targets, dynamic_redirect = [], False
 
     def add(value: str) -> None:
@@ -518,7 +535,30 @@ def observed_path(value: str, cwd: str) -> str:
     return posixpath.normpath(normalize_path(cwd) + '/' + path)
 
 
+def _chunk_key(path: Path) -> tuple:
+    return (0, int(path.stem), path.name) if path.stem.isdigit() else (1, 0, path.name)
+
+
+def transcript_files(path: Path) -> list[Path]:
+    """A chunk directory is read as its ``*.jsonl`` files in numeric name order."""
+    return sorted(path.glob('*.jsonl'), key=_chunk_key) if path.is_dir() else [path]
+
+
+def transcript_stream(path: Path):
+    """Binary line stream; chunk files are fixed-size byte slices, so join first.
+
+    A slice boundary can split a JSON record or a UTF-8 sequence, so chunks are
+    concatenated before line splitting (same ``\\n`` semantics as a file).
+    """
+    if path.is_dir():
+        return io.BytesIO(b''.join(file.read_bytes() for file in transcript_files(path)))
+    return path.open('rb')
+
+
 def aux_root(path: Path) -> Path:
+    if path.is_dir():
+        # logs/chunks/transcript_full -> the same root as logs/transcript_full.jsonl
+        path = path.parent.parent / 'transcript_full.jsonl'
     if (path.parent / 'aux').is_dir():
         return path.parent / 'aux'
     return path.parent.parent
@@ -1019,10 +1059,12 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
             writes.setdefault(normalize_path(observed_path(target, call.cwd), aliases), call.order)
         if unresolved:
             unresolved_write_orders.append(call.order)
-        content = str(call.args.get('CodeContent') or call.args.get('content') or '')
-        if call.path and (normalize_path(observed_path(call.path, call.cwd), aliases) in report_targets
-                          or content and content == report_text):
-            report_targets.add(normalize_path(observed_path(call.path, call.cwd), aliases))
+        content = str(call.args.get('CodeContent') or call.args.get('content')
+                      or call.args.get('Content') or '')
+        target = call.write_path
+        if target and (normalize_path(observed_path(target, call.cwd), aliases) in report_targets
+                       or content and content == report_text):
+            report_targets.add(normalize_path(observed_path(target, call.cwd), aliases))
             report_writes.append(call.order)
         # apply_patch is never evidence, but its path headers mark future self-reads.
 
@@ -1042,7 +1084,26 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                 continue
             result.evidence.append(e)
 
-    with path.open('rb') as stream:
+    def hint_read_batch():
+        """Compaction audit only: a fully successful read_file/view_file batch.
+
+        ``read_file`` output names no file, so it never becomes evidence.  When
+        every response of its batch succeeded, its literal path arguments may
+        still show that a file was reopened after compaction.  Self-written
+        and globally write-excluded paths follow the evidence exclusions.
+        """
+        if not batch or batch['answered'] != batch['expected'] or not batch['ok']:
+            return
+        order = batch['order']
+        if any(o <= order for o in unresolved_write_orders):
+            return
+        for target in batch['reads']:
+            if target in report_targets or target in writes and writes[target] <= order:
+                continue
+            result.compaction_rereads.append((order, target))
+
+    batch: dict = {}
+    with transcript_stream(path) as stream:
         for n, raw in enumerate(stream, 1):
             budget.check()
             try:
@@ -1057,22 +1118,43 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
             stamp = str(row.get('created_at', row.get('timestamp', '')))
             if kind == 'agy':
                 typ = row.get('type')
+                if typ == 'CHECKPOINT':
+                    # Audit metadata only: compaction never changes evidence.
+                    step = row.get('step_index')
+                    result.compaction_orders.append(n)
+                    result.compaction_steps.append(
+                        step if isinstance(step, int) and not isinstance(step, bool) else n)
                 if typ == 'PLANNER_RESPONSE':
                     recognized += 1
                     if pending:
                         result.valid = False
                         pending.clear()
+                    batch = {'order': n, 'expected': 0, 'answered': 0, 'ok': True, 'reads': []}
                     for tool in row.get('tool_calls', []):
                         if not isinstance(tool, dict) or not isinstance(tool.get('args', {}), dict):
                             result.valid = False
+                            batch['ok'] = False
                             continue
                         call = Call(str(tool.get('name', '')), tool.get('args', {}), n, stamp)
                         register(call)
                         pending.append(call)
+                        batch['expected'] += 1
+                        if call.name.rsplit('.', 1)[-1] in {'read_file', 'view_file'} and not call.write:
+                            literal = next((call.args[k] for k in ('Path', 'AbsolutePath', 'TargetFile')
+                                            if isinstance(call.args.get(k), str) and call.args[k]), '')
+                            if literal:
+                                batch['reads'].append(normalize_path(observed_path(literal, call.cwd), aliases))
                 elif typ == 'GENERIC' and pending:
                     call = pending.popleft()
                     code = 1 if row.get('status') in {'ERROR', 'FAILED'} else None
-                    accept(call, text_value(row.get('content', '')), n, code)
+                    body = text_value(row.get('content', ''))
+                    if batch:
+                        batch['answered'] += 1
+                        if code or re.search(r'^Error', body, re.M):
+                            batch['ok'] = False
+                        if not pending:
+                            hint_read_batch()
+                    accept(call, body, n, code)
                 elif typ == 'SYSTEM_MESSAGE':
                     # System content supplies control metadata ONLY, never evidence text.
                     body = text_value(row.get('content', ''))
@@ -1084,6 +1166,9 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                     value = row['payload'].get('cwd')
                     if isinstance(value, str):
                         conversation_cwd = value
+                if row.get('type') == 'compacted':
+                    result.compaction_orders.append(n)
+                    result.compaction_steps.append(n)
                 if row.get('type') != 'response_item':
                     continue
                 item = row.get('payload', {})
@@ -1126,6 +1211,12 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                         else:
                             result.warnings.append(f'복합 도구 결과 연결 미확인: {path}:{n}')
     cutoff = max(report_writes, default=10**18)
+    # A compaction after the last report write cannot have affected that report.
+    kept = [(o, s) for o, s in zip(result.compaction_orders, result.compaction_steps) if o <= cutoff]
+    result.compaction_orders = [o for o, _ in kept]
+    result.compaction_steps = [s for _, s in kept]
+    result.compaction_rereads = [(o, p) for o, p in result.compaction_rereads
+                                 if o <= cutoff and p not in report_targets]
     filtered = []
     for e in result.evidence:
         if normalize_path(e.path, aliases) in report_targets:
@@ -1202,11 +1293,31 @@ def load_measurement_pointer(e: Evidence, budget: Budget) -> None:
     e.measure_loaded = True
 
 
+def chunk_dir(path: Path) -> bool:
+    """agy's chunked layout: ``logs/chunks/transcript_full/*.jsonl``."""
+    return path.is_dir() and path.parent.name == 'chunks' and any(path.glob('*.jsonl'))
+
+
 def resolve_agy(value: str, brain_root: Path) -> Path:
     path = Path(value).expanduser()
     if path.is_file() or path.suffix.lower() == '.jsonl':
         return path
-    return brain_root.expanduser() / value / '.system_generated' / 'logs' / 'transcript_full.jsonl'
+    if chunk_dir(path):
+        return path
+    logs = brain_root.expanduser() / value / '.system_generated' / 'logs'
+    full = logs / 'transcript_full.jsonl'
+    chunks = logs / 'chunks' / 'transcript_full'
+    if not full.is_file() and chunk_dir(chunks):
+        return chunks
+    return full
+
+
+WRITE_PATH_KEYS = ('TargetFile', 'AbsolutePath', 'Path', 'file_path', 'path')
+WRITE_CONTENT_KEYS = ('CodeContent', 'Content', 'content')
+
+
+def _first_present(args: dict, keys: tuple[str, ...], default=None):
+    return next((args[key] for key in keys if key in args), default)
 
 
 def discover_agy(report: Path, report_text: str, brain_root: Path,
@@ -1214,12 +1325,17 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
     """Find exact last-write matches; never select among ambiguous conversations."""
     candidates = []
     target = normalize_path(str(report), aliases)
-    for transcript in brain_root.expanduser().glob('*/.system_generated/logs/transcript_full.jsonl'):
+    root = brain_root.expanduser()
+    transcripts = list(root.glob('*/.system_generated/logs/transcript_full.jsonl'))
+    # A conversation without a full transcript may keep only its chunks.
+    transcripts += [chunks for chunks in root.glob('*/.system_generated/logs/chunks/transcript_full')
+                    if not (chunks.parent.parent / 'transcript_full.jsonl').is_file() and chunk_dir(chunks)]
+    for transcript in transcripts:
         budget.check()
         last_content = None
         pending = deque()
         try:
-            with transcript.open('rb') as stream:
+            with transcript_stream(transcript) as stream:
                 for raw in stream:
                     budget.check()
                     row = json.loads(raw)
@@ -1229,15 +1345,16 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
                     elif row.get('type') == 'GENERIC' and pending:
                         tool = pending.popleft()
                         args = tool.get('args', {})
-                        path = args.get('TargetFile', args.get('AbsolutePath', ''))
+                        path = _first_present(args, WRITE_PATH_KEYS, '')
                         if not isinstance(path, str) or normalize_path(path, aliases) != target:
                             continue
                         if not re.search(r'write|replace|edit', str(tool.get('name', '')), re.I):
                             continue
                         if row.get('status') != 'DONE' or re.search(r'^Error', text_value(row.get('content')), re.M):
                             continue
-                        # A final partial edit cannot prove byte equality with the report.
-                        last_content = args.get('CodeContent') if 'write' in tool.get('name', '') else None
+                        # A final partial edit or append cannot prove byte equality with the report.
+                        last_content = (_first_present(args, WRITE_CONTENT_KEYS)
+                                        if 'write' in tool.get('name', '') and not args.get('Append') else None)
         except (OSError, UnicodeDecodeError, ValueError, AttributeError, TypeError):
             continue
         if last_content == report_text:

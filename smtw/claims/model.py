@@ -127,6 +127,14 @@ class Transcript:
     warnings: list[str] = field(default_factory=list)
     valid: bool = True
     version: str = ""
+    # Native context-compaction rows (agy CHECKPOINT, Codex compacted) at or
+    # before the last report write: audit metadata only, never evidence and
+    # never an input to verdicts.
+    compaction_orders: list[int] = field(default_factory=list)
+    compaction_steps: list[int] = field(default_factory=list)
+    # (order, normalized path) of fully successful read_file/view_file batches;
+    # compaction audit only, never evidence.
+    compaction_rereads: list[tuple[int, str]] = field(default_factory=list)
 
 
 def line_counts(text: str) -> dict[str, int]:

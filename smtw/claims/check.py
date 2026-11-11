@@ -941,6 +941,68 @@ class Checker:
                 c.reason = '부재 확정 전 지정 저장소 검색을 완료하지 못함'
 
 
+def _claim_observations(source) -> list[dict]:
+    """Every evidence metadata record a claim's verdict cited."""
+    found, stack = [], [source]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            if isinstance(item.get('location'), str) and 'tool' in item:
+                found.append(item)
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return found
+
+
+def compaction_audit(claims: list[Claim], transcript: Transcript, transcript_path: Path | None,
+                     aliases: dict[str, str]) -> dict:
+    """Advisory only: file citations whose only basis predates the last compaction.
+
+    Only compactions at or before the last report write are recorded.  A claim
+    is listed when every observation behind it is a transcript read (no
+    fixed-commit or explicit source-file basis) and one of its files has no
+    successful transcript read after the last such compaction.  Verdicts never
+    change.
+    """
+    audit = {'count': len(transcript.compaction_orders),
+             'orders': list(transcript.compaction_orders),
+             'steps': list(transcript.compaction_steps),
+             'stale_claim_lines': [], 'stale_files': []}
+    if not transcript.compaction_orders or transcript_path is None:
+        return audit
+    last = transcript.compaction_orders[-1]
+    prefix = f'{transcript_path}:'
+    hinted = {p for order, p in transcript.compaction_rereads if order > last}
+    reread, reread_current = set(hinted), set(hinted)
+    for e in transcript.evidence:
+        if (e.order > last and e.path and not e.control_only
+                and (not e.problem or e.problem_code == 'partial_range')):
+            reread_current.add(normalize_path(e.path, aliases))
+            if not e.after_report:
+                reread.add(normalize_path(e.path, aliases))
+    lines, files = set(), set()
+    for c in claims:
+        if c.check_type == 'K10' or c.reason_code == 'timed_out':
+            continue
+        observed = _claim_observations(c.source)
+        from_transcript = [o for o in observed if o['location'].startswith(prefix)
+                           and o['location'][len(prefix):].isdigit()]
+        if not observed or len(from_transcript) != len(observed):
+            continue
+        stale = {normalize_path(o['path'], aliases) for o in from_transcript
+                 if isinstance(o.get('path'), str) and o['path'] and not o.get('url')}
+        pool = reread_current if c.current else reread
+        stale = {s for s in stale if s and not any(
+            s == r or matches_path(s, r) or matches_path(r, s) for r in pool)}
+        if stale:
+            lines.add(c.report_line)
+            files |= stale
+    audit['stale_claim_lines'] = sorted(lines)
+    audit['stale_files'] = sorted(files)
+    return audit
+
+
 def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
         agy_auto: bool = False,
         brain_root: Path | None = None, repos: list[str] | None = None,
@@ -963,6 +1025,7 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
         sources[name] = actual
     claims, warnings = [], []
     transcript = Transcript()
+    transcript_path = None
     timed_out, unchecked = False, 0
     completed = 0
     try:
@@ -979,9 +1042,10 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
                 transcript.valid = False
                 transcript.warnings.append(f'보고서 마지막 쓰기와 바이트가 일치하는 agy 대화 {len(candidates)}개: 자동 선택 안 함')
         if agy:
-            transcript = read_transcript(resolve_agy(agy, brain_root or Path('~/.gemini/antigravity-cli/brain')),
-                                         'agy', report, report_text, aliases, budget)
+            transcript_path = resolve_agy(agy, brain_root or Path('~/.gemini/antigravity-cli/brain'))
+            transcript = read_transcript(transcript_path, 'agy', report, report_text, aliases, budget)
         elif codex:
+            transcript_path = codex
             transcript = read_transcript(codex, 'codex', report, report_text, aliases, budget)
         warnings.extend(transcript.warnings)
         repositories = Repositories(repos or [], commits or {}, aliases, budget)
@@ -1005,5 +1069,6 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
     result = summarize(claims, timed_out=timed_out, unchecked_count=unchecked,
                        warnings=warnings, input_incomplete=not transcript.valid)
     result['transcript_format'] = transcript.version
+    result['compaction'] = compaction_audit(claims, transcript, transcript_path, aliases)
     result['elapsed_seconds'] = round(budget.clock() - budget.started, 6)
     return result

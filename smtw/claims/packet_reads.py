@@ -29,11 +29,17 @@ def _control(call: Call, origin: str, problem: str, code: str, path: str = "") -
 
 
 def _excluded_literal(call: Call) -> str:
-    """Keep the hard-exclusion category for a single excluded literal path."""
+    """Keep the hard-exclusion category for a single excluded literal path.
+
+    The resolved path is returned so an excluded parent folder named only by
+    the working directory survives a standalone ``parse_packet_result`` call.
+    """
     from .packets import hard_excluded
     candidates = call_paths(call)
-    return (candidates[0] if len(candidates) == 1
-            and hard_excluded(observed_path(candidates[0], call.cwd)) else "")
+    if len(candidates) != 1:
+        return ""
+    resolved = observed_path(candidates[0], call.cwd)
+    return resolved if hard_excluded(resolved) else ""
 
 
 def _line_number(value) -> int | None:
