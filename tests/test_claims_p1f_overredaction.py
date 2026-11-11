@@ -89,3 +89,25 @@ def test_redaction_does_not_expand_the_source_window_past_its_original_budget():
 ])
 def test_unproven_reference_and_filename_hash_are_not_exempt(text):
     assert redact(text)[1]
+
+
+@pytest.mark.parametrize("path", [
+    "/tmp/pytest-of-runner/pytest-0/test_assist_scope_cli_to_injec0/synthetic-repo/approved/alpha.py",
+    "/home/runner/work/show-me-the-work/show-me-the-work/approved/alpha.py",
+    "/Users/alice/projects/my-repo/src/approved/alpha.py",
+    "~/projects/my-repo/src/approved/alpha.py",
+])
+@pytest.mark.parametrize("template", ["{}", "`{}`", '"{}"', "'{}'"])
+def test_posix_paths_without_opaque_segments_are_not_overredacted(path, template):
+    text = template.format(path)
+    assert redact(text) == (text, {})
+
+
+@pytest.mark.parametrize("text", [
+    "/tmp/" + "ab12cd34" * 4 + "/alpha.py",
+    "/tmp/Zk9_aB-cD3eF4gH5iJ6kL7mN8oP9qR0sT1uV2wX3yZ4/alpha.py",
+    "/tmp/abcd1234efgh/5678ijkl9012mnop==",
+])
+def test_posix_paths_with_opaque_or_padded_segments_remain_redacted(text):
+    safe, counts = redact(text)
+    assert "[REDACTED:opaque]" in safe and counts == {"opaque": 1}

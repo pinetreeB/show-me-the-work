@@ -341,15 +341,23 @@ def _digest_hash(view: str, start: int, end: int) -> bool:
                 or not before.strip() and re.fullmatch(r"  \*?[^\s]+", after))
 
 
+_POSIX_PATH_ROOT = (
+    r"~/(?=[a-z0-9._-])|"
+    r"/(?:home|users|tmp|var|opt|usr|etc|srv|mnt|private|volumes|root|run)/"
+)
+
+
 def _opaque_path(value: str, view: str, start: int, end: int, hashes) -> bool:
-    if "/" not in value:
+    if "/" not in value or "=" in value:
         return False
     context_start = max(view.rfind(" ", 0, start), view.rfind("\n", 0, start)) + 1
     context = view[context_start:end + 12]
     pieces = value.split("/")
     named_parts = sum(part.casefold() in _WORDS for part in pieces)
-    path_context = (bool(re.match(r"(?i)(?:[a-z]+://|[a-z]:[\\/])", context))
-                    or named_parts >= 2)
+    path_context = (
+        bool(re.match(r"(?i)[\"'`]*(?:[a-z]+://|[a-z]:[\\/]|" + _POSIX_PATH_ROOT + r")", context))
+        or named_parts >= 2
+    )
     if not path_context:
         return False
     cursor = start

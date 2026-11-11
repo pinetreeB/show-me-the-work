@@ -57,7 +57,7 @@ def test_schema_tools_and_model_roundtrip_exactly(echo_chain,route,lean):
         with tempfile.TemporaryDirectory(prefix="smtw-fake-echo-") as cwd:
             completed=subprocess.run(argv,capture_output=True,env=env,encoding="utf-8",check=True,cwd=cwd)
             echoed=json.loads(completed.stdout)
-            assert Path(echoed["cwd"])==Path(cwd) and echoed["entries"]==0
+            assert Path(echoed["cwd"]).resolve() == Path(cwd).resolve() and echoed["entries"] == 0
         assert not Path(cwd).exists()
     else:
         completed=subprocess.run(argv,capture_output=True,env=env,encoding="utf-8",check=True)

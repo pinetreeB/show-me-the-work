@@ -40,12 +40,41 @@ def forbid_real_claims_judge_launch(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def forbid_test_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests use injected transports; even loopback and DNS are forbidden."""
+    import re
     import socket
+
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
 
     def forbidden(*args, **kwargs):
         pytest.fail("NETWORK CALL FORBIDDEN: global test tripwire")
 
+    def _is_pymp_unix_ipc(sock: object, address: object) -> bool:
+        af_unix = getattr(socket, "AF_UNIX", None)
+        if af_unix is None or getattr(sock, "family", None) != af_unix:
+            return False
+        if isinstance(address, bytes):
+            addr = address.decode("utf-8", errors="surrogateescape")
+        elif isinstance(address, str):
+            addr = address
+        else:
+            return False
+        norm = addr.replace("\\", "/")
+        if "\x00" in norm or ".." in norm.split("/"):
+            return False
+        return bool(re.search(r"(?:^|/)pymp-[^/]+/", norm))
+
+    def guarded_connect(sock, *args, **kwargs):
+        if len(args) == 1 and not kwargs and _is_pymp_unix_ipc(sock, args[0]):
+            return real_connect(sock, args[0])
+        forbidden()
+
+    def guarded_connect_ex(sock, *args, **kwargs):
+        if len(args) == 1 and not kwargs and _is_pymp_unix_ipc(sock, args[0]):
+            return real_connect_ex(sock, args[0])
+        forbidden()
+
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.setattr(socket, "getaddrinfo", forbidden)
-    monkeypatch.setattr(socket.socket, "connect", forbidden)
-    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)

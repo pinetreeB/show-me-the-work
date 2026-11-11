@@ -143,3 +143,22 @@ def test_local_reference_never_clears_deterministic_failure(tmp_path, kind, mode
     original, with_reference = json.loads(before.stdout), json.loads(combined.stdout)['checker']
     for field in ('status', 'summary', 'claims', 'unchecked_count', 'timed_out'):
         assert original[field] == with_reference[field]
+
+
+@pytest.mark.parametrize('kind', ['mismatch', 'absent'])
+def test_posix_absolute_path_view_header_binds_deterministically(tmp_path, kind):
+    from smtw.claims.check import run
+    from tests.claims_support import agy_call, make_case, view
+
+    posix_path = '/tmp/pytest-of-runner/pytest-0/test_local_reference_never_cle0/logic.py'
+    text = (f'`{posix_path}:1` `LIMIT_VALUE = 9`' if kind == 'mismatch'
+            else f'`{posix_path}` 함수 `missing_helper` 정의가 있다.')
+    receipt = view(posix_path, 'LIMIT_VALUE = 7')
+    assert receipt['content'].startswith(f'File Path: `file://{posix_path}`\n')
+    report, transcript = make_case(tmp_path, text, [
+        agy_call('view_file', AbsolutePath=posix_path),
+        receipt])
+    checked = run(report, agy=str(transcript))
+    assert checked['status'] == 'FAIL'
+    assert any(row['verdict'] == kind for row in checked['claims'])
+    assert not any(row['verdict'] == 'unverifiable' for row in checked['claims'])

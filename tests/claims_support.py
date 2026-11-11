@@ -20,7 +20,9 @@ def generic(content, status='DONE'):
 def view(path, text, start=1, end=None):
     lines = text.split('\n') if text else []
     end = len(lines) if end is None else end
-    header = (f'File Path: `file:///{path}`\nTotal Lines: {line_counts(text)["L_view"]}\n'
+    raw = str(path)
+    uri = raw if raw.startswith('file://') else 'file:///' + raw.lstrip('/')
+    header = (f'File Path: `{uri}`\nTotal Lines: {line_counts(text)["L_view"]}\n'
               f'Total Bytes: {len(text.encode("utf-8"))}\nShowing lines {start} to {end}\n')
     return generic(header + '\n'.join(f'{n}: {lines[n-1]}' for n in range(start, min(len(lines), end)+1)))
 
