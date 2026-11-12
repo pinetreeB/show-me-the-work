@@ -27,6 +27,7 @@ def main() -> int:
             fail_closed_runtime_env as runtime_env_fail_closed,
             project_root,
             read_payload,
+            supervision_enabled,
             tool_command,
             tool_file_paths,
             tool_input,
@@ -34,6 +35,8 @@ def main() -> int:
         from adapters.intent_command import intent_set_command
 
         payload = read_payload()
+        if not supervision_enabled(payload):
+            return emit({})
         from core.contract import EDIT_TOOLS, SHELL_TOOLS, evaluate_pretool_contract
         from core.destructive_guard import evaluate_r2_destructive_gate
         from core.ledger import ledger_read_cache

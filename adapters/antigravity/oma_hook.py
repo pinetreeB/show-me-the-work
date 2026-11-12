@@ -36,6 +36,12 @@ def _common():
     return hook_common
 
 
+def _supervision_enabled(payload: Mapping[str, object]) -> bool:
+    from adapters.opt_in import supervision_enabled
+
+    return supervision_enabled(_common().project_root(payload))
+
+
 def emit(payload: Mapping[str, object]) -> int:
     data = json.dumps(payload, ensure_ascii=False)
     _ = sys.stdout.buffer.write(data.encode("utf-8"))
@@ -67,6 +73,8 @@ def fail_closed_runtime_env(event_name: str, error: BaseException) -> int | None
     return emit({"decision": "deny", "reason": reason})
 
 def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({"decision": "allow"})
     from adapters.antigravity.tool_io import extract_command, extract_paths_from_input, extract_tool_info, tool_family
     from adapters.intent_command import intent_set_command
     from core.classify import classify_prompt
@@ -146,6 +154,8 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
     return emit({"decision": "allow"})
 
 def handle_post_tool_use(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({})
     from adapters.antigravity.tool_io import (
         extract_command,
         extract_paths_from_input,
@@ -256,6 +266,8 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
     return emit({})
 
 def handle_pre_invocation(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({})
     from core.classify import classify_prompt
 
     common = _common()
@@ -266,6 +278,8 @@ def handle_pre_invocation(payload: Mapping[str, object]) -> int:
 
 
 def handle_stop(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({})
     from core.verify_state import evaluate_stop
 
     common = _common()
@@ -280,6 +294,8 @@ def main() -> int:
             return fail_open(event_name, "No event specified")
 
         payload = read_payload()
+        if not _supervision_enabled(payload):
+            return emit({"decision": "allow"} if event_name in {"PreToolUse", "BeforeTool"} else {})
         
         handlers = {
             "PreInvocation": handle_pre_invocation,

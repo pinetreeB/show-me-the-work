@@ -1,0 +1,35 @@
+[
+  {
+    "id": "supported",
+    "verdict": "supported",
+    "evidence_quote": "LIMIT = 7",
+    "evidence_ref": 1,
+    "rationale": "정확한 줄을 인용한 수동 시험"
+  },
+  {
+    "id": "contradicted",
+    "verdict": "contradicted",
+    "evidence_quote": "LIMIT = 7",
+    "evidence_ref": 1,
+    "rationale": "참고 표시 순서 수동 시험"
+  },
+  {
+    "id": "outside",
+    "verdict": "contradicted",
+    "evidence_quote": "OUTSIDE = 9",
+    "evidence_ref": 1,
+    "rationale": "발췌 밖 수동 시험"
+  },
+  {
+    "id": "missing",
+    "verdict": "contradicted",
+    "rationale": "인용 누락 수동 시험"
+  },
+  {
+    "id": "insufficient",
+    "verdict": "not_enough_evidence",
+    "evidence_quote": "",
+    "evidence_ref": null,
+    "rationale": "근거 부족 수동 시험"
+  }
+]

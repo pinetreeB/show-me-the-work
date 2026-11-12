@@ -35,6 +35,13 @@ def emit(payload: Mapping[str, object]) -> int:
     return 0
 
 
+def _supervision_enabled(payload: Mapping[str, object]) -> bool:
+    from adapters.opt_in import supervision_enabled
+    from adapters.qwen_code.common import project_root
+
+    return supervision_enabled(project_root(payload))
+
+
 def emit_deny(reason: str) -> int:
     """PreToolUse/R2 차단 규약: exit 2 + stderr 사유(qwen 실증 차단 경로).
 
@@ -131,6 +138,8 @@ def _prompt_context(result: Mapping[str, object], ambiguity: Mapping[str, object
 
 
 def handle_user_prompt_submit(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({})
     from adapters.intent_command import intent_set_command
     from adapters.qwen_code.common import canonical_invocation, project_root
     from core.adapter_observation import start_turn
@@ -190,6 +199,8 @@ def handle_user_prompt_submit(payload: Mapping[str, object]) -> int:
 
 
 def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({})
     from adapters.intent_command import intent_set_command
     from adapters.qwen_code.common import (
         canonical_invocation,
@@ -273,6 +284,8 @@ def handle_pre_tool_use(payload: Mapping[str, object]) -> int:
 
 
 def handle_post_tool_use(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({})
     from adapters.qwen_code.common import (
         canonical_invocation,
         canonical_tool_name,
@@ -390,6 +403,8 @@ def handle_post_tool_use(payload: Mapping[str, object]) -> int:
 
 
 def handle_stop(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({})
     # codex_cli/stop.py 이식 — 단, codex 전용 process reaper는 제거(qwen 미해당).
     from adapters.qwen_code.common import canonical_invocation, last_assistant_text, project_root
     from core.adapter_observation import finish_turn, resolve_active_invocation, restart_blocked_turn
@@ -420,12 +435,16 @@ def handle_stop(payload: Mapping[str, object]) -> int:
 
 
 def handle_session_start(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({})
     # 턴 setup은 UserPromptSubmit가 담당한다(프롬프트 텍스트가 필요).
     # SessionStart는 안전 no-op — 확장이 필요하면 여기서 추가한다.
     return emit({})
 
 
 def handle_session_end(payload: Mapping[str, object]) -> int:
+    if not _supervision_enabled(payload):
+        return emit({})
     return emit({})
 
 
@@ -446,9 +465,12 @@ def main() -> int:
         if handler is None:
             return emit({})
         from adapters.qwen_code.common import read_payload
-        from core.ledger import ledger_read_cache
 
         payload = read_payload()
+        if not _supervision_enabled(payload):
+            return emit({})
+        from core.ledger import ledger_read_cache
+
         with ledger_read_cache():
             return handler(payload)
     except Exception as exc:  # noqa: BLE001  # noqa: BROAD_EXCEPT_OK

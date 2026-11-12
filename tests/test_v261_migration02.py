@@ -386,3 +386,67 @@ def test_retention_keeps_current_rollback_source_even_above_byte_cap(
     assert [entry["digest"] for entry in _index_archives(destination)] == [
         sha256(source).hexdigest()
     ]
+
+
+def test_network_tripwire_allows_only_multiprocessing_pymp_unix_ipc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    import socket
+    import tempfile
+    from types import SimpleNamespace
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_sock:
+        with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+            tcp_sock.connect(("127.0.0.1", 9))
+        with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+            tcp_sock.connect_ex(("127.0.0.1", 9))
+    with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+        socket.create_connection(("127.0.0.1", 9))
+    with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+        socket.getaddrinfo("localhost", 80)
+
+    if os.name != "nt" and hasattr(socket, "AF_UNIX"):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as unix_sock:
+            with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+                unix_sock.connect("/var/run/docker.sock")
+            with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+                unix_sock.connect_ex(b"/var/run/docker.sock")
+            with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+                unix_sock.connect("/tmp/pymp-fake/../../var/run/docker.sock")
+        ipc_parent = "/tmp" if Path("/tmp").is_dir() else None
+        with tempfile.TemporaryDirectory(prefix="pymp-", dir=ipc_parent) as pymp_dir:
+            sock_path = str(Path(pymp_dir) / "sock-ipc")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                server.bind(sock_path)
+                server.listen(2)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client_str:
+                    client_str.connect(sock_path)
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client_bytes:
+                    assert client_bytes.connect_ex(sock_path.encode("utf-8")) == 0
+
+    af_unix = getattr(socket, "AF_UNIX", 1)
+    monkeypatch.setattr(socket, "AF_UNIX", af_unix, raising=False)
+    fake_unix = SimpleNamespace(family=af_unix)
+    fake_inet = SimpleNamespace(family=socket.AF_INET)
+    for blocked_addr in (
+        "/var/run/docker.sock",
+        b"/var/run/docker.sock",
+        "/tmp/pymp-fake/../../var/run/docker.sock",
+        r"C:\Temp\pymp-fake\..\..\docker.sock",
+        "\x00/tmp/pymp-fake/sock-0",
+    ):
+        with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+            socket.socket.connect(fake_unix, blocked_addr)
+        with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+            socket.socket.connect_ex(fake_unix, blocked_addr)
+    with pytest.raises(pytest.fail.Exception, match="NETWORK CALL FORBIDDEN"):
+        socket.socket.connect(fake_inet, "/tmp/pymp-fake/sock-0")
+    for allowed_str in (
+        "/tmp/pymp-work01/listener-0",
+        r"C:\Temp\pymp-work01\sock-0",
+    ):
+        with pytest.raises(TypeError):
+            socket.socket.connect(fake_unix, allowed_str)
+        with pytest.raises(TypeError):
+            socket.socket.connect_ex(fake_unix, allowed_str.encode("utf-8"))
