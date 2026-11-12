@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "cases": {
+    "synthetic-smoke": [
+      "~/synthetic-smoke/"
+    ]
+  },
+  "repositories": []
+}

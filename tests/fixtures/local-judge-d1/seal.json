@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "fixture": "local-judge-d1-v1",
+  "items": [
+    "d1-01",
+    "d1-02",
+    "d1-03",
+    "d1-04",
+    "d1-05",
+    "d1-06",
+    "d1-07",
+    "d1-08",
+    "d1-09",
+    "d1-10",
+    "d1-11",
+    "d1-12"
+  ],
+  "independent_groups": 12,
+  "class_counts": {
+    "supported": 4,
+    "contradicted": 4,
+    "not_enough_evidence": 4
+  },
+  "judge_contract": {
+    "version": "v1.2",
+    "source_policy": "self-identified-read-v1",
+    "privacy_policy": "blocklist-v1",
+    "prompt_sha256": "6ea00fb20360b23873a6206b50eb3c504d9d03f914d28c65376bbfe6ed350045",
+    "schema_sha256": "abf7a61ff307eb8de50485b8ec8b9f06bf965df6dacedb318567e46a04088cbf",
+    "cli_schema_sha256": "6dc854ace18c3c4979bb4513ea4915e830b8cd428db19817769773cf34032173"
+  },
+  "files": {
+    "answers.json": "9245a9678c2d607957859fdc9c6c02435bdef8ba56fbb242f437c5584b9dcb35",
+    "packets/manifest.json": "434aa275c7ae7d4c7119d85188d959d0682ff2c494bb2f2c3013b76e6e5e1674",
+    "packets/packet-001.json": "cc4acd67a5bb2627606b40e421fbea5afca266422085f60dbc52f74662de3e8a",
+    "packets/packet-002.json": "7740b70d6300527d7045d3f0f3a2d390ce021a3b73da691bd71d305552553726",
+    "packets/packet-003.json": "d43578bb0fe86772799738401a0378af7b05371215439c3f301ff3c023f299a8",
+    "packets/packet-004.json": "67e1118b17fb97fe3fa5d087b49c4ad85720bcdabff72e200db9f997e674b92f",
+    "packets/packet-005.json": "f8dcc9889ba578936141c4160350ba775aa489ec9c191b6f9cc9d39244a87cb3",
+    "packets/packet-006.json": "8df5d435397856d4d34677b45261b5f7edf312a87208273a5ad9f4f62936cf32",
+    "packets/packet-007.json": "f5099ba2460c2091e6d745e5cb6b91fe08c38745b812a42252f7043c1748cd70",
+    "packets/packet-008.json": "fe56952ec934d5df02d6fef248201612115a4923eb3aa29f24ffef333f8b3eb2",
+    "packets/packet-009.json": "8d7216284d42e1a0f0f3e89de1438e0cd9acabac6fdf099ca1783796bc063698",
+    "packets/packet-010.json": "67e4842a16532877ff840d9d1f42d3714ecd29017d8f28cca1005d6d6fc8be8a",
+    "packets/packet-011.json": "fbeff2b8a8c31013d4182e9651071c24566950e2bc224f86f608b53cd97d26c8",
+    "packets/packet-012.json": "7066c4f5773b6d69ea8b93823beca3a56814ca76239364424a92d9e4a870ed4b",
+    "scope.json": "bbd3a67b69d2a9b6b81732586dfb1d6b9bad587dc109ecfcc050080cd57fe78b"
+  }
+}

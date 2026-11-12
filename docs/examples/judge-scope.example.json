@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "cases": {
+    "example-case": {
+      "source_prefixes": [
+        "~/example-repo/"
+      ],
+      "work_roots": [
+        "C:/synthetic/tasks/example"
+      ],
+      "checkpoint": "C:/synthetic/checkpoints/example.md"
+    }
+  },
+  "repositories": [
+    {
+      "case": "example-case",
+      "root": "<CASES>/example-repo",
+      "prefix": "~/example-repo/",
+      "revision": "0000000000000000000000000000000000000000"
+    }
+  ]
+}

@@ -24,16 +24,53 @@ class WorkerFailure(RuntimeError):
 
 
 WORKER = ROOT / "tests" / "support" / "block_counter_worker.py"
+CONNECTION_TIMEOUT_SECONDS = 30
+
+
+def _connection_failure(
+    listener: Listener,
+    processes: list[subprocess.Popen[str]],
+    connected: set[int],
+    address: tuple[str, int],
+) -> WorkerFailure:
+    """Return child exit diagnostics when a worker never reaches the barrier."""
+    listener.close()
+    details: list[str] = []
+    for index, process in enumerate(processes):
+        forced_termination = False
+        try:
+            exit_code = process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            forced_termination = True
+            process.kill()
+            exit_code = process.wait(timeout=10)
+        stderr = process.stderr.read() if process.stderr is not None else ""
+        details.append(
+            f"worker[{index}] pid={process.pid} exit={exit_code} "
+            f"forced_termination={forced_termination} "
+            f"stderr={stderr.strip() or '<empty>'}"
+        )
+    return WorkerFailure(
+        len(connected),
+        "ConnectionTimeout",
+        " ".join([
+            f"address={address[0]}:{address[1]}",
+            f"connected={sorted(connected)}",
+            *details,
+        ]),
+    )
 
 
 def _concurrent_decisions(action: str, payloads: list[JsonObject]) -> list[str]:
     authkey = os.urandom(16)
-    listener = Listener(("127.0.0.1", 0), authkey=authkey)
+    listener = Listener(("127.0.0.1", 0), backlog=max(1, len(payloads)), authkey=authkey)
     address = listener.address
     assert isinstance(address, tuple)
     host, port = address
     assert isinstance(host, str)
     assert isinstance(port, int)
+    socket = listener._listener._socket
+    socket.settimeout(CONNECTION_TIMEOUT_SECONDS)
     python_path = os.pathsep.join([str(ROOT), os.environ.get("PYTHONPATH", "")])
     environment = {
         **os.environ,
@@ -64,7 +101,10 @@ def _concurrent_decisions(action: str, payloads: list[JsonObject]) -> list[str]:
     channels: dict[int, Connection] = {}
     try:
         for _ in processes:
-            channel = listener.accept()
+            try:
+                channel = listener.accept()
+            except TimeoutError as exc:
+                raise _connection_failure(listener, processes, set(channels), address) from exc
             index_text = channel.recv_bytes().decode("ascii")
             assert index_text.isdigit()
             index = int(index_text)
@@ -283,6 +323,27 @@ def test_subprocess_worker_reports_child_exception_without_eof(tmp_path: Path) -
 
     # Then: the real child error is surfaced instead of a transport EOF.
     assert "KeyError" in failure
+
+
+def test_subprocess_runner_reports_exit_before_connection(monkeypatch, tmp_path: Path) -> None:
+    # Given: a child terminates before it can join the listener barrier.
+    monkeypatch.setenv("BLOCK_COUNTER_WORKER_EXIT_BEFORE_CONNECT", "1")
+    monkeypatch.setattr(sys.modules[__name__], "CONNECTION_TIMEOUT_SECONDS", 1)
+    payload: JsonObject = {"project_root": str(tmp_path)}
+
+    # When: the parent reaches its bounded listener timeout.
+    try:
+        _ = _concurrent_decisions("stop", [payload])
+    except WorkerFailure as exc:
+        failure = str(exc)
+    else:
+        raise AssertionError("worker exit before connection must be reported")
+
+    # Then: exit status and stderr identify the child failure instead of hanging.
+    assert "ConnectionTimeout" in failure
+    assert "exit=23" in failure
+    assert "forced_termination=False" in failure
+    assert "forced exit before counter barrier" in failure
 
 
 def test_alpha_prompt_preserves_beta_turn_counter(tmp_path: Path) -> None:

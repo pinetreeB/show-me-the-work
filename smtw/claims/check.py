@@ -1,0 +1,1074 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import replace
+from decimal import Decimal
+from functools import lru_cache
+from pathlib import Path
+import re
+import json
+import subprocess
+from typing import NamedTuple
+
+from .extract import ITEM, REFERENCE, REFERENCE_TAIL, extract
+from .markup import cell_spans, normalized_quote, quote_fragments, quote_in_text
+from .model import Budget, Claim, DeadlineExceeded, Evidence, Transcript, summarize
+from .paths import matches_path, normalize_path, normalize_url
+from .paraphrase import code_ellipsis, paraphrase_rule
+from .sources import Repositories, content_lines, file_lines, local_source
+from .js_definitions import JSParserConfig, rescue as rescue_js_definitions
+from .transcripts import browser_blocks, discover_agy, load_measurement_pointer, load_view_pointer, read_transcript, resolve_agy
+
+
+@lru_cache(maxsize=1024)
+def boundary(token: str) -> re.Pattern:
+    return re.compile(r'(?<![\w$])' + re.escape(token) + r'(?![\w$])')
+
+
+def definition(token: str, text: str) -> bool:
+    name = re.escape(token)
+    return bool(re.search(r'(?:\b(?:function|def|class)\s+' + name + r'\b|["\']' + name
+                          + r'["\']\s*:|(?<![\w$])' + name + r'\s*(?:=(?!=)|:\s*[^=]|\([^\n]*\)\s*\{))', text))
+
+
+class Result(NamedTuple):
+    verdict: str
+    reason: str
+    signature: str = ''
+    code: str = 'no_evidence'
+
+
+def missing(e: Evidence, dirty: bool = False) -> Result:
+    if dirty or e.unsupported or not e.complete:
+        return Result('unverifiable', '필요한 전체 범위 미확보 또는 손상·미지원 영역',
+                      code='decode_damage' if dirty else 'unsupported_format' if e.unsupported else 'partial_range')
+    return Result('absent', '완전히 확보한 검색 범위에 대상 없음', 'absent', 'not_found')
+
+
+def value_text(value) -> str:
+    if isinstance(value, (list, dict, bool)) or value is None:
+        return json.dumps(value, ensure_ascii=False, separators=(',', ':'), sort_keys=True)
+    return str(value)
+
+
+def expected_value(value: str) -> str:
+    if value.lstrip().startswith(('[', '{')):
+        try:
+            return value_text(json.loads(value))
+        except ValueError:
+            pass
+    return value
+
+
+def json_entity_value(c: Claim, e: Evidence, budget: Budget) -> Result | None:
+    if not e.complete or c.unit != 'value' or not e.path.lower().endswith('.json'):
+        return None
+    text = '\n'.join(line for _, line in content_lines(e, budget))
+    values, duplicates = [], []
+    def pairs(items):
+        seen = set()
+        for key, _ in items:
+            if key in seen:
+                duplicates.append(key)
+            seen.add(key)
+        values.extend(value_text(value) for key, value in items if key == c.entity)
+        return dict(items)
+    try:
+        json.loads(text, object_pairs_hook=pairs)
+    except ValueError:
+        return None
+    if duplicates or len(set(values)) > 1:
+        return Result('unverifiable', 'JSON 키·값 후보가 여러 개', code='binding_ambiguous')
+    if not values:
+        return missing(e, '\ufffd' in text)
+    if '\ufffd' in values[0]:
+        return Result('unverifiable', 'JSON 엔터티 값 손상', code='decode_damage')
+    okay = values[0] == expected_value(c.value)
+    return Result('match' if okay else 'mismatch', 'JSON 엔터티 값 ' + ('일치' if okay else '불일치'),
+                  values[0], 'value_match' if okay else 'value_mismatch')
+
+
+def line_values(c: Claim, e: Evidence) -> Result:
+    counts = dict(e.counts)
+    if e.total_lines is not None and 'L_lines' not in counts and e.total_lines in e.lines and not e.lines[e.total_lines].strip():
+        counts.update(L_lines=max(0, e.total_lines-1), L_view=e.total_lines)
+    if 'wc -l' in c.context:
+        values = [counts['L_nl']] if 'L_nl' in counts else []
+    elif 'Total Lines' in c.context:
+        values = [e.total_lines] if e.total_lines is not None else []
+    else:
+        values = [counts[k] for k in ('L_lines', 'L_view') if k in counts]
+        if not values and e.total_lines is not None:
+            values = [e.total_lines]
+        if ('L_lines' not in counts and e.total_lines is not None
+                and e.total_lines not in e.lines and Decimal(c.value) == e.total_lines - 1):
+            return Result('unverifiable', '마지막 줄 미표시로 내용 줄 수 미확정', code='partial_range')
+    if not values:
+        return Result('unverifiable', '줄 수 계측 미확보', code='measurement_missing')
+    okay = Decimal(c.value) in values
+    return Result('match' if okay else 'mismatch', f'줄 수 기준 {sorted(set(values))}',
+                  str(sorted(set(values))), 'value_match' if okay else 'value_mismatch')
+
+
+def check_one(c: Claim, e: Evidence, budget: Budget) -> Result:
+    if e.control_only:
+        return Result('unverifiable', '명령 성공 제어 정보는 파일 원문이 아님', code='no_read_of_file')
+    if e.problem:
+        return Result('unverifiable', e.problem, code=e.problem_code or 'read_failed')
+    if e.url_content_path:
+        return Result('unverifiable', '웹 본문 저장 안내만 있고 연결된 읽기 근거 없음',
+                      code='web_evidence_missing')
+    if c.check_type in {'K4', 'K6'}:
+        quote = c.text[1:-1] if c.text.startswith(chr(96)) and c.text.endswith(chr(96)) else c.text
+        if re.match(r'^[A-Za-z_]\w*\.[A-Za-z_]\w*\s*[:=]', quote):
+            rule = paraphrase_rule(quote, e)
+            if rule == 'R-qual':
+                return Result('unverifiable', '클래스 소유 속성의 한정자 표기 차이(R-qual)',
+                              quote, 'paraphrased_quote')
+    if c.check_type == 'K1' or c.check_type == 'K5' and c.start:
+        if c.start < 1 or c.end < c.start:
+            return Result('mismatch', '유효하지 않은 줄 범위', 'range', 'invalid_range')
+        if e.total_lines is not None and c.end > e.total_lines:
+            return Result('mismatch', f'파일 줄 범위 초과: 총 {e.total_lines}', str(e.total_lines), 'range_exceeded')
+        if any(n not in e.lines for n in range(c.start, c.end + 1)):
+            return Result('unverifiable', '인용 줄이 표시 범위 밖', code='partial_range')
+        text = '\n'.join(e.lines[n] for n in range(c.start, c.end+1))
+        if '\ufffd' in text:
+            return Result('unverifiable', '인용 구간에 손상된 글자', code='decode_damage')
+        if not c.quote:
+            return Result('range_only', '줄 범위만 확인 (내용 인용 없음)', 'range', 'range_only')
+        numbered = [re.fullmatch(r'\s*(?:line\s+)?(\d+): ?(.*)', line, re.I)
+                    for line in c.quote.splitlines()]
+        if numbered and all(numbered):
+            pairs = [(int(match.group(1)), match.group(2)) for match in numbered]
+            if any(not c.start <= n <= c.end for n, _ in pairs):
+                return Result('mismatch', '번호 붙은 인용이 명시한 줄 범위 밖', text, 'quote_range_mismatch')
+            literal = [normalized_quote(quote) in normalized_quote(e.lines[n]) for n, quote in pairs]
+            rules = [paraphrase_rule(quote, e, n, n) if not matches else ''
+                     for (n, quote), matches in zip(pairs, literal)]
+            if any(rules) and all(matches or rule for matches, rule in zip(literal, rules)):
+                return Result('unverifiable', '번호 인용의 코드 표기 차이(' + ', '.join(sorted(set(rules)-{''})) + ')',
+                              text, 'paraphrased_quote')
+            okay = all(normalized_quote(quote) in normalized_quote(e.lines[n]) for n, quote in pairs)
+            return Result('match' if okay else 'mismatch', '줄 번호 접두사를 제외한 코드 인용 ' + ('일치' if okay else '불일치'),
+                          '\n'.join(e.lines[n] for n, _ in pairs), 'quote_match' if okay else 'quote_mismatch')
+        prose = not c.quote_code and not code_ellipsis(c.quote)
+        if (c.check_type == 'K1' and not quote_in_text(c.quote, text, prose=prose)
+                and c.candidate_quotes and any(
+                quote_in_text(quote, text, prose=not code) for quote, code in c.candidate_quotes)):
+            return Result('unverifiable', '후보 인용 중 일부만 줄에 결합되어 대응 관계 미확정',
+                          text, 'binding_ambiguous')
+        if not quote_in_text(c.quote, text, prose=False):
+            rule = paraphrase_rule(c.quote, e, c.start, c.end)
+            if rule:
+                return Result('unverifiable', f'코드 인용 표기 차이({rule}); 리터럴 일치로 확정하지 않음',
+                              text, 'paraphrased_quote')
+        if not quote_in_text(c.quote, text, prose=prose):
+            return Result('mismatch', f'대응 줄 원문과 인용 불일치: {text[:240]}', text, 'quote_mismatch')
+        return Result('match', '파일 줄 범위·인용 일치', text, 'quote_match')
+    if c.check_type in {'K2', 'K6'} and c.unit == '줄' and (c.check_type == 'K2' or not c.entity):
+        return line_values(c, e)
+    if c.check_type == 'K2':
+        multiplier = {'b': 1, 'byte': 1, 'bytes': 1, '바이트': 1,
+                      'kb': 1000, 'mb': 1000000, 'kib': 1024, 'mib': 1048576}.get(c.unit.lower())
+        if multiplier is None or e.total_bytes is None:
+            return Result('unverifiable', '파일 바이트 계측 미확보 (출력 바이트와 별개)', code='measurement_missing')
+        wanted = Decimal(c.value) * multiplier
+        return Result('match' if wanted == e.total_bytes else 'mismatch',
+                      f'파일 크기 원문 {e.total_bytes} B', str(e.total_bytes),
+                      'value_match' if wanted == e.total_bytes else 'value_mismatch')
+    if c.check_type == 'K4':
+        dirty, mentioned = False, False
+        token_pattern = boundary(c.value)
+        for n, line in content_lines(e, budget):
+            dirty |= '\ufffd' in line
+            if c.value in line and token_pattern.search(line):
+                if '\ufffd' in line:
+                    continue
+                mentioned = True
+                if not c.definition or definition(c.value, line):
+                    return Result('match', f'{n}행에서 ' + ('정의 확인' if c.definition else '토큰 언급 확인'), line, 'token_match')
+        if mentioned and c.definition and e.complete and not dirty and not e.unsupported:
+            return Result('absent', '토큰 언급은 있으나 정의·설정 키는 없음', 'no definition', 'definition_missing')
+        return missing(e, dirty)
+    if c.check_type == 'K5':
+        # URL renderers may retain, double, or omit inline code delimiters.
+        quote = c.quote.replace('`', '') if c.web_quote else c.quote
+        observed_text = '\n'.join(e.lines[n] for n in sorted(e.lines))
+        if not c.web_quote and not quote_in_text(quote, observed_text, prose=False):
+            rule = paraphrase_rule(c.quote, e)
+            if rule:
+                return Result('unverifiable', f'코드 인용 표기 차이({rule}); 리터럴 일치로 확정하지 않음',
+                              observed_text, 'paraphrased_quote')
+        dirty = False
+        prose = not c.quote_code and not code_ellipsis(c.quote)
+        parts = quote_fragments(quote, prose=prose)
+        if not parts:
+            return Result('unverifiable', '대조할 인용 조각 없음', code='quote_empty')
+        part_index = 0
+        span_dirty = False
+        window = ''
+        for n, line in content_lines(e, budget):
+            dirty |= '\ufffd' in line
+            window = window + ' ' + normalized_quote(line.replace('`', '') if c.web_quote else line, prose=prose)
+            while part_index < len(parts):
+                needle = parts[part_index]
+                offset = window.find(needle)
+                if part_index:
+                    span_dirty |= '\ufffd' in window[:offset+len(needle)] if offset >= 0 else '\ufffd' in window
+                if offset < 0 or '\ufffd' in window[offset:offset+len(needle)]:
+                    break
+                window = window[offset+len(needle):]
+                part_index += 1
+            if part_index == len(parts):
+                if span_dirty:
+                    return Result('unverifiable', '줄임표 인용 조각 사이의 원문 손상', code='decode_damage')
+                return Result('match', f'원문 인용 확인 ({e.locations.get(n, str(n)+"행")})',
+                              ' … '.join(parts), 'quote_match')
+            window = window[-max(4096, len(parts[part_index])*2):]
+        result = missing(e, dirty)
+        if result.verdict == 'absent':
+            return Result('mismatch', '연결 원문의 글자와 인용 불일치', 'quote mismatch', 'quote_mismatch')
+        return result
+    if c.check_type == 'K6':
+        if not c.entity:
+            return Result('unverifiable', '숫자 엔터티 연결 없음', code='binding_ambiguous')
+        structured = json_entity_value(c, e, budget)
+        if structured is not None:
+            return structured
+        dirty, entity_seen = False, False
+        incomplete_value = False
+        values = []
+        for n, line in content_lines(e, budget):
+            if c.entity and not boundary(c.entity).search(line):
+                continue
+            if '\ufffd' in line:
+                dirty = True
+                continue
+            entity_seen = True
+            if c.unit == 'value':
+                key = re.search(r'["\']?' + re.escape(c.entity) + r'["\']?\s*[:=]\s*(.+)', line)
+                if key:
+                    raw = key.group(1).strip()
+                    try:
+                        value, _ = json.JSONDecoder().raw_decode(raw)
+                        values.append(value_text(value))
+                    except ValueError:
+                        if raw.startswith(('[', '{')):
+                            incomplete_value = True
+                        else:
+                            values.append(re.split(r'[,;\n"\'}]', raw.strip('"\''))[0].strip())
+            else:
+                unit = re.escape(c.unit)
+                values += re.findall(r'(\d[\d,]*(?:\.\d+)?)\s*' + unit + r'(?!\w)', line)
+        if dirty:
+            return Result('unverifiable', '연결 엔터티의 원문 손상', code='decode_damage')
+        if incomplete_value:
+            return Result('unverifiable', '구조화된 엔터티 값 전체 미확보', code='partial_range')
+        c_value = expected_value(c.value) if c.unit == 'value' else c.value
+        unique = sorted(set(v if c.unit == 'value' else v.replace(',', '') for v in values))
+        if len(unique) > 1:
+            return Result('unverifiable', '연결 엔터티에 대응하는 값이 여러 개', code='binding_ambiguous')
+        if unique == [c_value]:
+            return Result('match', '연결 엔터티 값 일치', str(unique), 'value_match')
+        if values:
+            quote = c.text[1:-1] if c.text.startswith(chr(96)) and c.text.endswith(chr(96)) else c.text
+            ranges = []
+            if c.unit == 'value':
+                for reference in REFERENCE.finditer(c.context):
+                    if reference.group('path') != c.path:
+                        continue
+                    ranges.append((int(reference.group('start')), int(reference.group('end') or reference.group('start'))))
+                    cursor = reference.end()
+                    while tail := REFERENCE_TAIL.match(c.context, cursor):
+                        ranges.append((int(tail.group('start')), int(tail.group('end') or tail.group('start'))))
+                        cursor = tail.end()
+                if any(paraphrase_rule(quote, e, start, end) == 'R-ann'
+                       for start, end in ranges or [(0, 0)]):
+                    return Result('unverifiable', '타입 주석 생략(R-ann)으로 인한 값 표기 차이',
+                                  str(unique), 'paraphrased_quote')
+            return Result('mismatch', f'연결 엔터티 값 불일치: {values[:8]}', str(unique), 'value_mismatch')
+        return missing(e, dirty) if not entity_seen else Result('unverifiable', '대응 단위 값 미확보', code='measurement_missing')
+    if c.check_type == 'K9':
+        if c.ordinal:
+            return ordinal_item(c, e, budget)
+        dirty = False
+        section, found, ended, source_ids, item_heading_level = [], False, False, set(), 7
+        wanted = re.sub(r'\s+', '', c.value)
+        for _, line in content_lines(e, budget):
+            dirty |= '\ufffd' in line
+            item_id = source_item_boundary(line)
+            if item_id:
+                source_ids.add(re.sub(r'\s+', '', item_id))
+            if item_id and re.sub(r'\s+', '', item_id) == wanted:
+                found = True
+                section.append(line)
+                heading = re.match(r'^\s*(#{1,6})\s', line)
+                item_heading_level = len(heading.group(1)) if heading else 7
+                if line.lstrip().startswith('|'):
+                    ended = True
+                    break
+                continue
+            if found:
+                heading = re.match(r'^\s*(#{1,6})\s', line)
+                if item_id or heading and len(heading.group(1)) <= item_heading_level:
+                    ended = True
+                    break
+                section.append(line)
+        if not found:
+            if dirty:
+                return Result('unverifiable', '항목 ID 탐색 구간 원문 손상', code='decode_damage')
+            family = item_family(wanted)
+            same_family = {item for item in source_ids if item_family(item) == family}
+            if family and len(same_family) >= 2:
+                return missing(e)
+            return Result('unverifiable', '대상 문서 항목 ID인지 보고서 자체 라벨인지 미확정',
+                          code='self_assigned_item_id')
+        text = '\n'.join(section)
+        if '\ufffd' in text:
+            return Result('unverifiable', '항목 구간 원문 손상', code='decode_damage')
+        okay = normalized_quote(c.quote, prose=True) in normalized_quote(text, prose=True)
+        if not okay and not ended and not e.complete:
+            return Result('unverifiable', '항목의 전체 구간 미확보', code='partial_range')
+        return Result('match' if okay else 'mismatch', '항목 ID와 제목·인용 ' + ('일치' if okay else '불일치'),
+                      text, 'item_match' if okay else 'item_mismatch')
+    return Result('unverifiable', '대응 검사 근거 미확보')
+
+
+def source_item_boundary(line: str) -> str:
+    """Recognize an item ID only at a structural heading/list/table boundary."""
+    for match in ITEM.finditer(line):
+        prefix = line[:match.start()]
+        if not re.sub(r'[\s`*_#|:：—–+.,;()\[\]-]', '', prefix):
+            return match.group()
+    return ''
+
+
+def item_family(item_id: str) -> str:
+    value = re.sub(r'\s+', '', item_id)
+    match = re.fullmatch(r'([A-Za-z]+)(\d+)(?:-([A-Za-z]+)\d+)?', value)
+    if match:
+        return (match.group(1).upper() + match.group(2) + '-' + match.group(3).upper()
+                if match.group(3) else match.group(1).upper())
+    if value.startswith('§'):
+        return '§'
+    return ''
+
+
+def ordinal_item(c: Claim, e: Evidence, budget: Budget) -> Result:
+    """Use explicit numbers, or an entire table/list's row order; never nearby text."""
+    wanted = int(re.search(r'\d+', c.value).group())
+    candidates, table, list_index, in_list = [], [], 0, False
+    def flush_table():
+        if len(table) < 2 or not all(re.fullmatch(r':?-+:?', x.strip()) for x in table[1]):
+            return
+        for index, cells in enumerate(table[2:], 1):
+            label = re.fullmatch(r'#?(\d+)\.?', cells[0].strip(' *`')) if cells else None
+            number = int(label.group(1)) if label else index
+            if number == wanted:
+                candidates.append(' | '.join(cells))
+    for _, line in content_lines(e, budget):
+        if line.lstrip().startswith('|'):
+            table.append([line[a:b].strip() for a, b in cell_spans(line)])
+            in_list = False
+            continue
+        if table:
+            flush_table()
+            table = []
+        numbered = re.match(r'^\s*(?:#{1,6}\s+)?(?:#|항목\s*)?(\d+)[.):\s]\s*(.+)', line)
+        bullet = re.match(r'^\s*[-+*]\s+(.+)', line)
+        if numbered:
+            if int(numbered.group(1)) == wanted:
+                candidates.append(numbered.group(2))
+        elif bullet:
+            list_index = list_index + 1 if in_list else 1
+            if list_index == wanted and e.complete:
+                candidates.append(bullet.group(1))
+        in_list = bool(bullet)
+    flush_table()
+    if not candidates:
+        return missing(e)
+    if any('\ufffd' in text for text in candidates):
+        return Result('unverifiable', '항목 구간 원문 손상', code='decode_damage')
+    if len(set(candidates)) != 1:
+        return Result('unverifiable', '같은 번호의 원문 항목이 여러 개', code='binding_ambiguous')
+    text = candidates[0]
+    okay = bool(boundary(c.quote).search(text)) if re.fullmatch(r'[\w.$]+', c.quote) else normalized_quote(c.quote) in normalized_quote(text)
+    return Result('match' if okay else 'mismatch', '항목 번호와 원문 행 ' + ('일치' if okay else '불일치'),
+                  text, 'item_match' if okay else 'item_mismatch')
+
+
+class Checker:
+    def __init__(self, transcript: Transcript, sources: dict[str, str], repos: Repositories,
+                 aliases: dict[str, str], budget: Budget):
+        self.transcript, self.sources, self.repos = transcript, sources, repos
+        self.aliases, self.budget = aliases, budget
+        self.loaded: dict[tuple[str, str], Evidence] = {}
+
+    def web_versions(self, c: Claim) -> list[list[Evidence]]:
+        """Keep each URL response separate; join only its captured file ranges."""
+        pages = [e for e in self.transcript.evidence
+                 if (e.url or e.url_content_path) and not e.control_only
+                 and (c.current or not e.after_report)]
+        versions = []
+        for page in pages:
+            self.budget.check()
+            if page.url and c.path and normalize_url(c.path) != normalize_url(page.url):
+                continue
+            if not page.url_content_path or page.problem:
+                if page.url:
+                    versions.append([page])
+                continue
+            path = normalize_path(page.url_content_path, self.aliases)
+            # A repeated write to the same export path begins a new response.
+            end = min((p.order for p in pages if p.order > page.order and p.url_content_path
+                       and normalize_path(p.url_content_path, self.aliases) == path),
+                      default=float('inf'))
+            captured = []
+            for e in self.transcript.evidence:
+                if ('view_file' not in e.tool or e.control_only
+                        or not page.order < e.order < end or e.after_report and not c.current
+                        or normalize_path(e.path, self.aliases) != path):
+                    continue
+                bound = replace(e, url=page.url)
+                blocks = (browser_blocks(bound, '\n'.join(e.lines.values()) if e.lines else e.text)
+                          if 'browser' in page.tool.casefold() else [])
+                candidates = blocks or ([bound] if page.url else [])
+                captured.extend(e for e in candidates if e.url
+                                and (not c.path or normalize_url(c.path) == normalize_url(e.url)))
+            if captured or page.url:
+                versions.append(captured or [page])
+        return versions
+
+    def select(self, c: Claim) -> list[Evidence]:
+        if c.web_quote:
+            return [e for version in self.web_versions(c) for e in version]
+        observed = [e for e in self.transcript.evidence
+                    if not e.control_only and (c.current or not e.after_report)
+                    and c.path and (matches_path(c.path, e.path, self.aliases)
+                                    or c.path.startswith(('https://', 'http://')) and normalize_url(c.path) == normalize_url(e.url))]
+        file_reads = observed
+        for e in observed:
+            load_view_pointer(e, self.budget)
+            if c.check_type == 'K2':
+                load_measurement_pointer(e, self.budget)
+        if c.revision:
+            observed = [e for e in observed if e.revision and
+                        (e.revision.startswith(c.revision) or c.revision.startswith(e.revision))]
+        if c.when and c.when not in {'before', 'after'}:
+            observed = [e for e in observed if e.timestamp == c.when]
+        if observed and (c.current or c.when in {'before', 'after'}):
+            groups = defaultdict(list)
+            for e in observed:
+                groups[normalize_path(e.path, self.aliases)].append(e)
+            observed = [(min if c.when == 'before' else max)(g, key=lambda e: e.order) for g in groups.values()]
+        if c.check_type == 'K2' and file_reads:
+            return observed or [replace(e, problem='파일 읽기 관측은 있으나 명시 시점에 연결하지 못함',
+                                        problem_code='observation_time_unresolved') for e in file_reads]
+        if observed:
+            if c.check_type not in {'K1', 'K5'} or not c.start or any(
+                e.total_lines is not None and c.end > e.total_lines or all(n in e.lines for n in range(c.start, c.end+1))
+                for e in observed
+            ):
+                return observed
+        fixed = []
+        for name, path in self.sources.items():
+            if c.path and (matches_path(c.path, name, self.aliases) or matches_path(name, c.path, self.aliases)):
+                key = (name, path)
+                if key not in self.loaded:
+                    self.loaded[key] = local_source(Path(path).expanduser(), name, self.budget)
+                e = self.loaded[key]
+                # Human snapshots carry no invented timestamp; do not override explicit time.
+                if not c.revision and not c.when:
+                    fixed.append(e)
+        if fixed:
+            return fixed
+        fixed = self.repos.observations(c.path, fixed=True) if c.path else []
+        if c.revision or c.when:
+            fixed = [e for e in fixed if not c.when and e.revision and c.revision and
+                     (e.revision.startswith(c.revision) or c.revision.startswith(e.revision))]
+        return fixed or observed
+
+    def quote_candidate_ranges(self, c: Claim) -> tuple[tuple[str, int, int], ...]:
+        """Keep individual ranges and add only same-file connected unions."""
+        ranges = list(c.candidate_ranges)
+        by_path = defaultdict(list)
+        for path, start, end in ranges:
+            if 1 <= start <= end:
+                by_path[normalize_path(path, self.aliases)].append((path, start, end))
+        for spans in by_path.values():
+            path, start, end = sorted(spans, key=lambda span: (span[1], span[2]))[0]
+            for _, next_start, next_end in sorted(spans, key=lambda span: (span[1], span[2]))[1:]:
+                if next_start <= end + 1:
+                    end = max(end, next_end)
+                else:
+                    if (path, start, end) not in ranges:
+                        ranges.append((path, start, end))
+                    start, end = next_start, next_end
+            if (path, start, end) not in ranges:
+                ranges.append((path, start, end))
+        return tuple(ranges)
+
+    def quote_versions(self, candidates: list[tuple[Claim, list[Evidence]]]):
+        """Compare every candidate with every selected read without inventing missing reads."""
+        expanded = []
+        for candidate, versions in candidates:
+            quotes = candidate.candidate_quotes if candidate.check_type == 'K1' else ()
+            if quotes:
+                expanded.extend((replace(candidate, quote=quote, quote_code=code,
+                                         candidate_quotes=()), versions) for quote, code in quotes)
+            else:
+                expanded.append((candidate, versions))
+        candidates = expanded
+        observations = {}
+        matrix = []
+        outcomes = []
+        matched_versions = set()
+        fallback_used = False
+        complete = True
+        versions_by_path = defaultdict(set)
+        for index, (candidate, versions) in enumerate(candidates):
+            self.budget.check()
+            # Changed contents at the reported coordinates can reflect line drift.
+            spans = {tuple((n, evidence.lines.get(n)) for n in
+                           range(candidate.start, candidate.end + 1)) for evidence in versions}
+            extents = {(min(e.lines), max(e.lines), e.total_lines)
+                       for e in versions if e.lines}
+            fallback = bool(candidate.start and len(versions) > 1
+                            and (len(spans) > 1 or len(extents) > 1))
+            numbered = [re.fullmatch(r'\s*(?:line\s+)?(\d+): ?(.*)', line, re.I)
+                        for line in candidate.quote.splitlines()]
+            if (candidate.start < 0 or candidate.end < candidate.start
+                    or numbered and all(numbered) and any(
+                        not candidate.start <= int(match.group(1)) <= candidate.end
+                        for match in numbered)):
+                fallback = False
+            fallback_used |= fallback
+            quoted = candidate
+            if fallback:
+                quote = ('\n'.join(match.group(2) for match in numbered)
+                         if numbered and all(numbered) else candidate.quote)
+                quoted = replace(candidate, check_type='K5', start=0, end=0, quote=quote)
+            for evidence in versions:
+                self.budget.check()
+                key = (normalize_path(evidence.path, self.aliases), evidence.url,
+                       evidence.origin, evidence.order, evidence.revision, evidence.timestamp,
+                       tuple(sorted(evidence.lines.items())), evidence.total_lines,
+                       evidence.complete, evidence.problem)
+                complete &= evidence.complete and not evidence.problem and not evidence.unsupported
+                versions_by_path[normalize_path(evidence.path, self.aliases)].add(key)
+                observations.setdefault(key, evidence.metadata())
+                result = check_one(quoted, evidence, self.budget)
+                outcomes.append(result)
+                if result.verdict == 'match':
+                    matched_versions.add(key)
+                matrix.append({'candidate': index + 1, 'path': candidate.path, 'quote': candidate.quote,
+                               'range': [candidate.start, candidate.end] if candidate.start else [],
+                               'whole_version_fallback': fallback,
+                               'verdict': result.verdict, 'reason_code': result.code,
+                               'observation': evidence.metadata()})
+        proof = {'version_count': len(observations), 'candidate_count': len(candidates),
+                 'whole_version_fallback': fallback_used,
+                 'observations': list(observations.values()), 'matrix': matrix,
+                 'multiple_versions_of_one_path': any(len(ids) > 1 for ids in versions_by_path.values()),
+                 'all_observations_complete': bool(complete),
+                 'missing_candidate_observation': any(not versions for _, versions in candidates)}
+        absent_everywhere = bool(outcomes and complete and not proof['missing_candidate_observation']
+                                 and all(r.code == 'quote_mismatch' for r in outcomes))
+        supported_every_version = bool(observations and set(observations) == matched_versions)
+        return proof, absent_everywhere, supported_every_version
+
+    def resolve_ambiguous_reference(self, c: Claim) -> bool:
+        """Resolve a literal over all candidate ranges and all selected versions."""
+        if c.check_type != 'K5' or not c.candidate_ranges:
+            return False
+        quote, quote_code = c.candidate_quotes[0]
+        candidates = []
+        ranges = (self.quote_candidate_ranges(c) if c.candidate_group_closed else
+                  tuple((path, 0, 0) for path in dict.fromkeys(p for p, _, _ in c.candidate_ranges)))
+        for path, start, end in ranges:
+            candidate = replace(c, path=path, start=start, end=end, quote=quote, quote_code=quote_code,
+                                contextual_reason='', candidate_ranges=(), candidate_quotes=(),
+                                candidate_group_closed=False)
+            candidates.append((candidate, self.select(candidate)))
+        proof, absent_everywhere, supported_every_version = self.quote_versions(candidates)
+        c.source = {'candidate_ranges': [list(candidate) for candidate in c.candidate_ranges],
+                    'candidate_quotes': [quote for quote, _ in c.candidate_quotes],
+                    'joined_candidate_ranges': [list(r) for r in self.quote_candidate_ranges(c) if r not in c.candidate_ranges],
+                    'matrix': proof['matrix'], 'quote_check': proof,
+                    'whole_file_open_group': not c.candidate_group_closed}
+        supported = any(row['verdict'] == 'match' for row in proof['matrix'])
+        if supported:
+            if ((proof['multiple_versions_of_one_path'] and not supported_every_version)
+                    or not c.candidate_group_closed and len(ranges) > 1):
+                c.verdict, c.reason, c.reason_code = (
+                    'unverifiable', '인용은 일부 읽은 판에서만 확인되어 관측 시점 미확정',
+                    'observation_conflict')
+            else:
+                c.verdict, c.reason, c.reason_code = (
+                    'match', '후보 줄·범위 중 한 곳에서 인용 일치', 'quote_match')
+        elif absent_everywhere:
+            c.verdict, c.reason, c.reason_code = (
+                'mismatch', f"읽은 {proof['version_count']}판과 {proof['candidate_count']}개 후보 범위 어디에도 인용 없음",
+                'quote_mismatch')
+        elif any(row['reason_code'] == 'paraphrased_quote' for row in proof['matrix']):
+            c.verdict, c.reason, c.reason_code = (
+                'unverifiable', '후보 범위에 코드 표기 변형만 확인됨', 'paraphrased_quote')
+        else:
+            c.verdict, c.reason, c.reason_code = (
+                'unverifiable', '후보 범위 일부 미확보 또는 인용 결합 미확정', 'binding_ambiguous')
+        return True
+
+    def needs_repository_lookup(self, c: Claim) -> bool:
+        """Plan only identifier lookups that apply() can actually consume."""
+        if (c.check_type not in {'K4', 'K6'} or c.contextual_reason or c.malformed_number
+                or c.negated_context or c.binding_candidates):
+            return False
+        if c.path:
+            observations = self.select(c)
+            if not observations:
+                return False
+            results = [check_one(c, evidence, self.budget) for evidence in observations]
+            missing_codes = {'not_found', 'definition_missing'} if c.check_type == 'K4' else {'not_found'}
+            return bool(results) and all(result.verdict == 'absent' and result.code in missing_codes
+                                         for result in results)
+        if c.check_type != 'K4':
+            return False
+        results = [check_one(c, evidence, self.budget) for evidence in self.transcript.evidence
+                   if not evidence.control_only and (not evidence.after_report or c.current)]
+        return not any(result.verdict == 'match' for result in results)
+
+    def apply(self, c: Claim):
+        self.budget.check()
+        if c.check_type == 'K5' and c.unattached_quote:
+            # A detached snippet has a possible file, not a proven citation.
+            # Positive whole-file evidence is useful; failure cannot prove a
+            # false quote until its binding is known.
+            candidate = replace(c, unattached_quote=False, contextual_reason='')
+            self.apply(candidate)
+            c.source = {**candidate.source, 'whole_file_unattached_quote': True,
+                        'comparison_verdict': candidate.verdict,
+                        'comparison_reason_code': candidate.reason_code}
+            if candidate.verdict == 'match':
+                c.verdict, c.reason, c.reason_code = candidate.verdict, candidate.reason, candidate.reason_code
+            else:
+                c.verdict, c.reason, c.reason_code = (
+                    'unverifiable', '떨어진 코드 인용의 파일 전체 대조로 결합을 확정하지 못함',
+                    'binding_ambiguous')
+            return
+        if (c.check_type == 'K5' and c.candidate_ranges and c.contextual_reason != 'summary_label'
+                and self.resolve_ambiguous_reference(c)):
+            return
+        if c.contextual_reason and not (c.check_type == 'K1' and (
+                c.contextual_reason == 'binding_ambiguous' or c.contextual_reason == 'reported_claim' and c.quote)):
+            c.verdict, c.reason_code = 'unverifiable', c.contextual_reason
+            c.reason = {
+                'binding_ambiguous': '여러 줄 번호와 인용의 대응 관계 미확정',
+                'reported_claim': '다른 보고의 옛 주장 인용으로 현재 사실을 확정하지 않음',
+                'non_file_quote': '제안·발화·출력·부재 설명은 파일 원문 인용으로 확정하지 않음',
+                'proposed_name': '제안·가정·도입 예정인 이름은 현재 존재 주장으로 확정하지 않음',
+                'item_token_only': '항목 번호 뒤 토큰·숫자만으로 항목 설명을 확정하지 않음',
+                'summary_label': '자연어 요약 꼬리표는 코드 원문 인용으로 대조하지 않음',
+            }[c.contextual_reason]
+            c.source = {'path': c.path, 'location': f'보고서:{c.report_line}', 'search_scope': []}
+            if c.candidate_ranges:
+                c.source['candidate_ranges'] = [list(candidate) for candidate in c.candidate_ranges]
+                c.source['candidate_quotes'] = [quote for quote, _ in c.candidate_quotes]
+            return
+        if c.malformed_number:
+            c.verdict, c.reason_code = 'unverifiable', 'malformed_number'
+            c.reason = '쉼표만으로 된 숫자 단위·산술 주장은 대조하지 않음'
+            c.source = {'location': f'보고서:{c.report_line}', 'search_scope': []}
+            return
+        if c.negated_context:
+            c.verdict, c.reason_code = 'unverifiable', 'negated_context'
+            c.reason = '부정·권고 문맥의 식별자 존재는 확정하지 않음'
+            c.source = {'path': c.path, 'search_scope': []}
+            return
+        if c.binding_candidates:
+            c.reason, c.reason_code = '같은 문맥에 연결 파일 후보가 여러 개', 'binding_ambiguous'
+            c.source = {'binding_candidates': list(c.binding_candidates)}
+            return
+        if c.command_exit is not None:
+            relevant = [e for e in self.transcript.evidence if e.conditional_marker and
+                        (c.current or not e.after_report) and (not c.path or matches_path(c.path, e.path, self.aliases))]
+            for e in relevant:
+                if e.problem or e.exit_code != 0:
+                    continue
+                marker = e.success_marker
+                if not marker and e.complete and e.aux_path:
+                    last = ''
+                    for _, text in file_lines(Path(e.aux_path), self.budget):
+                        if text.strip() and not re.search(r'(?:Exit code:|exited with code)\s*-?\d+', text, re.I):
+                            last = text
+                    if last == e.conditional_marker:
+                        marker = last
+                if marker == c.value and '\ufffd' not in marker:
+                    c.verdict = 'match' if c.command_exit == 0 else 'mismatch'
+                    c.reason_code = 'command_marker_match' if c.command_exit == 0 else 'command_exit_mismatch'
+                    c.reason = '조건부 성공 표식과 종료 코드 대조'
+                    c.source = {**e.metadata(), 'success_marker': marker}
+                    return
+            c.reason, c.reason_code = '연결된 명령 성공 표식 미확보', 'command_result_missing'
+            c.source = {'observations': [e.metadata() for e in relevant]}
+            return
+        if c.check_type == 'K7':
+            total, part = int(c.value), int(c.entity)
+            okay = total == part if c.unit == 'table' else part <= total
+            c.verdict = 'match' if okay else 'mismatch'
+            c.reason = f'보고서 내부 산술 대조: 전체 {total}, 부분/표 행 {part}'
+            c.source = {'location': f'보고서:{c.report_line}', 'search_scope': '보고서 내부 집계'}
+            c.reason_code = 'value_match' if okay else 'value_mismatch'
+            return
+        if c.check_type == 'K8':
+            # A successful response confirms the visit even when its body is a
+            # storage pointer or a partial capture. Quotation evidence is separate.
+            relevant = [e for e in self.transcript.evidence
+                        if e.url and not e.control_only and (c.current or not e.after_report)
+                        and normalize_url(e.url) == normalize_url(c.value)]
+            # A browser export without URL metadata may reveal its origin only
+            # in a later, path-bound captured view.
+            relevant += [e for version in self.web_versions(replace(c, web_quote=True, path=c.value))
+                         for e in version if e.url and normalize_url(e.url) == normalize_url(c.value)]
+            successful = [e for e in relevant if not e.problem or e.problem_code == 'partial_range']
+            if successful:
+                c.verdict, c.reason = 'match', '성공한 URL 읽기 결과 확인'
+                c.source = successful[0].metadata()
+                c.reason_code = 'visited_url'
+            else:
+                c.verdict = 'unverifiable' if relevant or not self.transcript.valid or not self.transcript.version else 'absent'
+                c.reason = '성공한 URL 읽기 결과 없음 (검색 질의·본문 URL 제외)'
+                c.source = {'search_scope': ['대화의 성공한 URL 읽기 도구 결과'] if self.transcript.version else []}
+                c.reason_code = next((e.problem_code for e in relevant if e.problem_code), 'no_successful_visit')
+            return
+        if c.check_type == 'K3':
+            scope = self.repos.scope(c.repository_contexts)
+            scoped = scope if len(scope) == 1 else None
+            object_result = self.repos.commit(c.value, scoped, c.object_kind)
+            typed_object = c.object_kind in {'tree', 'blob'} or bool(
+                set(object_result[2].get('object_kind', [])) - {'commit'})
+            for e in ([] if typed_object else self.transcript.evidence):
+                if e.problem or not e.complete or e.after_report and not c.current or not re.search(r'\bgit\b', e.command):
+                    continue
+                if scoped:
+                    cwd = normalize_path(e.cwd, self.aliases)
+                    root = normalize_path(str(scoped[0]), self.aliases)
+                    if not cwd or not (cwd == root or cwd.startswith(root + '/')):
+                        continue
+                for n, text in content_lines(e, self.budget):
+                    if boundary(c.value).search(text) and '\ufffd' not in text:
+                        c.verdict, c.reason, c.source = 'match', '연결된 git 읽기 명령 출력에서 SHA 확인', e.metadata()
+                        c.reason_code = 'sha_observed'
+                        return
+            c.verdict, c.reason, c.source = object_result
+            c.reason_code = {'match': 'commit_exists', 'mismatch': 'not_commit', 'absent': 'commit_not_found',
+                             'unverifiable': 'commit_unresolved'}[c.verdict]
+            if typed_object:
+                if c.verdict == 'match':
+                    c.reason_code = 'object_exists'
+                elif c.verdict == 'mismatch' and c.object_kind != 'commit':
+                    c.reason_code = 'object_kind_mismatch'
+                elif c.verdict == 'unverifiable' and not c.object_kind and c.source.get('object_kind'):
+                    c.reason_code = 'object_kind'
+            c.source['repository_binding'] = 'explicit' if scoped else 'unknown'
+            if not scoped and (c.verdict == 'absent' or not self.repos.roots):
+                c.verdict, c.reason, c.reason_code = 'unverifiable', 'SHA가 속한 저장소 범위 미확정', 'repo_scope_unknown'
+            return
+        if c.web_quote:
+            versions = self.web_versions(c)
+            matrix = [[(check_one(c, e, self.budget), e) for e in version] for version in versions]
+            outcomes = []
+            for results in matrix:
+                verdicts = {r.verdict for r, _ in results}
+                codes = {r.code for r, _ in results}
+                if 'match' in verdicts and codes <= {'quote_match', 'partial_range'}:
+                    outcomes.append('match')
+                elif 'mismatch' in verdicts and codes <= {'quote_mismatch', 'partial_range'}:
+                    outcomes.append('mismatch')
+                else:
+                    outcomes.append('unverifiable')
+            c.source = {'observations': [e.metadata() for results in matrix for _, e in results],
+                        'search_scope': 'captured URL reads only',
+                        'version_count': len(versions), 'version_verdicts': outcomes}
+            if outcomes and all(v == 'match' for v in outcomes):
+                c.verdict, c.reason, c.reason_code = 'match', '모든 웹 관측판의 읽은 범위에서 인용 확인', 'quote_match'
+            elif outcomes and all(v == 'mismatch' for v in outcomes):
+                c.verdict, c.reason, c.reason_code = 'mismatch', '모든 완전한 웹 관측판에 인용 없음', 'quote_mismatch'
+            elif any(r.verdict == 'match' for results in matrix for r, _ in results):
+                c.reason, c.reason_code = '웹 인용은 일부 관측판에서만 확인됨', 'observation_conflict'
+            else:
+                c.reason, c.reason_code = '웹 원문 읽기 근거 미확보', 'web_evidence_missing'
+            return
+        observations = self.select(c)
+        if not c.path and c.check_type == 'K4':
+            results = []
+            for e in self.transcript.evidence:
+                if not e.control_only and (not e.after_report or c.current):
+                    results.append((check_one(c, e, self.budget), e))
+            found = next(((r, e) for r, e in results if r[0] == 'match'), None)
+            if found:
+                result, e = found
+                c.verdict, c.reason, c.reason_code = result.verdict, result.reason, result.code
+                c.source = e.metadata()
+                return
+            hit, complete, scopes, hits = self.repos.identifier(c.value, revision=c.revision, when=c.when)
+            # git grep proves mention, not definition.
+            reads_complete = all(r[0] != 'unverifiable' for r, _ in results)
+            has_transcript = bool(self.transcript.version)
+            c.verdict = 'absent' if complete and not hit and reads_complete and self.transcript.valid and has_transcript else 'unverifiable'
+            searched = (['대화 읽기 결과'] if has_transcript else []) + scopes
+            c.reason = '연결 파일 없는 식별자: ' + (' + '.join(searched) or '검색 근거 미확보')
+            c.source = {'search_scope': searched, 'existence': 'mention',
+                        'repository_hits': hits}
+            c.reason_code = ('found_outside_scope' if hit else 'repository_search_incomplete' if not complete
+                             else 'not_found' if c.verdict == 'absent'
+                             else 'partial_range' if has_transcript else 'transcript_missing')
+            return
+        if not observations:
+            c.reason = '연결된 당시 읽기 결과 또는 지정 기준 원문 미확보'
+            c.reason_code = ('historical_no_commit' if c.revision or c.when else
+                             'commit_missing_file' if self.repos.commits and c.path else 'no_read_of_file')
+            if c.path:
+                current = self.repos.observations(c.path, fixed=False)
+                c.source = {'search_scope': c.path, 'current_observations': []}
+                for e in current:
+                    result = check_one(c, e, self.budget)
+                    c.source['current_observations'].append({**e.metadata(), 'verdict': result.verdict, 'reason': result.reason})
+            return
+        identities = {normalize_path(e.path, self.aliases) or normalize_url(e.url) for e in observations}
+        if len(identities) > 1:
+            c.reason, c.reason_code = '서로 다른 파일 후보가 여러 개', 'binding_ambiguous'
+            c.source = {'observations': [e.metadata() for e in observations]}
+            return
+        # A compatible partial observation adds no competing version of a full read.
+        # Failed reads and conflicting content/measurements remain unresolved.
+        full = [e for e in observations if e.complete and e.lines and not e.problem]
+        observations = [e for e in observations if not (
+            not e.complete and not e.problem and e.lines and any(
+                all(f.lines.get(n) == text for n, text in e.lines.items())
+                and (e.total_lines is None or e.total_lines == f.total_lines)
+                and all(k not in f.counts or f.counts[k] == v for k, v in e.counts.items())
+                for f in full))]
+        results = [(check_one(c, e, self.budget), e) for e in observations]
+        line_metric = c.check_type in {'K2', 'K6'} and c.unit == '줄' and (c.check_type == 'K2' or not c.entity)
+        if line_metric and 'wc -l' not in c.context and 'Total Lines' not in c.context:
+            measured = {e.counts['L_lines'] for e in observations if not e.problem and 'L_lines' in e.counts}
+            if len(measured) == 1:
+                lines = next(iter(measured))
+                # A linked content-line measurement resolves the unknown final row,
+                # but only if it is compatible with this view's total.
+                results = [(line_values(c, replace(e, counts={**e.counts, 'L_lines': lines})), e)
+                           if r.code == 'partial_range' and e.total_lines is not None
+                           and e.total_lines - lines in (0, 1) else (r, e) for r, e in results]
+            # For an unresolved partial view, a linked completed wc measurement
+            # can answer the reported count without inventing a final source row.
+            newline_counts = {e.counts['L_nl'] for e in observations if not e.problem and 'L_nl' in e.counts}
+            if len(newline_counts) == 1:
+                newlines = next(iter(newline_counts))
+                if Decimal(c.value) == newlines and any(
+                        r.code == 'partial_range' and e.total_lines == newlines + 1 for r, e in results):
+                    results = [(Result('match', '부분 열람의 미확정 줄 수를 연결된 wc -l 계측으로 대조',
+                                       str(newlines), 'linked_line_measurement'), e)
+                               if (r.code == 'partial_range' and e.total_lines == newlines + 1
+                                   or r.code == 'measurement_missing' and e.counts.get('L_nl') == newlines)
+                               else (r, e) for r, e in results]
+        if c.check_type == 'K2' and any(r.verdict != 'unverifiable' for r, _ in results):
+            results = [(r, e) for r, e in results if r.code != 'measurement_missing']
+        c.source = {'observations': [e.metadata() for _, e in results],
+                    'search_scope': sorted(set(e.path or e.url or e.origin for _, e in results))}
+        # Multiple snapshots of one file require equal relevant content, not equal verdict alone.
+        groups = defaultdict(set)
+        for result, e in results:
+            signature = result.signature
+            if line_metric:
+                signature = ''  # Compare each count convention below, not differently sized candidate sets.
+            groups[normalize_path(e.path, self.aliases)].add((result.verdict, signature))
+        count_conflict = False
+        if line_metric:
+            counts = defaultdict(set)
+            for _, e in results:
+                for key, value in e.counts.items():
+                    counts[key].add(value)
+                if e.total_lines is not None:
+                    counts['L_view'].add(e.total_lines)
+            count_conflict = any(len(values) > 1 for values in counts.values())
+            count_conflict |= any(view - lines not in (0, 1) for view in counts['L_view'] for lines in counts['L_lines'])
+        verdicts = {r[0] for r, _ in results}
+        if 'unverifiable' in verdicts or len(verdicts) != 1 or count_conflict or any(len(v) > 1 for v in groups.values()):
+            c.verdict, c.reason = 'unverifiable', '필요 범위 미확보 또는 여러 관측·동명 파일의 결론/내용이 다름'
+            unresolved = [r for r, _ in results if r.verdict == 'unverifiable']
+            c.reason_code = unresolved[0].code if unresolved else 'observation_conflict'
+            if c.reason_code == 'paraphrased_quote':
+                c.reason = unresolved[0].reason
+        else:
+            c.verdict, c.reason = results[0][0][:2]
+            c.reason_code = results[0][0].code
+        if c.check_type in {'K1', 'K5'} and c.quote and len(results) > 1:
+            proof, absent_everywhere, _ = self.quote_versions([(c, [e for _, e in results])])
+            c.source['quote_check'] = proof
+            if absent_everywhere and any(result.code == 'quote_mismatch' for result, _ in results):
+                c.verdict, c.reason, c.reason_code = (
+                    'mismatch', f"읽은 {proof['version_count']}판 어디에도 인용 없음", 'quote_mismatch')
+            elif (proof['whole_version_fallback'] and c.reason_code == 'quote_mismatch'
+                  and any(row['verdict'] == 'match' for row in proof['matrix'])):
+                c.verdict, c.reason, c.reason_code = (
+                    'unverifiable', '판마다 줄 위치가 달라 판 전체에서 인용을 확인함',
+                    'observation_conflict')
+        if c.check_type == 'K1' and c.contextual_reason == 'binding_ambiguous' and c.verdict in {'match', 'range_only'}:
+            c.verdict, c.reason_code = 'unverifiable', 'binding_ambiguous'
+            c.reason = '열린 인용 묶음의 줄 대응 관계 미확정'
+        if c.inherited_binding and c.verdict == 'mismatch' and c.reason_code in {'range_exceeded', 'value_mismatch'}:
+            c.verdict, c.reason_code = 'unverifiable', 'inherited_binding'
+            c.reason = '상속한 파일과 범위·값의 연결 미확정'
+        missing_definition = c.check_type == 'K4' and c.reason_code == 'definition_missing'
+        if (c.verdict == 'absent' and c.check_type in {'K4', 'K6'}
+                and (c.reason_code == 'not_found' or missing_definition) and self.repos.roots):
+            token = c.value if c.check_type == 'K4' else c.entity
+            hit, complete, scopes, hits = self.repos.identifier(
+                token, revision=c.revision, when=c.when,
+                other_definition=c.path if missing_definition else '')
+            if missing_definition and not scopes and complete:
+                return  # No eligible fixed tree; preserve the original file verdict.
+            c.source['repository_search_scope'] = scopes
+            c.source['repository_hits'] = hits
+            if hit:
+                c.verdict, c.reason_code = 'unverifiable', 'found_outside_scope'
+                hit_kind = '정의' if any(item.get('kind') == 'definition' for item in hits) else '코드 언급'
+                c.reason = f'연결 읽기에는 없으나 지정 저장소 검색에서 {hit_kind} 확인'
+                c.source['repository_hit_kind'] = 'definition' if hit_kind == '정의' else 'mention'
+            elif not complete:
+                c.verdict, c.reason_code = 'unverifiable', 'repository_search_incomplete'
+                c.reason = '부재 확정 전 지정 저장소 검색을 완료하지 못함'
+
+
+def _claim_observations(source) -> list[dict]:
+    """Every evidence metadata record a claim's verdict cited."""
+    found, stack = [], [source]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            if isinstance(item.get('location'), str) and 'tool' in item:
+                found.append(item)
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return found
+
+
+def compaction_audit(claims: list[Claim], transcript: Transcript, transcript_path: Path | None,
+                     aliases: dict[str, str]) -> dict:
+    """Advisory only: file citations whose only basis predates the last compaction.
+
+    Only compactions at or before the last report write are recorded.  A claim
+    is listed when every observation behind it is a transcript read (no
+    fixed-commit or explicit source-file basis) and one of its files has no
+    successful transcript read after the last such compaction.  Verdicts never
+    change.
+    """
+    audit = {'count': len(transcript.compaction_orders),
+             'orders': list(transcript.compaction_orders),
+             'steps': list(transcript.compaction_steps),
+             'stale_claim_lines': [], 'stale_files': []}
+    if not transcript.compaction_orders or transcript_path is None:
+        return audit
+    last = transcript.compaction_orders[-1]
+    prefix = f'{transcript_path}:'
+    hinted = {p for order, p in transcript.compaction_rereads if order > last}
+    reread, reread_current = set(hinted), set(hinted)
+    for e in transcript.evidence:
+        if (e.order > last and e.path and not e.control_only
+                and (not e.problem or e.problem_code == 'partial_range')):
+            reread_current.add(normalize_path(e.path, aliases))
+            if not e.after_report:
+                reread.add(normalize_path(e.path, aliases))
+    lines, files = set(), set()
+    for c in claims:
+        if c.check_type == 'K10' or c.reason_code == 'timed_out':
+            continue
+        observed = _claim_observations(c.source)
+        from_transcript = [o for o in observed if o['location'].startswith(prefix)
+                           and o['location'][len(prefix):].isdigit()]
+        if not observed or len(from_transcript) != len(observed):
+            continue
+        stale = {normalize_path(o['path'], aliases) for o in from_transcript
+                 if isinstance(o.get('path'), str) and o['path'] and not o.get('url')}
+        pool = reread_current if c.current else reread
+        stale = {s for s in stale if s and not any(
+            s == r or matches_path(s, r) or matches_path(r, s) for r in pool)}
+        if stale:
+            lines.add(c.report_line)
+            files |= stale
+    audit['stale_claim_lines'] = sorted(lines)
+    audit['stale_files'] = sorted(files)
+    return audit
+
+
+def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
+        agy_auto: bool = False,
+        brain_root: Path | None = None, repos: list[str] | None = None,
+        commits: dict[str, str] | None = None, sources: dict[str, str] | None = None,
+        default_file: dict[str, str] | None = None,
+        aliases: dict[str, str] | None = None, time_limit: float = 60,
+        budget: Budget | None = None, js_parser: JSParserConfig | None = None) -> dict:
+    budget = budget or Budget(time_limit)
+    if any(not re.fullmatch(r'[0-9a-fA-F]{7,40}', revision) for revision in (commits or {}).values()):
+        raise ValueError('--commit 기준은 7~40자리 16진 SHA여야 합니다.')
+    report_text = report.read_bytes().decode('utf-8-sig')
+    aliases = aliases or {}
+    sources = dict(sources or {})
+    if default_file:
+        if len(default_file) != 1:
+            raise ValueError('--default-file은 표기=실제파일 한 개만 지정해야 합니다.')
+        name, actual = next(iter(default_file.items()))
+        if not name or not actual or name in sources and sources[name] != actual:
+            raise ValueError('--default-file이 비어 있거나 --source-file과 충돌합니다.')
+        sources[name] = actual
+    claims, warnings = [], []
+    transcript = Transcript()
+    transcript_path = None
+    timed_out, unchecked = False, 0
+    completed = 0
+    try:
+        claims, warnings = extract(report_text, budget)
+        if default_file:
+            for c in claims:
+                if c.check_type in {'K1', 'K5'} and c.start and not c.path and not c.binding_candidates:
+                    c.path = name
+        if agy_auto:
+            candidates = discover_agy(report, report_text, brain_root or Path('~/.gemini/antigravity-cli/brain'), aliases, budget)
+            if len(candidates) == 1:
+                agy = str(candidates[0])
+            else:
+                transcript.valid = False
+                transcript.warnings.append(f'보고서 마지막 쓰기와 바이트가 일치하는 agy 대화 {len(candidates)}개: 자동 선택 안 함')
+        if agy:
+            transcript_path = resolve_agy(agy, brain_root or Path('~/.gemini/antigravity-cli/brain'))
+            transcript = read_transcript(transcript_path, 'agy', report, report_text, aliases, budget)
+        elif codex:
+            transcript_path = codex
+            transcript = read_transcript(codex, 'codex', report, report_text, aliases, budget)
+        warnings.extend(transcript.warnings)
+        repositories = Repositories(repos or [], commits or {}, aliases, budget)
+        repositories.preload_commits([c.value for c in claims if c.check_type == 'K3'])
+        checker = Checker(transcript, sources, repositories, aliases, budget)
+        repositories.preload_identifiers([
+            (c.value if c.check_type == 'K4' else c.entity, c.revision, c.when)
+            for c in claims if checker.needs_repository_lookup(c)
+        ])
+        for c in claims:
+            checker.apply(c)
+            completed += 1
+    except (DeadlineExceeded, subprocess.TimeoutExpired):
+        timed_out = True
+        unchecked = len(claims) - completed
+        for c in claims[completed:]:
+            c.verdict, c.reason = 'unverifiable', '시간 상한으로 검사하지 못함'
+            c.reason_code = 'timed_out'
+    if not timed_out:
+        rescue_js_definitions(claims, repositories, js_parser)
+    result = summarize(claims, timed_out=timed_out, unchecked_count=unchecked,
+                       warnings=warnings, input_incomplete=not transcript.valid)
+    result['transcript_format'] = transcript.version
+    result['compaction'] = compaction_audit(claims, transcript, transcript_path, aliases)
+    result['elapsed_seconds'] = round(budget.clock() - budget.started, 6)
+    return result

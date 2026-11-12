@@ -12,7 +12,7 @@ from core.scope_guard import evaluate_scope
 from core.verify_state import evaluate_stop
 
 
-SYNTHETIC_BOOT_PROMPT = """[부팅] 너는 wmux 4-pane 팀의 우하 pane = 구현보조 담당 Claude Code(Sonnet 5, ultracode 모드)다 (메인 PC 로컬). 프로젝트: SYNTHETIC SYNTHETIC 사업 (synthetic_name 투자유치) — 문서·리서치·재무모델·SYNTHETIC 작업, 현재 디렉토리가 작업폴더다. 부팅 절차: C:\\Users\\example\\.claude\\projects\\C--Users-example\\memory\\MEMORY.md 와 같은 폴더의 SYNTHETIC\\synthetic_name-SYNTHETIC-model-review.md 를 읽고 프로젝트 상태를 파악하라. 운영 규칙: (1) 미션모드 — 산출물 95점 기준·치명결함 0 하드게이트 (2) 비가역 작업(외부발송·계약·지출·배포)은 자동 진행 금지, 좌상 Claude 오케스트레이터 경유 사용자 승인 필수 (3) 산출물은 작업폴더에 파일로 저장하되 다른 AI의 파일을 덮어쓰지 말 것 (4) 작업 완료 시 지정된 sentinel 파일 생성. 파악 완료되면 READY-SONNET 한 줄만 출력하고 대기하라."""
+SYNTHETIC_BOOT_PROMPT = """[부팅] 너는 wmux 4-pane 팀의 우하 pane = 구현보조 담당 Claude Code(Sonnet 5, ultracode 모드)다 (메인 PC 로컬). 프로젝트: SYNTHETIC SYNTHETIC 사업 (SYNTHETIC-PARTNER 투자유치) — 문서·리서치·재무모델·SYNTHETIC 작업, 현재 디렉토리가 작업폴더다. 부팅 절차: C:\\Users\\example\\.claude\\projects\\C--Users-example\\memory\\MEMORY.md 와 같은 폴더의 synthetic\\synthetic_name-SYNTHETIC-model-review.md 를 읽고 프로젝트 상태를 파악하라. 운영 규칙: (1) 미션모드 — 산출물 95점 기준·치명결함 0 하드게이트 (2) 비가역 작업(외부발송·계약·지출·배포)은 자동 진행 금지, 좌상 Claude 오케스트레이터 경유 사용자 승인 필수 (3) 산출물은 작업폴더에 파일로 저장하되 다른 AI의 파일을 덮어쓰지 말 것 (4) 작업 완료 시 지정된 sentinel 파일 생성. 파악 완료되면 READY-SONNET 한 줄만 출력하고 대기하라."""
 FABLE_BOOT_PROMPT = """세션 부팅: (1) C:\\Users\\example\\.claude\\projects\\C--Users-example\\memory\\MEMORY.md 를 읽어 사용자·운영규칙을 파악하고 (2) C:\\Users\\example\\.claude\\projects\\C--Users-example\\memory\\fable-lite\\project.md 로 프로젝트 상태를 파악해라. 너의 역할: 우하 pane 다차원·병렬 구현 보조(Claude Sonnet 5 max, ultracode 모드 — 다차원 병렬 작업 전용, 단일 작업은 좌상이 직접 함). 현재 프로젝트 fable-lite(C:\\Users\\example\\fable-lite, v1.1.0 릴리스 완료). 규칙: 미션모드 검토=평균 95점+치명결함 0 하드게이트 / 비가역 작업은 사용자 명시 OK 필수 / 위임받은 파일 영역만 수정. 읽기 완료 후 "부팅 완료" 보고하고 대기해라."""
 
 
@@ -132,7 +132,7 @@ def test_classify_prompt_restores_plain_gochigo_multi_story_enumeration() -> Non
 
 def test_classify_prompt_cancels_boot_briefing_for_polite_imperative_action() -> None:
     result = classify_prompt(
-        {"prompt": r"[부팅] MEMORY.md 와 SYNTHETIC\x.md 읽고 auth.py pay.py 연동 좀 부탁해"}
+        {"prompt": r"[부팅] MEMORY.md 와 synthetic\x.md 읽고 auth.py pay.py 연동 좀 부탁해"}
     )
 
     assert result["briefing"] is False

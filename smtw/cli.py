@@ -24,6 +24,7 @@ def run_version(_args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from .claims.cli import add_claims_parser
     from .brief import run_brief
     from .check import run_check
     from .doctor import add_diagnostics_parsers
@@ -67,10 +68,17 @@ def build_parser() -> argparse.ArgumentParser:
     add_maintenance_parser(subparsers)
     add_diagnostics_parsers(subparsers)
     add_init_parser(subparsers)
+    add_claims_parser(subparsers)
     return parser
 
 
 def main() -> int:
+    # Claims runs independently: do not import legacy gate/ledger modules even
+    # indirectly through the other command parsers.
+    import sys
+    if sys.argv[1:2] == ["claims"]:
+        from .claims.cli import main as claims_main
+        return claims_main()
     parser = build_parser()
     args = parser.parse_args()
     return int(args.func(args))

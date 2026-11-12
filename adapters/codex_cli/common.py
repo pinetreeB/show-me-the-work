@@ -62,6 +62,12 @@ def emit(payload: Mapping[str, JsonValue]) -> int:
     return 0
 
 
+def supervision_enabled(payload: Mapping[str, JsonValue]) -> bool:
+    from adapters.opt_in import supervision_enabled as enabled
+
+    return enabled(project_root(payload))
+
+
 def fail_open(message: str) -> int:
     return emit({"systemMessage": f"[smtw] fail-open: {message}"})
 

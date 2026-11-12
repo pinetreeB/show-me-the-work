@@ -1,0 +1,6 @@
+# Preserve the existing byte-level judge contract on every checkout.
+smtw/claims/judge-output.schema.json text eol=crlf
+smtw/claims/judge-prompt-v1.txt text eol=crlf
+# These JSON bytes are independently SHA256 sealed; never convert newlines.
+tests/fixtures/local-judge-d1/**/*.json -text
+tests/fixtures/local-judge-d1/*.json -text

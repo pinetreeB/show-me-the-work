@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "model_calls": 0,
+  "case_id": "synthetic-smoke",
+  "synthetic": true,
+  "judge_contract": {
+    "version": "v1.2",
+    "source_policy": "self-identified-read-v1",
+    "privacy_policy": "blocklist-v1",
+    "prompt_sha256": "6ea00fb20360b23873a6206b50eb3c504d9d03f914d28c65376bbfe6ed350045",
+    "schema_sha256": "abf7a61ff307eb8de50485b8ec8b9f06bf965df6dacedb318567e46a04088cbf",
+    "cli_schema_sha256": "6dc854ace18c3c4979bb4513ea4915e830b8cd428db19817769773cf34032173"
+  },
+  "packets": [
+    {
+      "file": "packet-001.json",
+      "sha256": "cc4acd67a5bb2627606b40e421fbea5afca266422085f60dbc52f74662de3e8a",
+      "bytes": 627,
+      "characters": 627,
+      "redactions": {},
+      "item_ids": [
+        "d1-01"
+      ]
+    },
+    {
+      "file": "packet-002.json",
+      "sha256": "7740b70d6300527d7045d3f0f3a2d390ce021a3b73da691bd71d305552553726",
+      "bytes": 680,
+      "characters": 658,
+      "redactions": {},
+      "item_ids": [
+        "d1-02"
+      ]
+    },
+    {
+      "file": "packet-003.json",
+      "sha256": "d43578bb0fe86772799738401a0378af7b05371215439c3f301ff3c023f299a8",
+      "bytes": 650,
+      "characters": 650,
+      "redactions": {},
+      "item_ids": [
+        "d1-03"
+      ]
+    },
+    {
+      "file": "packet-004.json",
+      "sha256": "67e1118b17fb97fe3fa5d087b49c4ad85720bcdabff72e200db9f997e674b92f",
+      "bytes": 680,
+      "characters": 654,
+      "redactions": {},
+      "item_ids": [
+        "d1-04"
+      ]
+    },
+    {
+      "file": "packet-005.json",
+      "sha256": "f8dcc9889ba578936141c4160350ba775aa489ec9c191b6f9cc9d39244a87cb3",
+      "bytes": 634,
+      "characters": 634,
+      "redactions": {},
+      "item_ids": [
+        "d1-05"
+      ]
+    },
+    {
+      "file": "packet-006.json",
+      "sha256": "8df5d435397856d4d34677b45261b5f7edf312a87208273a5ad9f4f62936cf32",
+      "bytes": 648,
+      "characters": 630,
+      "redactions": {},
+      "item_ids": [
+        "d1-06"
+      ]
+    },
+    {
+      "file": "packet-007.json",
+      "sha256": "f5099ba2460c2091e6d745e5cb6b91fe08c38745b812a42252f7043c1748cd70",
+      "bytes": 697,
+      "characters": 697,
+      "redactions": {},
+      "item_ids": [
+        "d1-07"
+      ]
+    },
+    {
+      "file": "packet-008.json",
+      "sha256": "fe56952ec934d5df02d6fef248201612115a4923eb3aa29f24ffef333f8b3eb2",
+      "bytes": 750,
+      "characters": 750,
+      "redactions": {},
+      "item_ids": [
+        "d1-08"
+      ]
+    },
+    {
+      "file": "packet-009.json",
+      "sha256": "8d7216284d42e1a0f0f3e89de1438e0cd9acabac6fdf099ca1783796bc063698",
+      "bytes": 637,
+      "characters": 637,
+      "redactions": {},
+      "item_ids": [
+        "d1-09"
+      ]
+    },
+    {
+      "file": "packet-010.json",
+      "sha256": "67e4842a16532877ff840d9d1f42d3714ecd29017d8f28cca1005d6d6fc8be8a",
+      "bytes": 660,
+      "characters": 660,
+      "redactions": {},
+      "item_ids": [
+        "d1-10"
+      ]
+    },
+    {
+      "file": "packet-011.json",
+      "sha256": "fbeff2b8a8c31013d4182e9651071c24566950e2bc224f86f608b53cd97d26c8",
+      "bytes": 683,
+      "characters": 683,
+      "redactions": {},
+      "item_ids": [
+        "d1-11"
+      ]
+    },
+    {
+      "file": "packet-012.json",
+      "sha256": "7066c4f5773b6d69ea8b93823beca3a56814ca76239364424a92d9e4a870ed4b",
+      "bytes": 784,
+      "characters": 784,
+      "redactions": {},
+      "item_ids": [
+        "d1-12"
+      ]
+    }
+  ],
+  "sent_sources": {
+    "d1-01": [
+      {
+        "path": "~/synthetic-smoke/case_01.py",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "d1-02": [
+      {
+        "path": "~/synthetic-smoke/case_02.py",
+        "start": 1,
+        "end": 2
+      }
+    ],
+    "d1-03": [
+      {
+        "path": "~/synthetic-smoke/case_03.js",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "d1-04": [
+      {
+        "path": "~/synthetic-smoke/case_04.py",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "d1-05": [
+      {
+        "path": "~/synthetic-smoke/case_05.py",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "d1-06": [
+      {
+        "path": "~/synthetic-smoke/case_06.py",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "d1-07": [
+      {
+        "path": "~/synthetic-smoke/case_07.py",
+        "start": 1,
+        "end": 2
+      }
+    ],
+    "d1-08": [
+      {
+        "path": "~/synthetic-smoke/case_08.py",
+        "start": 1,
+        "end": 2
+      }
+    ],
+    "d1-09": [
+      {
+        "path": "~/synthetic-smoke/case_09.py",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "d1-10": [
+      {
+        "path": "~/synthetic-smoke/case_10.py",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "d1-11": [
+      {
+        "path": "~/synthetic-smoke/case_11.py",
+        "start": 1,
+        "end": 1
+      }
+    ],
+    "d1-12": [
+      {
+        "path": "~/synthetic-smoke/case_12.py",
+        "start": 1,
+        "end": 1
+      },
+      {
+        "path": "~/synthetic-smoke/alternate_12.py",
+        "start": 1,
+        "end": 1
+      }
+    ]
+  },
+  "local_selection": true
+}
