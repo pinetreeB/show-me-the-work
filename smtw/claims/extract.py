@@ -9,8 +9,8 @@ from .markup import (QUOTE, TICK, bind_path, binding_boundaries, cell_spans, mas
 
 
 EXT = r'(?:md|txt|jsonl?|[cm]?js|tsx?|jsx|py|sh|ps1|toml|ya?ml|sql|docx|log|xml|csv|tsv|go|rs|html|css)'
-PATH = re.compile(r'(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>+-]+[\\/])*[\w.@-]+\.' + EXT + r'\b', re.I)
-REFERENCE = re.compile(r'(?P<path>(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.@~<>()+-]+[\\/])*[\w.@-]+\.' + EXT + r'):(?:L)?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?', re.I)
+PATH = re.compile(r'(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.%@~<>+-]+[\\/])*[\w.%@-]+\.' + EXT + r'\b', re.I)
+REFERENCE = re.compile(r'(?P<path>(?:file:///)?(?:[A-Za-z]:[\\/])?(?:[\w.%@~<>()+-]+[\\/])*[\w.%@-]+\.' + EXT + r')(?::L?|#L)(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?', re.I)
 REFERENCE_TAIL = re.compile(r',\s*L?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?(?![\w.]|\s*(?:B\b|bytes?\b|KB\b|MB\b|개|건|회|%))', re.I)
 INHERITED_REFERENCE = re.compile(
     r'(?<![\w:]):L?(?P<start>\d+)(?:\s*[-–~]\s*L?(?P<end>\d+))?(?![\w:/-]|\.\d)')
@@ -42,10 +42,14 @@ def marked(context: str) -> bool:
 def paths_in(line: str) -> list[tuple[int, int, str]]:
     result = []
     covered = [(m.start(), m.end()) for m in URL.finditer(line)]
+    for link in re.finditer(r'\[([^\]\n]*)\]\(([^)\n]+)\)', line):
+        target = link.group(2)
+        if target.lower().startswith('file:///') or PATH.search(target):
+            covered.append((link.start(1), link.end(1)))
     for m in TICK.finditer(line):
         value = m.group(1)
         # Preserve spaces and parentheses in explicitly quoted paths.
-        path = re.sub(r':L?\d+(?:\s*[-–~]\s*L?\d+)?(?:,\s*L?\d+(?:\s*[-–~]\s*L?\d+)?)*$', '', value)
+        path = re.sub(r'(?::L?|#L)\d+(?:\s*[-–~]\s*L?\d+)?(?:,\s*L?\d+(?:\s*[-–~]\s*L?\d+)?)*$', '', value, flags=re.I)
         if re.search(r'\.' + EXT + r'$', path, re.I) and not re.search(r'\s[=;]|https?://', path):
             result.append((m.start(), m.end(), path))
             covered.append((m.start(), m.end()))
@@ -649,8 +653,9 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         ref_spans = []
         empty_path_refs = set()
         reference_groups = []
+        url_spans = [(u.start(), u.end()) for u in URL.finditer(line)]
         for m in REFERENCE.finditer(line):
-            if in_line_quote(m.start()):
+            if any(a <= m.start() < b for a, b in url_spans) or in_line_quote(m.start()):
                 continue
             c = add('K1', m.group(), m.start(), path=m.group('path'),
                     start=int(m.group('start')), end=int(m.group('end') or m.group('start')))
@@ -699,7 +704,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         for m in LOCATION.finditer(line):
             if in_line_quote(m.start()):
                 continue
-            if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans):
+            if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans + url_spans):
                 continue
             start = m.group('l') or m.group('p') or m.group('a') or m.group('n')
             end = m.group('le') or m.group('pe') or m.group('b') or start
@@ -709,7 +714,7 @@ def extract(report: str, budget: Budget) -> tuple[list[Claim], list[dict]]:
         for m in SINGLE_LINE.finditer(line):
             if in_line_quote(m.start()):
                 continue
-            if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans):
+            if any(a <= m.start() < b for a, b, _ in ref_spans + paths) or any(a <= m.start() < b for a, b in quoted_spans + url_spans):
                 continue
             header = next((table_headers[i] for i, (a,b) in enumerate(cell_spans(line)) if row and a <= m.start() < b and i < len(table_headers)), '')
             if metric_context(line, m.start(), m.end(), paths, '줄', header):

@@ -474,3 +474,13 @@ SMTW_REQUIRE_PUBLIC=1이면 공개 결과 폴더가 없는 경우 skip 대신 �
 check CLI 결과의 code_sha256은 현재 claims Python 소스 전체에 결속되며,
 공개 고정 시험은 해당 SHA가 현재 코드와 다르거나 누락되면 결과 재생성을 요구하며 실패한다.
 이 메타데이터는 대조기 원자 판정·요약·상태에 영향을 주지 않는다.
+
+### agy 1.5.16 보강 (--doc-dir, --before-timestamp, #L 링크, read_file 격리)
+
+- `--doc-dir DIR` (반복 가능): Git 저장소가 아닌 일반 문서 폴더를 기준 원문으로 추가합니다. 민감 경로(`.env`, `customer-data`, `.secrets` 등)는 열거나 목록을 읽지 않고 건너뜁니다.
+- `--before-timestamp ISO8601`: 지정 시각 이하의 전사 단계까지만 증거와 압축 감사 범위에 포함합니다.
+- `file:///...#L10-L20` 형식의 마크다운 줄 링크를 정식 K1 범위 참조로 인식합니다(`https?://` 웹 URL 내부는 제외).
+- 헤더 없는 `read_file` 출력은 `control_only`로 격리해 본문의 에러 문자열이나 보조 포인터 문구를 도구 실패로 오인하지 않고 자가쓰기 K4 우회를 차단합니다.
+- `compaction_all_cited`는 `--commit`/`--source-file` 폴백 여부와 무관하게 마지막 압축 이후 재열람되지 않은 모든 파일 인용 행을 별도로 보고합니다(`compaction` 5필드 호환 유지).
+- `discover_agy`(`--agy-auto`)는 줄바꿈(`\r\n` vs `\n`) 차이를 정규화하여 비교합니다.
+- 읽기 전용 MCP 도구(`wiki-search.search_wiki` 등) 호출 결과는 URL 방문으로 위장하지 않는 읽기 증거로 수집합니다.

@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 import ast
+import os
 from pathlib import Path
 import re
 import subprocess
+from urllib.parse import unquote
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -133,6 +135,88 @@ def docx_source(path: Path, name: str, budget: Budget) -> Evidence:
         e.problem_code = 'read_failed'
         e.complete = False
     return e
+
+
+PROTECTED_DOC_NEEDLES = ('_customer-data-do-not-read', 'customer-data', '.secrets', '세무', '법무', '계약')
+SKIP_DOC_DIRS = frozenset({'.git', '__pycache__', 'node_modules', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.venv', 'venv'})
+
+
+def is_protected_doc_path(path_like) -> bool:
+    """Block sensitive paths before opening or listing directories."""
+    text = unquote(str(path_like)).replace('\\', '/')
+    for part in text.split('/'):
+        low = part.strip().lower()
+        if not low:
+            continue
+        if low == '.env' or low.startswith('.env.'):
+            return True
+        if any(needle in low for needle in PROTECTED_DOC_NEEDLES):
+            return True
+    return False
+
+
+class DocDirs:
+    """Plain non-Git directory source with strict sensitive-path blocking."""
+
+    def __init__(self, roots: list[str], aliases: dict[str, str], budget: Budget):
+        self.roots: list[Path] = []
+        for raw in dict.fromkeys(roots or []):
+            if is_protected_doc_path(raw):
+                continue
+            try:
+                p = Path(raw).expanduser().resolve()
+            except OSError:
+                continue
+            if is_protected_doc_path(p) or not p.is_dir():
+                continue
+            self.roots.append(p)
+        self.aliases = aliases
+        self.budget = budget
+        self._entries: list[tuple[str, Path]] | None = None
+        self._loaded: dict[Path, Evidence] = {}
+
+    def _ensure_index(self) -> list[tuple[str, Path]]:
+        if self._entries is not None:
+            return self._entries
+        entries: list[tuple[str, Path]] = []
+        for root in self.roots:
+            for cur, dirs, files in os.walk(root):
+                self.budget.check()
+                dirs[:] = [d for d in dirs if d not in SKIP_DOC_DIRS and not is_protected_doc_path(Path(cur) / d)]
+                cur_path = Path(cur)
+                for fname in files:
+                    fpath = cur_path / fname
+                    if is_protected_doc_path(fpath):
+                        continue
+                    try:
+                        resolved = fpath.resolve()
+                        rel = fpath.relative_to(root).as_posix()
+                    except (OSError, ValueError):
+                        continue
+                    if is_protected_doc_path(resolved):
+                        continue
+                    entries.append((rel, resolved))
+        self._entries = entries
+        return entries
+
+    def observations(self, path: str) -> list[Evidence]:
+        if not path or not self.roots or is_protected_doc_path(path):
+            return []
+        result: list[Evidence] = []
+        seen: set[Path] = set()
+        for rel, resolved in self._ensure_index():
+            if not (matches_path(path, rel, self.aliases) or matches_path(path, str(resolved), self.aliases)):
+                continue
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if resolved not in self._loaded:
+                ev = local_source(resolved, str(resolved), self.budget)
+                if not ev.problem:
+                    ev.tool = '문서 폴더 관측'
+                self._loaded[resolved] = ev
+            result.append(self._loaded[resolved])
+        return result
 
 
 class Repositories:

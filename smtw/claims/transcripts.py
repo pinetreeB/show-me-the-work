@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, replace
+from datetime import datetime
 import json
 import io
 import ast
@@ -758,6 +759,31 @@ def browser_call(call: Call) -> Call:
     return Call(server + '.' + tool, args, call.order, call.timestamp, call.call_id) if isinstance(args, dict) else call
 
 
+def mcp_read_call(call: Call) -> Call:
+    """Unwrap non-filesystem read-only MCP calls (e.g. wiki-search.search_wiki)."""
+    if call.name.rsplit('.', 1)[-1] != 'call_mcp_tool':
+        return call
+    server = next((call.args[k] for k in ('ServerName', 'serverName', 'server_name')
+                   if isinstance(call.args.get(k), str)), '')
+    tool = next((call.args[k] for k in ('ToolName', 'toolName', 'tool_name', 'name')
+                 if isinstance(call.args.get(k), str)), '')
+    if not server or not tool:
+        return call
+    if re.search(r'(?:write|edit|delete|send|post|create|update|kill|exec|run)', tool, re.I):
+        return call
+    if not (tool in {'search_wiki', 'read_resource', 'list_resources'}
+            or server == 'wiki-search' and re.match(r'^(?:search|read|get|list)_', tool, re.I)):
+        return call
+    args = next((call.args[k] for k in ('Arguments', 'arguments', 'args')
+                 if k in call.args), {})
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            return call
+    return Call(server + '.' + tool, args, call.order, call.timestamp, call.call_id) if isinstance(args, dict) else call
+
+
 def web_pointer(body: str, *, browser: bool = False) -> str:
     notice = re.search(r'\bsaved\s+to:\s*([^\r\n]+)', body, re.I)
     if not notice and browser:
@@ -805,7 +831,8 @@ def browser_blocks(e: Evidence, body: str) -> list[Evidence]:
 def parse_result(call: Call, body: str, origin: str, root: Path,
                  budget: Budget, exit_code: int | None = None) -> list[Evidence]:
     budget.check()
-    call = browser_call(call)
+    unwrapped_call = browser_call(call)
+    call = mcp_read_call(unwrapped_call) if unwrapped_call is call else unwrapped_call
     browser = bool(re.search(r'browser', call.name, re.I)
                    and not SEARCH_TOOL.search(call.name) and not call.write)
     if browser:
@@ -855,6 +882,18 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
     if not call.read:
         return []
     budget.check()
+    if call.name.rsplit('.', 1)[-1] == 'read_file' and not re.search(r'^File Path:\s*', body, re.M):
+        # Isolate headerless read_file output so file source contents cannot forge
+        # error statuses, pointer strings, or unlinked identifier matches.
+        preamble = re.sub(r'^(?:Created At|Completed At):[^\r\n]*\r?\n?', '', body, flags=re.M).lstrip()
+        failed = exit_code not in (None, 0) or bool(re.match(
+            r'(?:Error:|Error executing|File not found|Access denied)', preamble, re.I))
+        return [Evidence(
+            path='', command='', cwd=call.cwd, tool=call.name, origin=origin,
+            order=call.order, timestamp=call.timestamp, complete=not failed,
+            control_only=True, exit_code=exit_code,
+            problem='읽기 도구 실패' if failed else '',
+            problem_code='read_failed' if failed else '')]
     command, marker = success_marker(call.command)
     observed_marker = ''
     if exit_code is None:
@@ -1028,8 +1067,27 @@ def parse_result(call: Call, body: str, origin: str, root: Path,
     return [e]
 
 
+def _parse_iso_ts(value: str | None) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip().replace('Z', '+00:00'))
+    except ValueError:
+        try:
+            dt = datetime.strptime(value.strip(), '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            return None
+    return dt if dt.tzinfo is not None else dt.astimezone()
+
+
 def read_transcript(path: Path, kind: str, report: Path, report_text: str,
-                    aliases: dict[str, str], budget: Budget, *, result_parser=None) -> Transcript:
+                    aliases: dict[str, str], budget: Budget, *, result_parser=None,
+                    before_timestamp: str | None = None) -> Transcript:
+    before_dt = None
+    if before_timestamp is not None:
+        before_dt = _parse_iso_ts(before_timestamp)
+        if before_dt is None:
+            raise ValueError(f'유효하지 않은 --before-timestamp 형식: {before_timestamp}')
     result = Transcript(version=f'{kind}/jsonl-v1')
     root = aux_root(path)
     pending: deque[Call] = deque()
@@ -1042,6 +1100,8 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
     completions: dict[str, int] = {}
     recognized = 0
     conversation_cwd = ''
+    ts_cutoff: int | None = None
+    saw_timestamp = False
 
     def register(call):
         if not call.write:
@@ -1123,6 +1183,12 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                 result.valid = False
                 continue
             stamp = str(row.get('created_at', row.get('timestamp', '')))
+            if before_dt is not None:
+                row_dt = _parse_iso_ts(stamp)
+                if row_dt is not None:
+                    saw_timestamp = True
+                    if row_dt <= before_dt:
+                        ts_cutoff = n if ts_cutoff is None else max(ts_cutoff, n)
             if kind == 'agy':
                 typ = row.get('type')
                 if typ == 'CHECKPOINT':
@@ -1157,8 +1223,13 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                     body = text_value(row.get('content', ''))
                     if batch:
                         batch['answered'] += 1
-                        if code or re.search(r'^Error', body, re.M):
+                        tool_short = call.name.rsplit('.', 1)[-1]
+                        if code:
                             batch['ok'] = False
+                        elif tool_short in {'read_file', 'view_file'}:
+                            preamble = re.sub(r'^(?:Created At|Completed At):[^\r\n]*\r?\n?', '', body, flags=re.M).lstrip()
+                            if re.match(r'(?:Error|ERROR|File not found|Access denied)', preamble):
+                                batch['ok'] = False
                         if not pending:
                             hint_read_batch()
                     accept(call, body, n, code)
@@ -1218,6 +1289,8 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                         else:
                             result.warnings.append(f'복합 도구 결과 연결 미확인: {path}:{n}')
     cutoff = max(report_writes, default=10**18)
+    if before_dt is not None and saw_timestamp:
+        cutoff = min(cutoff, ts_cutoff if ts_cutoff is not None else 0)
     # A compaction after the last report write cannot have affected that report.
     kept = [(o, s) for o, s in zip(result.compaction_orders, result.compaction_steps) if o <= cutoff]
     result.compaction_orders = [o for o, _ in kept]
@@ -1364,6 +1437,6 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
                                         if 'write' in tool.get('name', '') and not args.get('Append') else None)
         except (OSError, UnicodeDecodeError, ValueError, AttributeError, TypeError):
             continue
-        if last_content == report_text:
+        if last_content is not None and last_content.replace('\r\n', '\n') == report_text.replace('\r\n', '\n'):
             candidates.append(transcript)
     return candidates

@@ -15,7 +15,7 @@ from .markup import cell_spans, normalized_quote, quote_fragments, quote_in_text
 from .model import Budget, Claim, DeadlineExceeded, Evidence, Transcript, summarize
 from .paths import matches_path, normalize_path, normalize_url
 from .paraphrase import code_ellipsis, paraphrase_rule
-from .sources import Repositories, content_lines, file_lines, local_source
+from .sources import DocDirs, Repositories, content_lines, file_lines, local_source
 from .js_definitions import JSParserConfig, rescue as rescue_js_definitions
 from .transcripts import browser_blocks, discover_agy, load_measurement_pointer, load_view_pointer, read_transcript, resolve_agy
 
@@ -400,9 +400,10 @@ def ordinal_item(c: Claim, e: Evidence, budget: Budget) -> Result:
 
 class Checker:
     def __init__(self, transcript: Transcript, sources: dict[str, str], repos: Repositories,
-                 aliases: dict[str, str], budget: Budget):
+                 aliases: dict[str, str], budget: Budget, doc_dirs: DocDirs | None = None):
         self.transcript, self.sources, self.repos = transcript, sources, repos
         self.aliases, self.budget = aliases, budget
+        self.doc_dirs = doc_dirs
         self.loaded: dict[tuple[str, str], Evidence] = {}
 
     def web_versions(self, c: Claim) -> list[list[Evidence]]:
@@ -487,6 +488,8 @@ class Checker:
         if c.revision or c.when:
             fixed = [e for e in fixed if not c.when and e.revision and c.revision and
                      (e.revision.startswith(c.revision) or c.revision.startswith(e.revision))]
+        if not fixed and self.doc_dirs is not None and c.path and not c.revision and not c.when:
+            fixed = self.doc_dirs.observations(c.path)
         return fixed or observed
 
     def quote_candidate_ranges(self, c: Claim) -> tuple[tuple[str, int, int], ...]:
@@ -1003,12 +1006,44 @@ def compaction_audit(claims: list[Claim], transcript: Transcript, transcript_pat
     return audit
 
 
+def compaction_all_cited_audit(claims: list[Claim], transcript: Transcript,
+                               aliases: dict[str, str]) -> dict:
+    """Audit every file-bound claim against post-compaction reads, including fixed-commit checks."""
+    if not transcript.compaction_orders:
+        return {'stale_claim_lines': [], 'stale_files': []}
+    last = transcript.compaction_orders[-1]
+    hinted = {p for order, p in transcript.compaction_rereads if order > last}
+    reread, reread_current = set(hinted), set(hinted)
+    for e in transcript.evidence:
+        if (e.order > last and e.path and not e.control_only
+                and (not e.problem or e.problem_code == 'partial_range')):
+            reread_current.add(normalize_path(e.path, aliases))
+            if not e.after_report:
+                reread.add(normalize_path(e.path, aliases))
+    lines, files = set(), set()
+    for c in claims:
+        if c.check_type == 'K10' or c.reason_code == 'timed_out' or c.web_quote:
+            continue
+        if not c.path or c.path.startswith(('http://', 'https://')):
+            continue
+        norm = normalize_path(c.path, aliases)
+        if not norm:
+            continue
+        pool = reread_current if c.current else reread
+        if not any(norm == r or matches_path(norm, r) or matches_path(r, norm) for r in pool):
+            lines.add(c.report_line)
+            files.add(norm)
+    return {'stale_claim_lines': sorted(lines), 'stale_files': sorted(files)}
+
+
 def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
         agy_auto: bool = False,
         brain_root: Path | None = None, repos: list[str] | None = None,
+        doc_dirs: list[str] | None = None,
         commits: dict[str, str] | None = None, sources: dict[str, str] | None = None,
         default_file: dict[str, str] | None = None,
         aliases: dict[str, str] | None = None, time_limit: float = 60,
+        before_timestamp: str | None = None,
         budget: Budget | None = None, js_parser: JSParserConfig | None = None) -> dict:
     budget = budget or Budget(time_limit)
     if any(not re.fullmatch(r'[0-9a-fA-F]{7,40}', revision) for revision in (commits or {}).values()):
@@ -1043,14 +1078,17 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
                 transcript.warnings.append(f'보고서 마지막 쓰기와 바이트가 일치하는 agy 대화 {len(candidates)}개: 자동 선택 안 함')
         if agy:
             transcript_path = resolve_agy(agy, brain_root or Path('~/.gemini/antigravity-cli/brain'))
-            transcript = read_transcript(transcript_path, 'agy', report, report_text, aliases, budget)
+            transcript = read_transcript(transcript_path, 'agy', report, report_text, aliases, budget,
+                                         before_timestamp=before_timestamp)
         elif codex:
             transcript_path = codex
-            transcript = read_transcript(codex, 'codex', report, report_text, aliases, budget)
+            transcript = read_transcript(codex, 'codex', report, report_text, aliases, budget,
+                                         before_timestamp=before_timestamp)
         warnings.extend(transcript.warnings)
         repositories = Repositories(repos or [], commits or {}, aliases, budget)
+        doc_store = DocDirs(doc_dirs or [], aliases, budget)
         repositories.preload_commits([c.value for c in claims if c.check_type == 'K3'])
-        checker = Checker(transcript, sources, repositories, aliases, budget)
+        checker = Checker(transcript, sources, repositories, aliases, budget, doc_dirs=doc_store)
         repositories.preload_identifiers([
             (c.value if c.check_type == 'K4' else c.entity, c.revision, c.when)
             for c in claims if checker.needs_repository_lookup(c)
@@ -1070,5 +1108,6 @@ def run(report: Path, *, agy: str | None = None, codex: Path | None = None,
                        warnings=warnings, input_incomplete=not transcript.valid)
     result['transcript_format'] = transcript.version
     result['compaction'] = compaction_audit(claims, transcript, transcript_path, aliases)
+    result['compaction_all_cited'] = compaction_all_cited_audit(claims, transcript, aliases)
     result['elapsed_seconds'] = round(budget.clock() - budget.started, 6)
     return result

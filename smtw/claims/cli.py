@@ -67,9 +67,10 @@ def add_input_arguments(parser, *, report_required=True):
     transcript.add_argument('--agy-auto', action='store_true', help='마지막 보고서 쓰기가 정확히 일치하는 대화 1개만 자동 연결')
     transcript.add_argument('--codex', type=Path)
     parser.add_argument('--agy-brain-root', type=Path, default=Path('~/.gemini/antigravity-cli/brain'))
-    for option in ('repo', 'commit', 'source-file', 'path-alias'):
+    for option in ('repo', 'doc-dir', 'commit', 'source-file', 'path-alias'):
         parser.add_argument('--' + option, action='append', default=[])
     parser.add_argument('--default-file', metavar='표기=실제파일', help='파일 문맥 없는 줄 위치의 명시적 기본 원문')
+    parser.add_argument('--before-timestamp', metavar='ISO8601', help='이 시각 이하의 전사 단계까지만 근거 및 압축 감사에 포함')
     parser.add_argument('--format', choices=('text', 'json'), default='text')
     parser.add_argument('--time-limit', type=float, default=60)
 
@@ -106,9 +107,10 @@ def run_check(args) -> int:
             raise ValueError('--js-node와 --js-parser는 함께 지정해야 합니다.')
         js_parser = JSParserConfig(node, package) if node and package else None
         result = run(args.report, agy=args.agy, agy_auto=args.agy_auto, codex=args.codex, brain_root=args.agy_brain_root,
-                     repos=args.repo, commits=mapping(args.commit), sources=mapping(args.source_file, basename_default=True),
+                     repos=args.repo, doc_dirs=args.doc_dir, commits=mapping(args.commit), sources=mapping(args.source_file, basename_default=True),
                      default_file=mapping([args.default_file]) if args.default_file is not None else None,
-                     aliases=mapping(args.path_alias), time_limit=args.time_limit, js_parser=js_parser)
+                     aliases=mapping(args.path_alias), time_limit=args.time_limit,
+                     before_timestamp=args.before_timestamp, js_parser=js_parser)
         result['code_sha256'] = code_sha256()
         output = json.dumps(result, ensure_ascii=False, indent=2) if args.format == 'json' else render_text(result)
         code = {'PASS': 0, 'FAIL': 1, 'ERROR': 2, 'INCOMPLETE': 3}[result['status']]
