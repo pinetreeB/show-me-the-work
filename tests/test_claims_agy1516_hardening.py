@@ -188,6 +188,96 @@ def test_doc_dir_ignores_directory_link_outside_root(tmp_path):
     assert run(inside, doc_dirs=[str(docs)])["status"] == "PASS"
 
 
+def test_before_timestamp_late_response_is_no_evidence_for_current_claims(tmp_path):
+    report, transcript = make_case(tmp_path, "현재 HEAD `engine.py` 함수 `valid_name`",
+                                   _engine_rows("2026-01-01T09:59:59Z", "2026-01-01T10:00:01Z"))
+    late = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:00Z")
+    assert late["status"] != "PASS"
+    assert all(c["verdict"] != "match" for c in late["claims"])
+    in_time = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:01Z")
+    assert in_time["status"] == "PASS"
+    (tmp_path / "untimed").mkdir()
+    untimed_report, untimed = make_case(tmp_path / "untimed", "현재 HEAD `engine.py` 함수 `valid_name`", _engine_rows())
+    bounded = run(untimed_report, agy=str(untimed), before_timestamp="2026-01-01T10:00:00Z")
+    assert bounded["status"] != "PASS"
+    assert all(c["verdict"] != "match" for c in bounded["claims"])
+
+
+def test_before_timestamp_stops_at_first_later_step(tmp_path):
+    rows = _engine_rows("2026-01-01T09:59:59Z", "2026-01-01T10:00:01Z")
+    rows.append({"type": "EPHEMERAL_MESSAGE", "source": "SYSTEM_SDK", "status": "DONE",
+                 "created_at": "2026-01-01T09:00:00Z", "content": "metadata with an earlier time"})
+    report, transcript = make_case(tmp_path, "`engine.py` 함수 `valid_name`", rows)
+    res = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:00Z")
+    assert res["claims"][0]["verdict"] != "match"
+    assert res["status"] != "PASS"
+
+
+def test_before_timestamp_late_reread_does_not_clear_compaction(tmp_path):
+    engine = "C:/sample/engine.py"
+    body = f"File Path: `file:///{engine}`\nTotal Lines: 1\nShowing lines 1 to 1\n1: def valid_name(): pass"
+    report, transcript = make_case(
+        tmp_path,
+        "`engine.py` 함수 `valid_name`",
+        [
+            {"type": "PLANNER_RESPONSE", "created_at": "2026-01-01T10:00:00Z",
+             "tool_calls": [{"name": "view_file", "args": {"AbsolutePath": engine}}]},
+            {"type": "GENERIC", "created_at": "2026-01-01T10:00:01Z", "status": "DONE", "content": body},
+            {"type": "CHECKPOINT", "created_at": "2026-01-01T10:05:00Z", "step_index": 5, "status": "DONE", "content": "cp"},
+            {"type": "PLANNER_RESPONSE", "created_at": "2026-01-01T10:06:00Z",
+             "tool_calls": [{"name": "view_file", "args": {"AbsolutePath": engine}}]},
+            {"type": "GENERIC", "created_at": "2026-01-01T10:08:00Z", "status": "DONE", "content": body},
+        ],
+    )
+    late = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:07:00Z")
+    assert late["compaction"]["stale_claim_lines"] == [1]
+    answered = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:09:00Z")
+    assert answered["compaction"]["stale_claim_lines"] == []
+
+
+def test_doc_dir_never_walks_link_to_protected_folder(tmp_path, monkeypatch):
+    import smtw.claims.sources as sources_module
+
+    docs = tmp_path / "docs"
+    secret = docs / "customer-data"
+    secret.mkdir(parents=True)
+    (secret / "leak.md").write_text("alpha line\nsecret target phrase\n", encoding="utf-8")
+    (docs / "guide.md").write_text("alpha line\nbeta target phrase\n", encoding="utf-8")
+    _link(docs / "neutral", secret)
+    walked = []
+    real_walk = sources_module.os.walk
+
+    def spy(top, *args, **kwargs):
+        for cur, dirs, files in real_walk(top, *args, **kwargs):
+            walked.append(os.path.realpath(cur))
+            yield cur, dirs, files
+
+    monkeypatch.setattr(sources_module.os, "walk", spy)
+    report = tmp_path / "neutral.md"
+    report.write_text('`neutral/leak.md:2` "secret target phrase"', encoding="utf-8")
+    res = run(report, doc_dirs=[str(docs)])
+    assert res["claims"][0]["verdict"] != "match"
+    assert walked, "the document folder itself is walked"
+    assert all(os.path.realpath(secret) != w for w in walked)
+
+
+def test_discover_agy_prefilter_ignores_filename_case(tmp_path):
+    brain = tmp_path / "brain"
+    report = tmp_path / "REPORT.MD"
+    report.write_bytes("old text\n".encode("utf-8"))
+    rows = [
+        agy_call("write_file", Path=str(report), Content="old text\n"),
+        generic("ok"),
+        agy_call("write_file", Path=str(report.with_name("Report.md")), Content="new text\n"),
+        generic("ok"),
+    ]
+    write_transcript(brain / "conv-case/.system_generated/logs/transcript_full.jsonl", rows)
+    assert discover_agy(report, report.read_text(encoding="utf-8"), brain, {}, Budget(10)) == []
+    rows_old_last = rows[2:] + rows[:2]
+    tx = write_transcript(brain / "conv-case/.system_generated/logs/transcript_full.jsonl", rows_old_last)
+    assert discover_agy(report, report.read_text(encoding="utf-8"), brain, {}, Budget(10)) == [tx]
+
+
 def test_doc_dir_ignores_file_link_outside_root(tmp_path):
     docs, outside = tmp_path / "docs", tmp_path / "outside"
     docs.mkdir()

@@ -155,12 +155,13 @@ def is_protected_doc_path(path_like) -> bool:
     return False
 
 
-def resolves_inside(path: Path, root: Path) -> bool:
-    """True when the real path of ``path`` lies under the already resolved ``root``."""
+def real_path_allowed(path: Path, root: Path) -> bool:
+    """True when the real path of ``path`` lies under the resolved ``root`` and is not protected."""
     try:
-        return path.resolve().is_relative_to(root)
+        real = path.resolve()
     except OSError:
         return False
+    return real.is_relative_to(root) and not is_protected_doc_path(real)
 
 
 class DocDirs:
@@ -191,7 +192,7 @@ class DocDirs:
             for cur, dirs, files in os.walk(root):
                 self.budget.check()
                 dirs[:] = [d for d in dirs if d not in SKIP_DOC_DIRS and not is_protected_doc_path(Path(cur) / d)
-                           and resolves_inside(Path(cur) / d, root)]
+                           and real_path_allowed(Path(cur) / d, root)]
                 cur_path = Path(cur)
                 for fname in files:
                     fpath = cur_path / fname

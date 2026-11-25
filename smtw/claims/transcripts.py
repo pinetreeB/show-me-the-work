@@ -1102,8 +1102,10 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
     conversation_cwd = ''
     ts_cutoff: int | None = None
     saw_timestamp = False
+    past_cutoff = False
     answered: dict[int, int] = {}
     completion_rows: dict[str, int] = {}
+    reread_rows: list[int] = []
 
     def register(call):
         if not call.write:
@@ -1154,7 +1156,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
             result.evidence.append(e)
             answered[id(e)] = n
 
-    def hint_read_batch():
+    def hint_read_batch(done_row):
         """Compaction audit only: a fully successful read_file/view_file batch.
 
         ``read_file`` output names no file, so it never becomes evidence.  When
@@ -1171,6 +1173,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
             if target in report_targets or target in writes and writes[target] <= order:
                 continue
             result.compaction_rereads.append((order, target))
+            reread_rows.append(done_row)
 
     batch: dict = {}
     with transcript_stream(path) as stream:
@@ -1190,8 +1193,12 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                 row_dt = _parse_iso_ts(stamp)
                 if row_dt is not None:
                     saw_timestamp = True
-                    if row_dt <= before_dt:
-                        ts_cutoff = n if ts_cutoff is None else max(ts_cutoff, n)
+                    # Only the prefix before the first later step counts, even when a
+                    # later row carries an earlier time.
+                    if row_dt > before_dt:
+                        past_cutoff = True
+                    elif not past_cutoff:
+                        ts_cutoff = n
             if kind == 'agy':
                 typ = row.get('type')
                 if typ == 'CHECKPOINT':
@@ -1234,7 +1241,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                             if re.match(r'(?:Error|ERROR|File not found|Access denied)', preamble):
                                 batch['ok'] = False
                         if not pending:
-                            hint_read_batch()
+                            hint_read_batch(n)
                     accept(call, body, n, code)
                 elif typ == 'SYSTEM_MESSAGE':
                     # System content supplies control metadata ONLY, never evidence text.
@@ -1304,17 +1311,20 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
     kept = [(o, s) for o, s in zip(result.compaction_orders, result.compaction_steps) if o <= cutoff]
     result.compaction_orders = [o for o, _ in kept]
     result.compaction_steps = [s for _, s in kept]
-    result.compaction_rereads = [(o, p) for o, p in result.compaction_rereads
-                                 if o <= cutoff and p not in report_targets]
+    result.compaction_rereads = [(o, p) for (o, p), done in zip(result.compaction_rereads, reread_rows)
+                                 if o <= cutoff and p not in report_targets
+                                 and (ts_limit is None or done <= ts_limit)]
     filtered = []
     for e in result.evidence:
         if normalize_path(e.path, aliases) in report_targets:
             continue
-        e.after_report = e.order > cutoff
         if ts_limit is not None:
-            # The cutoff bounds when the content arrived, not only when it was requested.
+            # The cutoff bounds when the content arrived, not only when it was requested;
+            # later content is outside the transcript prefix, also for current claims.
             available = completion_rows.get(e.task_id, answered.get(id(e), e.order)) if e.task_id else answered.get(id(e), e.order)
-            e.after_report = e.after_report or available > ts_limit
+            if available > ts_limit:
+                continue
+        e.after_report = e.order > cutoff
         if e.task_id:
             code = completions.get(e.task_id)
             e.exit_code = code
@@ -1472,7 +1482,11 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
             if chunk_dir(chunks):
                 transcripts.append(chunks)
     transcripts.sort(key=_transcript_mtime, reverse=True)
-    needles = _transcript_name_needles(report.name)
+    # Paths compare case-insensitively (casefold); the byte prefilter lowers ASCII only, so a
+    # name with non-ASCII cased letters is scanned without it rather than missing a write.
+    needles = tuple(dict.fromkeys(n.lower() for n in _transcript_name_needles(report.name)))
+    if any(ord(ch) > 127 and ch.lower() != ch.upper() for ch in report.name):
+        needles = ()
     target_norm_text = report_text.replace('\r\n', '\n')
     for transcript in transcripts:
         budget.check()
@@ -1480,8 +1494,10 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
             raw_bytes = _read_transcript_bytes(transcript)
         except OSError:
             continue
-        if needles and not any(n in raw_bytes for n in needles):
-            continue
+        if needles:
+            lowered = raw_bytes.lower()
+            if not any(n in lowered for n in needles):
+                continue
         last_content = None
         pending = deque()
         try:
@@ -1490,7 +1506,7 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
                     budget.check()
                     if not pending and not (
                         b'"PLANNER_RESPONSE"' in raw and b'"tool_calls"' in raw
-                        and (not needles or any(n in raw for n in needles))
+                        and (not needles or any(n in raw.lower() for n in needles))
                     ):
                         continue
                     row = json.loads(raw)
