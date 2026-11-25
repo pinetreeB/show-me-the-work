@@ -4,6 +4,8 @@ All transcripts, paths, and reports are synthetic (``C:/sample/...`` or ``tmp_pa
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -117,6 +119,89 @@ def test_before_timestamp_cuts_off_later_checkpoints_and_reads(tmp_path):
     assert at_cp["compaction"]["stale_claim_lines"] == [1]
     after_reread = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:07:00Z")
     assert after_reread["compaction"]["stale_claim_lines"] == []
+
+
+ENGINE = "C:/sample/engine.py"
+ENGINE_VIEW = f"File Path: `file:///{ENGINE}`\nTotal Lines: 1\nShowing lines 1 to 1\n1: def valid_name(): pass"
+
+
+def _engine_rows(call_at=None, answer_at=None):
+    call = {"type": "PLANNER_RESPONSE", "tool_calls": [{"name": "view_file", "args": {"AbsolutePath": ENGINE}}]}
+    answer = {"type": "GENERIC", "status": "DONE", "content": ENGINE_VIEW}
+    if call_at:
+        call["created_at"] = call_at
+    if answer_at:
+        answer["created_at"] = answer_at
+    return [call, answer]
+
+
+def test_before_timestamp_excludes_response_after_cutoff(tmp_path):
+    report, transcript = make_case(tmp_path, "`engine.py` 함수 `valid_name`",
+                                   _engine_rows("2026-01-01T09:59:59Z", "2026-01-01T10:00:01Z"))
+    late = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:00Z")
+    assert late["claims"][0]["verdict"] != "match"
+    assert late["status"] != "PASS"
+    in_time = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:01Z")
+    assert in_time["claims"][0]["verdict"] == "match"
+
+
+def test_before_timestamp_without_any_timestamp_uses_no_evidence(tmp_path):
+    report, transcript = make_case(tmp_path, "`engine.py` 함수 `valid_name`", _engine_rows())
+    bounded = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:00Z")
+    assert bounded["claims"][0]["verdict"] != "match"
+    assert bounded["status"] != "PASS"
+    tr = read_transcript(transcript, "agy", report, report.read_text(encoding="utf-8"), {}, Budget(10),
+                         before_timestamp="2026-01-01T10:00:00Z")
+    assert all(e.after_report for e in tr.evidence)
+    assert any("--before-timestamp" in w for w in tr.warnings)
+    assert run(report, agy=str(transcript))["claims"][0]["verdict"] == "match"
+
+
+def _link(link: Path, target: Path) -> None:
+    """Symlink, or a directory junction on Windows without symlink rights; else skip."""
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+        return
+    except (OSError, NotImplementedError):
+        pass
+    if os.name == "nt" and target.is_dir():
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+        return
+    pytest.skip("symbolic links are not available here")
+
+
+def test_doc_dir_ignores_directory_link_outside_root(tmp_path):
+    docs, outside = tmp_path / "docs", tmp_path / "outside"
+    docs.mkdir()
+    outside.mkdir()
+    (outside / "plans.md").write_text("alpha line\nbeta target phrase\n", encoding="utf-8")
+    (docs / "guide.md").write_text("alpha line\nbeta target phrase\n", encoding="utf-8")
+    _link(docs / "jdir", outside)
+    escaped = tmp_path / "escaped.md"
+    escaped.write_text('`jdir/plans.md:2` "beta target phrase"', encoding="utf-8")
+    res = run(escaped, doc_dirs=[str(docs)])
+    assert res["claims"][0]["verdict"] != "match"
+    assert res["status"] != "PASS"
+    inside = tmp_path / "inside.md"
+    inside.write_text('`guide.md:2` "beta target phrase"', encoding="utf-8")
+    assert run(inside, doc_dirs=[str(docs)])["status"] == "PASS"
+
+
+def test_doc_dir_ignores_file_link_outside_root(tmp_path):
+    docs, outside = tmp_path / "docs", tmp_path / "outside"
+    docs.mkdir()
+    outside.mkdir()
+    (outside / "plans.md").write_text("alpha line\nbeta target phrase\n", encoding="utf-8")
+    try:
+        (docs / "link.md").symlink_to(outside / "plans.md")
+    except (OSError, NotImplementedError):
+        pytest.skip("file symbolic links are not available here")
+    report = tmp_path / "linked.md"
+    report.write_text('`link.md:2` "beta target phrase"', encoding="utf-8")
+    res = run(report, doc_dirs=[str(docs)])
+    assert res["claims"][0]["verdict"] != "match"
+    assert res["status"] != "PASS"
 
 
 def test_hint_read_batch_survives_sibling_command_stdout_error_line(tmp_path):

@@ -155,6 +155,14 @@ def is_protected_doc_path(path_like) -> bool:
     return False
 
 
+def resolves_inside(path: Path, root: Path) -> bool:
+    """True when the real path of ``path`` lies under the already resolved ``root``."""
+    try:
+        return path.resolve().is_relative_to(root)
+    except OSError:
+        return False
+
+
 class DocDirs:
     """Plain non-Git directory source with strict sensitive-path blocking."""
 
@@ -182,7 +190,8 @@ class DocDirs:
         for root in self.roots:
             for cur, dirs, files in os.walk(root):
                 self.budget.check()
-                dirs[:] = [d for d in dirs if d not in SKIP_DOC_DIRS and not is_protected_doc_path(Path(cur) / d)]
+                dirs[:] = [d for d in dirs if d not in SKIP_DOC_DIRS and not is_protected_doc_path(Path(cur) / d)
+                           and resolves_inside(Path(cur) / d, root)]
                 cur_path = Path(cur)
                 for fname in files:
                     fpath = cur_path / fname
@@ -193,7 +202,8 @@ class DocDirs:
                         rel = fpath.relative_to(root).as_posix()
                     except (OSError, ValueError):
                         continue
-                    if is_protected_doc_path(resolved):
+                    # A link or junction can name a file outside the folder; its real path decides.
+                    if is_protected_doc_path(resolved) or not resolved.is_relative_to(root):
                         continue
                     entries.append((rel, resolved))
         self._entries = entries

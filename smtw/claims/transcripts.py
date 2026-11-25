@@ -1102,6 +1102,8 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
     conversation_cwd = ''
     ts_cutoff: int | None = None
     saw_timestamp = False
+    answered: dict[int, int] = {}
+    completion_rows: dict[str, int] = {}
 
     def register(call):
         if not call.write:
@@ -1150,6 +1152,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                 globally_excluded_evidence[trigger] = globally_excluded_evidence.get(trigger, 0) + 1
                 continue
             result.evidence.append(e)
+            answered[id(e)] = n
 
     def hint_read_batch():
         """Compaction audit only: a fully successful read_file/view_file batch.
@@ -1239,6 +1242,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                     task = re.search(r'Task id\s+(?:task-)?([\w-]+).*?finished with result:.*?exited with code\s+(\d+)', body, re.S | re.I)
                     if task:
                         completions[task.group(1)] = int(task.group(2))
+                        completion_rows[task.group(1)] = n
             else:
                 if row.get('type') in {'turn_context', 'session_meta'} and isinstance(row.get('payload'), dict):
                     value = row['payload'].get('cwd')
@@ -1289,8 +1293,13 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                         else:
                             result.warnings.append(f'복합 도구 결과 연결 미확인: {path}:{n}')
     cutoff = max(report_writes, default=10**18)
-    if before_dt is not None and saw_timestamp:
-        cutoff = min(cutoff, ts_cutoff if ts_cutoff is not None else 0)
+    ts_limit: int | None = None
+    if before_dt is not None:
+        # Without any timestamp no step can be shown to precede the cutoff.
+        if not saw_timestamp:
+            result.warnings.append(f'--before-timestamp: 전사에 시각 정보가 없어 근거·압축 감사에 포함하지 않음: {path}')
+        ts_limit = ts_cutoff if ts_cutoff is not None else 0
+        cutoff = min(cutoff, ts_limit)
     # A compaction after the last report write cannot have affected that report.
     kept = [(o, s) for o, s in zip(result.compaction_orders, result.compaction_steps) if o <= cutoff]
     result.compaction_orders = [o for o, _ in kept]
@@ -1302,6 +1311,10 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
         if normalize_path(e.path, aliases) in report_targets:
             continue
         e.after_report = e.order > cutoff
+        if ts_limit is not None:
+            # The cutoff bounds when the content arrived, not only when it was requested.
+            available = completion_rows.get(e.task_id, answered.get(id(e), e.order)) if e.task_id else answered.get(id(e), e.order)
+            e.after_report = e.after_report or available > ts_limit
         if e.task_id:
             code = completions.get(e.task_id)
             e.exit_code = code
