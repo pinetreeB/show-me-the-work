@@ -420,6 +420,30 @@ def test_discover_agy_escaped_json_key_like_base(tmp_path):
     assert found() == sorted([only, plain]), "a later write with an escaped key is not skipped"
 
 
+def test_discover_agy_non_string_write_content_like_base(tmp_path):
+    brain = tmp_path / "brain"
+    report = tmp_path / "STRASSE.md"
+    report.write_bytes(b"final\n")
+    valid = _agy_brain_write(brain, "conv-valid", [(str(report), "final\n")])
+    _agy_brain_write(brain, "conv-object", [(str(report.with_name("Straße.md")), {"note": "draft"})])
+    assert discover_agy(report, "final\n", brain, {}, Budget(10)) == [valid], "a non-string write is excluded, not an error"
+    assert run(report, agy_auto=True, brain_root=brain)["status"] != "ERROR"
+
+
+def test_discover_agy_exact_write_decides_before_line_endings(tmp_path):
+    report = tmp_path / "report.md"
+    report.write_bytes(b"final\n")
+    brain = tmp_path / "brain"
+    exact = _agy_brain_write(brain, "conv-exact", [(str(report), "final\n")])
+    _agy_brain_write(brain, "conv-crlf", [(str(report), "final\r\n")])
+    assert discover_agy(report, "final\n", brain, {}, Budget(10)) == [exact], "an exact last write decides, as on cbfe565"
+    loose = tmp_path / "brain-loose"
+    first = _agy_brain_write(loose, "conv-crlf-1", [(str(report), "final\r\n")])
+    assert discover_agy(report, "final\n", loose, {}, Budget(10)) == [first], "line endings are compared only without an exact match"
+    second = _agy_brain_write(loose, "conv-crlf-2", [(str(report), "final\r\n")])
+    assert sorted(discover_agy(report, "final\n", loose, {}, Budget(10))) == sorted([first, second]), "two loose matches stay ambiguous"
+
+
 def test_doc_dir_ignores_file_link_outside_root(tmp_path):
     docs, outside = tmp_path / "docs", tmp_path / "outside"
     docs.mkdir()

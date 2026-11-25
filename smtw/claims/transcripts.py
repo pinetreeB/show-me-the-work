@@ -1473,6 +1473,7 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
     # folding, percent-encoded file URIs, escaped keys), and a skipped conversation or later
     # write changes which conversations match.
     target_norm_text = report_text.replace('\r\n', '\n')
+    normalized = []
     for transcript in transcripts:
         budget.check()
         last_content = None
@@ -1500,6 +1501,12 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
                                         if 'write' in tool.get('name', '') and not args.get('Append') else None)
         except (OSError, UnicodeDecodeError, ValueError, AttributeError, TypeError):
             continue
-        if last_content is not None and last_content.replace('\r\n', '\n') == target_norm_text:
+        # Only a string can equal the report; any other recorded value excludes the conversation.
+        if not isinstance(last_content, str):
+            continue
+        if last_content == report_text:
             candidates.append(transcript)
-    return candidates
+        elif last_content.replace('\r\n', '\n') == target_norm_text:
+            normalized.append(transcript)
+    # Exact last writes decide, as on cbfe565; line endings count only when none matches exactly.
+    return candidates or normalized
