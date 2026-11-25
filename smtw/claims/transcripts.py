@@ -9,6 +9,7 @@ import ast
 from pathlib import Path
 import posixpath
 import re
+from urllib.parse import quote
 
 from .model import Budget, Evidence, Transcript, line_counts
 from .paths import matches_path, normalize_path, normalize_url
@@ -1080,12 +1081,22 @@ def _parse_iso_ts(value: str | None) -> datetime | None:
     return dt if dt.tzinfo is not None else dt.astimezone()
 
 
+def _iso_ts_key(value: str | None):
+    """Comparable instant: the parsed datetime plus fractional digits beyond microseconds."""
+    dt = _parse_iso_ts(value)
+    if dt is None:
+        return None
+    digits = re.search(r'[T ]\d{2}:\d{2}:\d{2}[.,](\d+)', value)
+    extra = digits.group(1)[6:].rstrip('0') if digits else ''
+    return dt, extra
+
+
 def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                     aliases: dict[str, str], budget: Budget, *, result_parser=None,
                     before_timestamp: str | None = None) -> Transcript:
     before_dt = None
     if before_timestamp is not None:
-        before_dt = _parse_iso_ts(before_timestamp)
+        before_dt = _iso_ts_key(before_timestamp)
         if before_dt is None:
             raise ValueError(f'유효하지 않은 --before-timestamp 형식: {before_timestamp}')
     result = Transcript(version=f'{kind}/jsonl-v1')
@@ -1190,7 +1201,7 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                 continue
             stamp = str(row.get('created_at', row.get('timestamp', '')))
             if before_dt is not None:
-                row_dt = _parse_iso_ts(stamp)
+                row_dt = _iso_ts_key(stamp)
                 if row_dt is not None:
                     saw_timestamp = True
                     # Only the prefix before the first later step counts, even when a
@@ -1249,7 +1260,8 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                     task = re.search(r'Task id\s+(?:task-)?([\w-]+).*?finished with result:.*?exited with code\s+(\d+)', body, re.S | re.I)
                     if task:
                         completions[task.group(1)] = int(task.group(2))
-                        completion_rows[task.group(1)] = n
+                        if int(task.group(2)) == 0:
+                            completion_rows.setdefault(task.group(1), n)
             else:
                 if row.get('type') in {'turn_context', 'session_meta'} and isinstance(row.get('payload'), dict):
                     value = row['payload'].get('cwd')
@@ -1299,13 +1311,15 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
                             accept(calls[0], body, n, code)
                         else:
                             result.warnings.append(f'복합 도구 결과 연결 미확인: {path}:{n}')
-    cutoff = max(report_writes, default=10**18)
     ts_limit: int | None = None
     if before_dt is not None:
         # Without any timestamp no step can be shown to precede the cutoff.
         if not saw_timestamp:
             result.warnings.append(f'--before-timestamp: 전사에 시각 정보가 없어 근거·압축 감사에 포함하지 않음: {path}')
         ts_limit = ts_cutoff if ts_cutoff is not None else 0
+    # A report write after the cutoff does not exist yet at the cutoff.
+    cutoff = max((w for w in report_writes if ts_limit is None or w <= ts_limit), default=10**18)
+    if ts_limit is not None:
         cutoff = min(cutoff, ts_limit)
     # A compaction after the last report write cannot have affected that report.
     kept = [(o, s) for o, s in zip(result.compaction_orders, result.compaction_steps) if o <= cutoff]
@@ -1321,7 +1335,9 @@ def read_transcript(path: Path, kind: str, report: Path, report_text: str,
         if ts_limit is not None:
             # The cutoff bounds when the content arrived, not only when it was requested;
             # later content is outside the transcript prefix, also for current claims.
-            available = completion_rows.get(e.task_id, answered.get(id(e), e.order)) if e.task_id else answered.get(id(e), e.order)
+            available = answered.get(id(e), e.order)
+            if e.task_id and e.task_id in completion_rows:
+                available = max(available, completion_rows[e.task_id])
             if available > ts_limit:
                 continue
         e.after_report = e.order > cutoff
@@ -1482,11 +1498,16 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
             if chunk_dir(chunks):
                 transcripts.append(chunks)
     transcripts.sort(key=_transcript_mtime, reverse=True)
-    # Paths compare case-insensitively (casefold); the byte prefilter lowers ASCII only, so a
-    # name with non-ASCII cased letters is scanned without it rather than missing a write.
-    needles = tuple(dict.fromkeys(n.lower() for n in _transcript_name_needles(report.name)))
-    if any(ord(ch) > 127 and ch.lower() != ch.upper() for ch in report.name):
-        needles = ()
+    # The byte prefilter may only skip a whole transcript that cannot name the report in any
+    # spelling normalize_path accepts: ASCII case, JSON escapes and percent-encoded file URIs.
+    # Aliases can rename the target and Unicode case folding is not byte-lowering, so either
+    # turns the prefilter off. Rows are never prefiltered: a skipped later write would let an
+    # older write pass as the last one.
+    name = report.name
+    needles: tuple[bytes, ...] = ()
+    if not aliases and name.casefold() == name.lower() and not any(ord(ch) > 127 and ch.lower() != ch.upper() for ch in name):
+        spellings = dict.fromkeys((name, quote(name), quote(name, safe='')))
+        needles = tuple(dict.fromkeys(n.lower() for spelling in spellings for n in _transcript_name_needles(spelling)))
     target_norm_text = report_text.replace('\r\n', '\n')
     for transcript in transcripts:
         budget.check()
@@ -1504,10 +1525,7 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
             with io.BytesIO(raw_bytes) as stream:
                 for raw in stream:
                     budget.check()
-                    if not pending and not (
-                        b'"PLANNER_RESPONSE"' in raw and b'"tool_calls"' in raw
-                        and (not needles or any(n in raw.lower() for n in needles))
-                    ):
+                    if not pending and not (b'"PLANNER_RESPONSE"' in raw and b'"tool_calls"' in raw):
                         continue
                     row = json.loads(raw)
                     if row.get('type') == 'PLANNER_RESPONSE':

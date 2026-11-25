@@ -278,6 +278,82 @@ def test_discover_agy_prefilter_ignores_filename_case(tmp_path):
     assert discover_agy(report, report.read_text(encoding="utf-8"), brain, {}, Budget(10)) == [tx]
 
 
+def test_before_timestamp_ignores_report_writes_after_cutoff(tmp_path):
+    report = tmp_path / "report.md"
+    rows = [
+        {"type": "PLANNER_RESPONSE", "created_at": "2026-01-01T09:50:00Z",
+         "tool_calls": [{"name": "write_file", "args": {"Path": str(report), "Content": "x"}}]},
+        {"type": "GENERIC", "created_at": "2026-01-01T09:50:01Z", "status": "DONE", "content": "ok"},
+        *_engine_rows("2026-01-01T09:55:00Z", "2026-01-01T09:56:00Z"),
+    ]
+    report.write_text("`engine.py` 함수 `valid_name`", encoding="utf-8")
+    transcript = write_transcript(tmp_path / "transcript_slice.jsonl", rows)
+    before = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:00Z")
+    resaved = rows + [
+        {"type": "PLANNER_RESPONSE", "created_at": "2026-01-01T10:05:00Z",
+         "tool_calls": [{"name": "write_file", "args": {"Path": str(report), "Content": "x"}}]},
+        {"type": "GENERIC", "created_at": "2026-01-01T10:05:01Z", "status": "DONE", "content": "ok"},
+    ]
+    write_transcript(transcript, resaved)
+    after = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:00Z")
+    assert after["status"] == before["status"] != "PASS"
+
+
+def test_before_timestamp_compares_sub_microsecond_digits(tmp_path):
+    report, transcript = make_case(tmp_path, "`engine.py` 함수 `valid_name`",
+                                   _engine_rows("2026-01-01T10:00:00.1234500Z", "2026-01-01T10:00:00.1234569Z"))
+    late = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:00.1234560Z")
+    assert late["status"] != "PASS"
+    in_time = run(report, agy=str(transcript), before_timestamp="2026-01-01T10:00:00.12345690Z")
+    assert in_time["status"] == "PASS"
+
+
+def test_before_timestamp_async_result_needs_result_and_completion_in_time(tmp_path):
+    (tmp_path / "aux" / "tasks").mkdir(parents=True)
+    (tmp_path / "aux" / "tasks" / "task-8.log").write_text("commit abc\n", encoding="utf-8")
+    call = {"type": "PLANNER_RESPONSE", "created_at": "2026-01-01T09:55:00Z",
+            "tool_calls": [{"name": "run_command", "args": {"CommandLine": "git log -1"}}]}
+    result = {"type": "GENERIC", "status": "DONE",
+              "content": "background task task-8\nTask logs are available at: C:/fake-brain/.system_generated/tasks/task-8.log"}
+
+    def done(at):
+        return {"type": "SYSTEM_MESSAGE", "created_at": at,
+                "content": "Task id 8 finished with result: command exited with code 0"}
+
+    report, transcript = make_case(tmp_path, "`engine.py` 함수 `valid_name`",
+                                   [call, done("2026-01-01T09:59:00Z"), {**result, "created_at": "2026-01-01T10:00:01Z"}])
+
+    def async_evidence():
+        tr = read_transcript(transcript, "agy", report, report.read_text(encoding="utf-8"), {}, Budget(10),
+                             before_timestamp="2026-01-01T10:00:00Z")
+        return [e for e in tr.evidence if e.task_id]
+
+    tr_all = read_transcript(transcript, "agy", report, report.read_text(encoding="utf-8"), {}, Budget(10))
+    assert [e for e in tr_all.evidence if e.task_id], "the fixture produces async evidence"
+    assert async_evidence() == [], "a result recorded after the cutoff is no evidence"
+    write_transcript(transcript, [call, {**result, "created_at": "2026-01-01T09:56:00Z"},
+                                  done("2026-01-01T09:58:00Z"), done("2026-01-01T10:01:00Z")])
+    assert async_evidence(), "a repeated completion after the cutoff keeps the first one"
+
+
+def test_discover_agy_sees_percent_encoded_later_write(tmp_path):
+    brain = tmp_path / "brain"
+    report = tmp_path / "Meeting Notes.md"
+    report.write_bytes("old text\n".encode("utf-8"))
+    uri = report.as_uri()
+    rows = [
+        agy_call("write_file", Path=str(report), Content="old text\n"),
+        generic("ok"),
+        agy_call("write_file", Path=uri, Content="new text\n"),
+        generic("ok"),
+    ]
+    write_transcript(brain / "conv-uri/.system_generated/logs/transcript_full.jsonl", rows)
+    assert discover_agy(report, report.read_text(encoding="utf-8"), brain, {}, Budget(10)) == []
+    only_uri = [agy_call("write_file", Path=uri, Content="old text\n"), generic("ok")]
+    tx = write_transcript(brain / "conv-uri/.system_generated/logs/transcript_full.jsonl", only_uri)
+    assert discover_agy(report, report.read_text(encoding="utf-8"), brain, {}, Budget(10)) == [tx]
+
+
 def test_doc_dir_ignores_file_link_outside_root(tmp_path):
     docs, outside = tmp_path / "docs", tmp_path / "outside"
     docs.mkdir()
