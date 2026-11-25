@@ -4,6 +4,7 @@ All transcripts, paths, and reports are synthetic (``C:/sample/...`` or ``tmp_pa
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -261,7 +262,7 @@ def test_doc_dir_never_walks_link_to_protected_folder(tmp_path, monkeypatch):
     assert all(os.path.realpath(secret) != w for w in walked)
 
 
-def test_discover_agy_prefilter_ignores_filename_case(tmp_path):
+def test_discover_agy_ignores_filename_case_of_later_write(tmp_path):
     brain = tmp_path / "brain"
     report = tmp_path / "REPORT.MD"
     report.write_bytes("old text\n".encode("utf-8"))
@@ -352,6 +353,71 @@ def test_discover_agy_sees_percent_encoded_later_write(tmp_path):
     only_uri = [agy_call("write_file", Path=uri, Content="old text\n"), generic("ok")]
     tx = write_transcript(brain / "conv-uri/.system_generated/logs/transcript_full.jsonl", only_uri)
     assert discover_agy(report, report.read_text(encoding="utf-8"), brain, {}, Budget(10)) == [tx]
+
+
+def _agy_brain_write(brain, conv, writes, escape=()):
+    """One conversation writing each (path, content) in order; rows whose index is in
+    ``escape`` spell the ``tool_calls`` key with an equivalent JSON escape."""
+    target = brain / conv / ".system_generated" / "logs" / "transcript_full.jsonl"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for index, (path, content) in enumerate(writes):
+        call = json.dumps(agy_call("write_file", Path=path, Content=content), ensure_ascii=False)
+        if index in escape:
+            call = call.replace('"tool_calls"', '"tool_\\u0063alls"')
+        lines += [call, json.dumps(generic("ok"), ensure_ascii=False)]
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return target
+
+
+def test_discover_agy_unicode_case_spelling_like_base(tmp_path):
+    brain = tmp_path / "brain"
+    report = tmp_path / "STRASSE.md"
+    report.write_bytes(b"final\n")
+    folded = str(report.with_name("Straße.md"))
+
+    def found():
+        return sorted(discover_agy(report, "final\n", brain, {}, Budget(10)))
+
+    only = _agy_brain_write(brain, "conv-fold", [(folded, "final\n")])
+    assert found() == [only], "a single valid conversation is selected"
+    plain = _agy_brain_write(brain, "conv-plain", [(str(report), "final\n")])
+    assert found() == sorted([only, plain]), "two equal conversations stay ambiguous"
+    _agy_brain_write(brain, "conv-old", [(str(report), "final\n"), (folded, "other\n")])
+    assert found() == sorted([only, plain]), "a conversation that overwrote the report is excluded"
+
+
+def test_discover_agy_percent_encoded_uri_like_base(tmp_path):
+    brain = tmp_path / "brain"
+    report = tmp_path / "Meeting Notes.md"
+    report.write_bytes(b"final\n")
+    encoded = report.as_uri()[: -len(".md")] + "%2Emd"
+
+    def found():
+        return sorted(discover_agy(report, "final\n", brain, {}, Budget(10)))
+
+    only = _agy_brain_write(brain, "conv-uri", [(encoded, "final\n")])
+    assert found() == [only], "an equivalent percent-encoded URI names the same report"
+    plain = _agy_brain_write(brain, "conv-plain", [(str(report), "final\n")])
+    assert found() == sorted([only, plain]), "two equal conversations stay ambiguous"
+    _agy_brain_write(brain, "conv-old", [(str(report), "final\n"), (encoded, "other\n")])
+    assert found() == sorted([only, plain]), "a conversation that overwrote the report is excluded"
+
+
+def test_discover_agy_escaped_json_key_like_base(tmp_path):
+    brain = tmp_path / "brain"
+    report = tmp_path / "report.md"
+    report.write_bytes(b"final\n")
+
+    def found():
+        return sorted(discover_agy(report, "final\n", brain, {}, Budget(10)))
+
+    only = _agy_brain_write(brain, "conv-escaped", [(str(report), "final\n")], escape={0})
+    assert found() == [only], "a valid write with an escaped key is selected"
+    plain = _agy_brain_write(brain, "conv-plain", [(str(report), "final\n")])
+    assert found() == sorted([only, plain]), "two equal conversations stay ambiguous"
+    _agy_brain_write(brain, "conv-old", [(str(report), "final\n"), (str(report), "other\n")], escape={1})
+    assert found() == sorted([only, plain]), "a later write with an escaped key is not skipped"
 
 
 def test_doc_dir_ignores_file_link_outside_root(tmp_path):

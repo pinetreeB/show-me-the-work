@@ -9,7 +9,6 @@ import ast
 from pathlib import Path
 import posixpath
 import re
-from urllib.parse import quote
 
 from .model import Budget, Evidence, Transcript, line_counts
 from .paths import matches_path, normalize_path, normalize_url
@@ -1448,35 +1447,6 @@ def _transcript_mtime(path: Path) -> float:
         return 0.0
 
 
-def _transcript_name_needles(name: str) -> tuple[bytes, ...]:
-    """Raw UTF-8 and JSON-escaped filename needles for fast byte prefiltering."""
-    out: list[bytes] = []
-    seen: set[bytes] = set()
-    for variant in (name, name.lower()):
-        if not variant:
-            continue
-        raw_b = variant.encode('utf-8')
-        if raw_b not in seen:
-            seen.add(raw_b)
-            out.append(raw_b)
-        esc = json.dumps(variant, ensure_ascii=True)[1:-1]
-        if esc != variant:
-            for esc_b in (
-                esc.encode('ascii'),
-                re.sub(r'\\u([0-9a-f]{4})', lambda m: r'\u' + m.group(1).upper(), esc).encode('ascii'),
-            ):
-                if esc_b not in seen:
-                    seen.add(esc_b)
-                    out.append(esc_b)
-    return tuple(out)
-
-
-def _read_transcript_bytes(path: Path) -> bytes:
-    if path.is_dir():
-        return b''.join(file.read_bytes() for file in transcript_files(path))
-    return path.read_bytes()
-
-
 def discover_agy(report: Path, report_text: str, brain_root: Path,
                  aliases: dict[str, str], budget: Budget) -> list[Path]:
     """Find exact last-write matches; never select among ambiguous conversations."""
@@ -1498,35 +1468,19 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
             if chunk_dir(chunks):
                 transcripts.append(chunks)
     transcripts.sort(key=_transcript_mtime, reverse=True)
-    # The byte prefilter may only skip a whole transcript that cannot name the report in any
-    # spelling normalize_path accepts: ASCII case, JSON escapes and percent-encoded file URIs.
-    # Aliases can rename the target and Unicode case folding is not byte-lowering, so either
-    # turns the prefilter off. Rows are never prefiltered: a skipped later write would let an
-    # older write pass as the last one.
-    name = report.name
-    needles: tuple[bytes, ...] = ()
-    if not aliases and name.casefold() == name.lower() and not any(ord(ch) > 127 and ch.lower() != ch.upper() for ch in name):
-        spellings = dict.fromkeys((name, quote(name), quote(name, safe='')))
-        needles = tuple(dict.fromkeys(n.lower() for spelling in spellings for n in _transcript_name_needles(spelling)))
+    # Every row of every conversation is parsed, as on cbfe565. A byte prefilter cannot cover
+    # every spelling that normalize_path and JSON treat as the same report write (Unicode case
+    # folding, percent-encoded file URIs, escaped keys), and a skipped conversation or later
+    # write changes which conversations match.
     target_norm_text = report_text.replace('\r\n', '\n')
     for transcript in transcripts:
         budget.check()
-        try:
-            raw_bytes = _read_transcript_bytes(transcript)
-        except OSError:
-            continue
-        if needles:
-            lowered = raw_bytes.lower()
-            if not any(n in lowered for n in needles):
-                continue
         last_content = None
         pending = deque()
         try:
-            with io.BytesIO(raw_bytes) as stream:
+            with transcript_stream(transcript) as stream:
                 for raw in stream:
                     budget.check()
-                    if not pending and not (b'"PLANNER_RESPONSE"' in raw and b'"tool_calls"' in raw):
-                        continue
                     row = json.loads(raw)
                     if row.get('type') == 'PLANNER_RESPONSE':
                         pending.clear()
