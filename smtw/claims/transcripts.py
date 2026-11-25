@@ -1400,24 +1400,86 @@ def _first_present(args: dict, keys: tuple[str, ...], default=None):
     return next((args[key] for key in keys if key in args), default)
 
 
+def _transcript_mtime(path: Path) -> float:
+    try:
+        if path.is_dir():
+            return max((f.stat().st_mtime for f in transcript_files(path)), default=path.stat().st_mtime)
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _transcript_name_needles(name: str) -> tuple[bytes, ...]:
+    """Raw UTF-8 and JSON-escaped filename needles for fast byte prefiltering."""
+    out: list[bytes] = []
+    seen: set[bytes] = set()
+    for variant in (name, name.lower()):
+        if not variant:
+            continue
+        raw_b = variant.encode('utf-8')
+        if raw_b not in seen:
+            seen.add(raw_b)
+            out.append(raw_b)
+        esc = json.dumps(variant, ensure_ascii=True)[1:-1]
+        if esc != variant:
+            for esc_b in (
+                esc.encode('ascii'),
+                re.sub(r'\\u([0-9a-f]{4})', lambda m: r'\u' + m.group(1).upper(), esc).encode('ascii'),
+            ):
+                if esc_b not in seen:
+                    seen.add(esc_b)
+                    out.append(esc_b)
+    return tuple(out)
+
+
+def _read_transcript_bytes(path: Path) -> bytes:
+    if path.is_dir():
+        return b''.join(file.read_bytes() for file in transcript_files(path))
+    return path.read_bytes()
+
+
 def discover_agy(report: Path, report_text: str, brain_root: Path,
                  aliases: dict[str, str], budget: Budget) -> list[Path]:
     """Find exact last-write matches; never select among ambiguous conversations."""
     candidates = []
     target = normalize_path(str(report), aliases)
     root = brain_root.expanduser()
-    transcripts = list(root.glob('*/.system_generated/logs/transcript_full.jsonl'))
-    # A conversation without a full transcript may keep only its chunks.
-    transcripts += [chunks for chunks in root.glob('*/.system_generated/logs/chunks/transcript_full')
-                    if not (chunks.parent.parent / 'transcript_full.jsonl').is_file() and chunk_dir(chunks)]
+    transcripts = []
+    if root.is_dir():
+        for conv_dir in root.iterdir():
+            if not conv_dir.is_dir():
+                continue
+            logs = conv_dir / '.system_generated' / 'logs'
+            full = logs / 'transcript_full.jsonl'
+            if full.is_file():
+                transcripts.append(full)
+                continue
+            # A conversation without a full transcript may keep only its chunks.
+            chunks = logs / 'chunks' / 'transcript_full'
+            if chunk_dir(chunks):
+                transcripts.append(chunks)
+    transcripts.sort(key=_transcript_mtime, reverse=True)
+    needles = _transcript_name_needles(report.name)
+    target_norm_text = report_text.replace('\r\n', '\n')
     for transcript in transcripts:
         budget.check()
+        try:
+            raw_bytes = _read_transcript_bytes(transcript)
+        except OSError:
+            continue
+        if needles and not any(n in raw_bytes for n in needles):
+            continue
         last_content = None
         pending = deque()
         try:
-            with transcript_stream(transcript) as stream:
+            with io.BytesIO(raw_bytes) as stream:
                 for raw in stream:
                     budget.check()
+                    if not pending and not (
+                        b'"PLANNER_RESPONSE"' in raw and b'"tool_calls"' in raw
+                        and (not needles or any(n in raw for n in needles))
+                    ):
+                        continue
                     row = json.loads(raw)
                     if row.get('type') == 'PLANNER_RESPONSE':
                         pending.clear()
@@ -1437,6 +1499,6 @@ def discover_agy(report: Path, report_text: str, brain_root: Path,
                                         if 'write' in tool.get('name', '') and not args.get('Append') else None)
         except (OSError, UnicodeDecodeError, ValueError, AttributeError, TypeError):
             continue
-        if last_content is not None and last_content.replace('\r\n', '\n') == report_text.replace('\r\n', '\n'):
+        if last_content is not None and last_content.replace('\r\n', '\n') == target_norm_text:
             candidates.append(transcript)
     return candidates

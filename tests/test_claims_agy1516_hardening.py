@@ -209,3 +209,25 @@ def test_invalid_before_timestamp_raises(tmp_path, bad_ts):
     report, transcript = make_case(tmp_path, "2건 중 1건", [agy_call("view_file", AbsolutePath="C:/sample/a.py"), view("C:/sample/a.py", "x")])
     with pytest.raises(ValueError):
         read_transcript(transcript, "agy", report, report.read_text(encoding="utf-8"), {}, Budget(10), before_timestamp=bad_ts)
+
+
+@pytest.mark.parametrize("ensure_ascii", [False, True])
+def test_discover_agy_korean_filename_utf8_and_json_escaped(tmp_path, ensure_ascii):
+    import json
+
+    brain = tmp_path / "brain"
+    report = tmp_path / "보고서.md"
+    report.write_bytes("2건 중 1건\n".encode("utf-8"))
+    rows = [
+        agy_call("write_file", Path=str(report), Content="2건 중 1건\n"),
+        generic("ok"),
+    ]
+    tx = brain / "conv-kr/.system_generated/logs/transcript_full.jsonl"
+    tx.parent.mkdir(parents=True)
+    tx.write_text(
+        "".join(json.dumps(r, ensure_ascii=ensure_ascii) + "\n" for r in rows),
+        encoding="utf-8",
+    )
+    found = discover_agy(report, report.read_text(encoding="utf-8"), brain, {}, Budget(10))
+    assert found == [tx]
+    assert run(report, agy_auto=True, brain_root=brain)["status"] == "PASS"
